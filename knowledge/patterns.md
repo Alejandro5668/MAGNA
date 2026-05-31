@@ -15,10 +15,10 @@ El comando se registra en `main.py` como sub-aplicación.
 import typer
 from rich.console import Console
 
-console = Console()
 app = typer.Typer()
+console = Console()
 
-@app.command()
+@app.callback(invoke_without_command=True)
 def status():
     """Muestra el estado actual del contexto y módulos documentados."""
     console.print("[bold green]Estado del contexto[/bold green]")
@@ -32,6 +32,11 @@ app.add_typer(status.app, name="status")
 
 **Por qué así:** Mantiene cada comando aislado y testeable por separado. `main.py` solo
 orquesta, no contiene lógica.
+
+**Nota sobre `@app.callback` vs `@app.command()`:** Cuando un archivo tiene una sola función
+y se registra con `add_typer`, hay que usar `@app.callback(invoke_without_command=True)`.
+Con `@app.command()` Typer espera un subcomando adicional y falla con "Missing command".
+`@app.callback` define qué ejecutar cuando se llama el grupo directamente.
 
 ---
 

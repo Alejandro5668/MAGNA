@@ -46,8 +46,8 @@ Fecha: <!-- actualizar -->
 - [x] `.claude/commands/start.md` — comando `/project:start`
 - [ ] Instalar dependencias pendientes: `sqlmodel anthropic httpx python-dotenv`
 - [ ] Actualizar `requirements.txt` con versiones exactas (`pip freeze > requirements.txt`)
-- [ ] Crear `main.py` — app Typer + comando `hello` funcional
-- [ ] Verificar: `python main.py hello` corre sin errores
+- [x] Crear `main.py` — app Typer + comando `hello` funcional
+- [x] Verificar: `python main.py hello` corre sin errores
 
 ---
 
@@ -146,3 +146,4 @@ Fecha: <!-- actualizar -->
 | Fecha | Avance | Pendiente para próxima sesión |
 |-------|--------|-------------------------------|
 | 2026-05-30 | Setup inicial del proyecto, documentación base, TODO.md creado | Instalar dependencias, crear main.py |
+| 2026-05-30 | main.py con Typer+Rich funcional, .gitignore, README, TODO.md, /cierre, fundamentos_python.md, fix encoding | Instalar 4 dependencias pendientes, actualizar requirements.txt |
