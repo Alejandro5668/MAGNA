@@ -54,8 +54,8 @@ python -m venv .venv
 pip install -r requirements.txt
 
 # Configurar API key
-cp .env.example .env
-# Edita .env y agrega tu ANTHROPIC_API_KEY
+cp ..env.example ..env
+# Edita ..env y agrega tu ANTHROPIC_API_KEY
 ```
 
 ---

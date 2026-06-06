@@ -10,21 +10,21 @@ console = Console()
 # esto le dice a la app que ejecute este archivo por completo y no un subcomando
 @app.callback(invoke_without_command=True)
 def status():
-    console.print("[bold green]Estado del contexto[/bold green]")
+    console.print("[bold cyan]Estado del contexto[/bold cyan]")
     contenido = "[bold]Modulos documentados: [/bold] [dim]0[/dim]\n[bold]Proyectos registrados[/bold]: [dim]0[/dim]"
-    console.print(Panel(contenido, title="AICLI - ESTADO DEL CONTEXTO", border_style="blue"))
+    console.print(Panel(contenido, title="AICLI - ESTADO DEL CONTEXTO", border_style="cyan"))
 
-with console.status("Consultando modulos...", spinner="dots3"):
-    time.sleep(1)
-    tabla = Table(title="Modulos")
+    with console.status("Consultando modulos...", spinner="dots3", spinner_style="cyan"):
+        time.sleep(1)
+        tabla = Table(title="Modulos", style="cyan")
 
-    tabla.add_column("nombre", style="bold")
-    tabla.add_column("Descripción")
+        tabla.add_column("nombre", style="bold")
+        tabla.add_column("Descripción")
 
-    tabla.add_row("commands", "comandos de la CLI")
-    tabla.add_row("db", "Modelos y conexion SQLite")
-    tabla.add_row("services", "Logica de negocio")
+        tabla.add_row("commands", "comandos de la CLI")
+        tabla.add_row("db", "Modelos y conexion SQLite")
+        tabla.add_row("services", "Logica de negocio")
 
-console.print(tabla)
+    console.print(tabla)
 
 

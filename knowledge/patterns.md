@@ -125,3 +125,35 @@ def get_project(id):
 
 **Por qué así:** Typer los usa para generar la CLI automáticamente. Los IDEs los usan
 para autocompletion. Los errores de tipos se detectan antes en desarrollo.
+
+---
+
+## PAT-006 — Paleta de colores oficial (Azul acero)
+
+Todos los comandos siguen esta paleta. Simple y consistente — nada fuera de esta lista.
+
+| Rol | Markup Rich | Cuándo usarlo |
+|-----|-------------|---------------|
+| Título / encabezado | `[bold cyan]` | Primer línea de un comando, nombre de sección |
+| Borde de Panel | `border_style="cyan"` | Todo `Panel()` del proyecto |
+| Label / etiqueta | `[bold]` | Nombres de campos: "Módulos:", "Proyecto:" |
+| Valor secundario | `[dim]` | Números, rutas, datos que no son el foco |
+| Éxito | `[bold green]` | Confirmaciones: "✓ Proyecto guardado" |
+| Error | `[bold red]` | Mensajes de error (ver PAT-003) |
+| Warning | `[bold yellow]` | Advertencias no fatales |
+| Spinner | `spinner_style="cyan"` | Todo `console.status()` |
+| Tabla | `style="cyan"` | Todo `Table()` |
+
+```python
+# Ejemplo de uso correcto
+console.print("[bold cyan]Estado del contexto[/bold cyan]")
+console.print(Panel(contenido, title="Título", border_style="cyan"))
+console.print("[bold]Módulos:[/bold] [dim]3[/dim]")
+console.print("[bold green]✓ Operación exitosa[/bold green]")
+
+with console.status("Cargando...", spinner="dots3", spinner_style="cyan"):
+    ...
+```
+
+**Por qué así:** Simplicidad es profesionalismo. Una paleta fija evita decisiones caso a caso
+y da coherencia visual a toda la CLI. Azul acero es neutro, técnico y no llama atención innecesaria.

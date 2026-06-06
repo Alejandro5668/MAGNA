@@ -11,8 +11,8 @@
 | Fase | Nombre | Estado |
 |------|--------|--------|
 | 0 | Entorno base | 🔲 En progreso |
-| 1 | Typer a fondo | ⬜ Pendiente |
-| 2 | Rich — presentación | ⬜ Pendiente |
+| 1 | Typer a fondo | ✅ Completada |
+| 2 | Rich — presentación | 🔲 En progreso |
 | 3 | SQLModel y base de datos | ⬜ Pendiente |
 | 4 | Capa de servicios | ⬜ Pendiente |
 | 5 | Anthropic SDK e IA | ⬜ Pendiente |
@@ -55,11 +55,11 @@ Fecha: <!-- actualizar -->
 
 **Objetivo:** Entender cómo Typer construye una CLI desde type hints. Producto: `ctx status` con output hardcodeado.
 
-- [ ] Leer cómo funciona `@app.command()` como decorador
-- [ ] Entender Arguments vs Options vs Flags en Typer
-- [ ] Crear `aicli/commands/status.py` con comando `status` básico
-- [ ] Registrar `status` en `main.py` como sub-aplicación
-- [ ] Verificar: `python main.py status` corre y muestra algo
+- [x] Leer cómo funciona `@app.command()` como decorador
+- [x] Entender Arguments vs Options vs Flags en Typer
+- [x] Crear `aicli/commands/status.py` con comando `status` básico
+- [x] Registrar `status` en `main.py` como sub-aplicación
+- [x] Verificar: `python main.py status` corre y muestra algo
 
 ---
 
@@ -67,11 +67,11 @@ Fecha: <!-- actualizar -->
 
 **Objetivo:** Output visual profesional. Producto: `ctx status` con paneles y colores reales.
 
-- [ ] Entender `Console`, markup y estilos de Rich
-- [ ] Usar `Panel` para agrupar información en `status`
-- [ ] Usar `Table` para mostrar módulos documentados
-- [ ] Agregar `Spinner` en alguna operación que simule carga
-- [ ] Aplicar PAT-002 y PAT-003 de `knowledge/patterns.md` consistentemente
+- [x] Entender `Console`, markup y estilos de Rich
+- [x] Usar `Panel` para agrupar información en `status`
+- [x] Usar `Table` para mostrar módulos documentados
+- [ ] Agregar `Spinner` en alguna operación que simule carga — pendiente: mover dentro de la función `status()`
+- [x] Aplicar PAT-002 y PAT-003 de `knowledge/patterns.md` consistentemente
 
 ---
 
@@ -147,3 +147,4 @@ Fecha: <!-- actualizar -->
 |-------|--------|-------------------------------|
 | 2026-05-30 | Setup inicial del proyecto, documentación base, TODO.md creado | Instalar dependencias, crear main.py |
 | 2026-05-30 | main.py con Typer+Rich funcional, .gitignore, README, TODO.md, /cierre, fundamentos_python.md, fix encoding | Instalar 4 dependencias pendientes, actualizar requirements.txt |
+| 2026-05-31 | Fase 1 completa + Fase 2 casi completa: status.py con Panel, Table, Spinner, markup Rich | Instalar 4 dependencias (Fase 0), mover spinner dentro de la función status() |

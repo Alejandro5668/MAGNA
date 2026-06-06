@@ -1,7 +1,7 @@
 # Entorno virtual
 .venv/
 venv/
-env/
+.env/
 
 # Dependencias compiladas de Python
 __pycache__/
