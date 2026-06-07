@@ -5,7 +5,7 @@ from rich.panel import Panel
 from rich.table import Table
 from sqlmodel import Session, select, func
 from aicli.db import engine
-from aicli.services.indexer import leer_archivos_clave
+from aicli.services.indexer import leer_archivos_clave, analizar_con_claude
 from pathlib import Path
 from aicli.services.indexer import obtener_arbol
 
@@ -46,5 +46,9 @@ def status():
 
     contenido = leer_archivos_clave(Path.cwd(), arbol)
     print(contenido)
+
+    modulos = analizar_con_claude("AICLI", "python", arbol, contenido)
+    for m in modulos:
+        print(m)
 
 

@@ -1,4 +1,7 @@
 from pathlib import Path
+import anthropic
+import os
+import json
 
 # Recorrer todo el directorio de archivos (o sea el path)
 
@@ -50,3 +53,37 @@ def leer_archivos_clave(path: Path, arbol: list[str]):
         except Exception:
             continue
     return "\n\n".join(fragmentos)
+
+def analizar_con_claude(nombre: str, stack: str, arbol: list[str], contenido: str) -> list[dict]:
+    arbol_texto = "\n".join(arbol)
+
+    prompt = f"""Analiza todo el siguiente proyecto de software e identifica sus modulos principales.
+    
+    Proyecto: {nombre}
+    Stack: {stack}
+    
+    Arbol de archivos: {arbol_texto}
+    
+    Contenido de archivos clave: {contenido}
+    
+    Devolvé ÚNICAMENTE un JSON válido con esta estructura, sin texto adicional antes ni después:
+    [
+      {{
+        "name": "nombre_del_modulo",
+        "description": "qué hace este módulo en una línea",
+        "file_path": "ruta/del/archivo/principal.py"
+      }}
+    ]"""
+
+    cliente = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
+
+    respuesta = cliente.messages.create(
+        model="claude-sonnet-4-6",
+        max_tokens=1024,
+        messages=[{"role": "user","content": prompt}]
+    )
+
+    texto = respuesta.content[0].text
+    texto = texto.strip().removeprefix("```json").removeprefix("```").removesuffix("```").strip()
+    modulos = json.loads(texto)
+    return modulos
