@@ -2,10 +2,8 @@ import typer
 from rich.console import Console
 from pathlib import Path
 from datetime import datetime
-
 from rich.panel import Panel
 from sqlmodel import Session, select
-
 from aicli.db import engine
 from aicli.db.models import Project
 
@@ -35,7 +33,8 @@ def init():
     )
 
     with Session(engine) as session:
-        statement = select(Project).where(proyecto.path == path)
+        # Convertimos a string el path ya que asi la comparacion con la columna es compatible se hace str vs str
+        statement = select(Project).where(Project.path == str(path))
         exist = session.exec(statement).first()
         if (exist):
             mensaje = f"{path} ya existe"

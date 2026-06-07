@@ -3,6 +3,13 @@ import time
 from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
+from sqlmodel import Session, select, func
+from aicli.db import engine
+from aicli.services.indexer import leer_archivos_clave
+from pathlib import Path
+from aicli.services.indexer import obtener_arbol
+
+from aicli.db.models import Project
 
 app = typer.Typer() # con esta linea de codigo se crea la CLI, tiene que ir en cada archivo .py
 console = Console()
@@ -11,7 +18,13 @@ console = Console()
 @app.callback(invoke_without_command=True)
 def status():
     console.print("[bold cyan]Estado del contexto[/bold cyan]")
-    contenido = "[bold]Modulos documentados: [/bold] [dim]0[/dim]\n[bold]Proyectos registrados[/bold]: [dim]0[/dim]"
+
+    with Session(engine) as session:
+        statement = select(func.count()).select_from(Project)
+        total = session.exec(statement).first()
+        contenido = f"[bold]Modulos documentados: [/bold] [dim]0[/dim]\n[bold]Proyectos registrados[/bold]: [dim]{total}[/dim]"
+
+
     console.print(Panel(contenido, title="AICLI - ESTADO DEL CONTEXTO", border_style="cyan"))
 
     with console.status("Consultando modulos...", spinner="dots3", spinner_style="cyan"):
@@ -26,5 +39,12 @@ def status():
         tabla.add_row("services", "Logica de negocio")
 
     console.print(tabla)
+
+    arbol = obtener_arbol(Path.cwd())
+    for f in arbol:
+        print(f)
+
+    contenido = leer_archivos_clave(Path.cwd(), arbol)
+    print(contenido)
 
 

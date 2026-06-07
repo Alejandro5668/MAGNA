@@ -5,18 +5,20 @@ Formato: **decisión** → **por qué** → **alternativas descartadas**.
 
 ---
 
-## DEC-001 — SQLite sobre PostgreSQL o MongoDB
+## DEC-001 — MySQL sobre SQLite
 
-**Decisión:** Usar SQLite como almacenamiento del knowledge store.
+**Decisión:** Usar MySQL como almacenamiento del knowledge store.
 
-**Por qué:** AICLI es una herramienta personal local. No hay múltiples usuarios, no hay
-servidor, no hay necesidad de concurrencia pesada. SQLite funciona como un archivo en
-`~/.mycontext/` — zero configuración, zero mantenimiento, portable entre máquinas.
+**Por qué:** El desarrollador ya tiene un servidor MySQL disponible localmente. Usar MySQL
+permite queries más potentes, mejor soporte de herramientas (clientes GUI, introspección),
+y evita limitaciones de SQLite en escenarios de escritura concurrente futura.
+Conexión vía `mysql+pymysql://` con credenciales en `.env`.
 
 **Alternativas descartadas:**
-- PostgreSQL: requiere servidor corriendo, overkill para una CLI personal
-- MongoDB: añade complejidad de schema-less que no necesitamos; nuestros datos son estructurados
-- JSON plano: no tiene queries, índices, ni transacciones; escala mal cuando hay muchos módulos
+- SQLite: considerado inicialmente (DEC-001 original), descartado en favor de MySQL por disponibilidad de servidor local
+- PostgreSQL: más complejo de configurar que MySQL para este caso
+- MongoDB: schema-less innecesario; los datos son estructurados
+- JSON plano: sin queries, índices ni transacciones
 
 ---
 
