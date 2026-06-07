@@ -10,9 +10,9 @@
 
 | Fase | Nombre | Estado |
 |------|--------|--------|
-| 0 | Entorno base | 🔲 En progreso |
+| 0 | Entorno base | ✅ Completada |
 | 1 | Typer a fondo | ✅ Completada |
-| 2 | Rich — presentación | 🔲 En progreso |
+| 2 | Rich — presentación | ✅ Completada |
 | 3 | SQLModel y base de datos | ⬜ Pendiente |
 | 4 | Capa de servicios | ⬜ Pendiente |
 | 5 | Anthropic SDK e IA | ⬜ Pendiente |
@@ -44,8 +44,8 @@ Fecha: <!-- actualizar -->
 - [x] `CLAUDE.md` con contexto del proyecto
 - [x] `knowledge/` con decisions, patterns y progress
 - [x] `.claude/commands/start.md` — comando `/project:start`
-- [ ] Instalar dependencias pendientes: `sqlmodel anthropic httpx python-dotenv`
-- [ ] Actualizar `requirements.txt` con versiones exactas (`pip freeze > requirements.txt`)
+- [x] Instalar dependencias pendientes: `sqlmodel anthropic httpx python-dotenv`
+- [x] Actualizar `requirements.txt` con versiones exactas (`pip freeze > requirements.txt`)
 - [x] Crear `main.py` — app Typer + comando `hello` funcional
 - [x] Verificar: `python main.py hello` corre sin errores
 
@@ -70,7 +70,7 @@ Fecha: <!-- actualizar -->
 - [x] Entender `Console`, markup y estilos de Rich
 - [x] Usar `Panel` para agrupar información en `status`
 - [x] Usar `Table` para mostrar módulos documentados
-- [ ] Agregar `Spinner` en alguna operación que simule carga — pendiente: mover dentro de la función `status()`
+- [x] Agregar `Spinner` en alguna operación que simule carga — pendiente: mover dentro de la función `status()`
 - [x] Aplicar PAT-002 y PAT-003 de `knowledge/patterns.md` consistentemente
 
 ---
@@ -79,11 +79,11 @@ Fecha: <!-- actualizar -->
 
 **Objetivo:** Persistencia real. Producto: `ctx init` guarda proyecto en SQLite, `ctx status` lo lee.
 
-- [ ] Entender qué es un ORM y por qué SQLModel sobre SQLAlchemy puro
-- [ ] Definir modelo `Project` en `aicli/db/`
-- [ ] Definir modelo `Module` en `aicli/db/`
-- [ ] Crear conexión a SQLite en `~/.mycontext/aicli.db`
-- [ ] Crear tablas automáticamente al primer uso
+- [x] Entender qué es un ORM y por qué SQLModel sobre SQLAlchemy puro
+- [x] Definir modelo `Project` en `aicli/db/`
+- [x] Definir modelo `Module` en `aicli/db/`
+- [x] Crear conexión a SQLite en `~/.mycontext/aicli.db`
+- [x] Crear tablas automáticamente al primer uso
 - [ ] Crear `aicli/commands/init.py` — guarda proyecto activo en la BD
 - [ ] Verificar: `ctx init` + `ctx status` muestran el proyecto guardado
 
@@ -148,3 +148,4 @@ Fecha: <!-- actualizar -->
 | 2026-05-30 | Setup inicial del proyecto, documentación base, TODO.md creado | Instalar dependencias, crear main.py |
 | 2026-05-30 | main.py con Typer+Rich funcional, .gitignore, README, TODO.md, /cierre, fundamentos_python.md, fix encoding | Instalar 4 dependencias pendientes, actualizar requirements.txt |
 | 2026-05-31 | Fase 1 completa + Fase 2 casi completa: status.py con Panel, Table, Spinner, markup Rich | Instalar 4 dependencias (Fase 0), mover spinner dentro de la función status() |
+| 2026-06-06 | Instaladas 4 dependencias + PyMySQL, modelos Project y Module creados, conexión MySQL configurada con .env, tablas creadas en BD | Crear aicli/commands/init.py para guardar proyectos en la BD |
