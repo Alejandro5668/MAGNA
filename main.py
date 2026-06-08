@@ -4,12 +4,14 @@ from rich.panel import Panel
 from aicli.commands import status
 from aicli.db import init_db
 from aicli.commands import init
+from aicli.commands import module
 
 init_db()
 
 app = typer.Typer(help="AICLI - Motor de contexto para Claude Code")
 app.add_typer(status.app, name="status")
 app.add_typer(init.app, name="init")
+app.add_typer(module.app, name="module")
 console = Console()
 
 

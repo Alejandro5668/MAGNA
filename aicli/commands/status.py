@@ -5,11 +5,7 @@ from rich.panel import Panel
 from rich.table import Table
 from sqlmodel import Session, select, func
 from aicli.db import engine
-from aicli.services.indexer import leer_archivos_clave, analizar_con_claude
-from pathlib import Path
-from aicli.services.indexer import obtener_arbol
-
-from aicli.db.models import Project
+from aicli.db.models import Project, Module
 
 app = typer.Typer() # con esta linea de codigo se crea la CLI, tiene que ir en cada archivo .py
 console = Console()
@@ -34,9 +30,17 @@ def status():
         tabla.add_column("nombre", style="bold")
         tabla.add_column("Descripción")
 
-        tabla.add_row("commands", "comandos de la CLI")
-        tabla.add_row("db", "Modelos y conexion SQLite")
-        tabla.add_row("services", "Logica de negocio")
+        with Session(engine) as session:
+            modules = select(Module.name, Module.description)
+            results = session.exec(modules).all()
+
+            # Si no hay resultados ...
+            if not results:
+                console.print("[red]No hay módulos registrados.[/red]")
+                raise typer.Exit()
+
+            for m in results:
+                tabla.add_row(m.name, m.description)
 
     console.print(tabla)
 
