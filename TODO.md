@@ -13,8 +13,8 @@
 | 0 | Entorno base | ✅ Completada |
 | 1 | Typer a fondo | ✅ Completada |
 | 2 | Rich — presentación | ✅ Completada |
-| 3 | SQLModel y base de datos | ⬜ Pendiente |
-| 4 | Capa de servicios | ⬜ Pendiente |
+| 3 | SQLModel y base de datos | ✅ Completada |
+| 4 | Capa de servicios | ✅ Completada |
 | 5 | Anthropic SDK e IA | ⬜ Pendiente |
 | 6 | Comando `ctx claude` | ⬜ Pendiente |
 
@@ -84,8 +84,8 @@ Fecha: <!-- actualizar -->
 - [x] Definir modelo `Module` en `aicli/db/`
 - [x] Crear conexión a SQLite en `~/.mycontext/aicli.db`
 - [x] Crear tablas automáticamente al primer uso
-- [ ] Crear `aicli/commands/init.py` — guarda proyecto activo en la BD
-- [ ] Verificar: `ctx init` + `ctx status` muestran el proyecto guardado
+- [x] Crear `aicli/commands/init.py` — guarda proyecto activo en la BD
+- [x] Verificar: `ctx init` + `ctx status` muestran el proyecto guardado
 
 > Decisiones de referencia: DEC-001, DEC-004, DEC-005 en `knowledge/decisions.md`
 
@@ -95,11 +95,11 @@ Fecha: <!-- actualizar -->
 
 **Objetivo:** Separar lógica de los comandos. Producto: `indexer_service.py` detecta stack de un proyecto.
 
-- [ ] Entender el patrón Service Layer y por qué importa
-- [ ] Crear `aicli/services/indexer_service.py`
-- [ ] Implementar detección de stack por heurísticas de archivos (requirements.txt, package.json, etc.)
-- [ ] Conectar el servicio con `ctx init` — el comando solo llama al servicio
-- [ ] Verificar: el indexer detecta correctamente el stack de AICLI mismo
+- [x] Entender el patrón Service Layer y por qué importa
+- [x] Crear `aicli/services/indexer_service.py`
+- [x] Implementar detección de stack por heurísticas de archivos (requirements.txt, package.json, etc.)
+- [x] Conectar el servicio con `ctx init` — el comando solo llama al servicio
+- [x] Verificar: el indexer detecta correctamente el stack de AICLI mismo
 
 ---
 
@@ -107,11 +107,11 @@ Fecha: <!-- actualizar -->
 
 **Objetivo:** Claude detecta módulos afectados para una tarea. Producto: `ctx task "texto"` funcional.
 
-- [ ] Configurar `ANTHROPIC_API_KEY` con `python-dotenv` (ver PAT-004)
-- [ ] Entender cómo funciona la API de Claude: mensajes, roles, tokens
+- [x] Configurar `ANTHROPIC_API_KEY` con `python-dotenv` (ver PAT-004)
+- [x] Entender cómo funciona la API de Claude: mensajes, roles, tokens
 - [ ] Crear `aicli/services/claude_service.py`
-- [ ] Implementar llamada básica: enviar prompt, recibir respuesta
-- [ ] Implementar prompt para detección de módulos afectados
+- [x] Implementar llamada básica: enviar prompt, recibir respuesta
+- [x] Implementar prompt para detección de módulos afectados
 - [ ] Crear `aicli/commands/task.py` — recibe texto libre, llama al servicio, muestra módulos
 - [ ] Verificar: `ctx task "implementar login"` devuelve módulos relevantes
 
@@ -150,3 +150,4 @@ Fecha: <!-- actualizar -->
 | 2026-05-31 | Fase 1 completa + Fase 2 casi completa: status.py con Panel, Table, Spinner, markup Rich | Instalar 4 dependencias (Fase 0), mover spinner dentro de la función status() |
 | 2026-06-06 | Instaladas 4 dependencias + PyMySQL, modelos Project y Module creados, conexión MySQL configurada con .env, tablas creadas en BD | Crear aicli/commands/init.py para guardar proyectos en la BD |
 | 2026-06-06 | init.py creado con lógica de duplicados y detección de stack, decisión de no ignorar knowledge/ ni CLAUDE.md en .gitignore | Corregir bug en WHERE clause de init.py (Project.path vs proyecto.path), verificar ctx init funcionando |
+| 2026-06-07 | Indexer completo con Claude API (obtener_arbol, leer_archivos_clave, analizar_con_claude, generar_contenido_modulo), ctx init guarda módulos + .md en ~/.mycontext/, fix DetachedInstanceError, fix where clause, knowledge/aprendizaje.md creado | Corregir extensión .md en archivo_md, implementar ctx status con datos reales de módulos, crear claude_service.py |

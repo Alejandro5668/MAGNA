@@ -14,4 +14,5 @@ class Module(SQLModel, table=True):
     name: str
     description: str
     file_path: str
+    content_path: str
     created_at: str

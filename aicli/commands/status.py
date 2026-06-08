@@ -40,15 +40,4 @@ def status():
 
     console.print(tabla)
 
-    arbol = obtener_arbol(Path.cwd())
-    for f in arbol:
-        print(f)
-
-    contenido = leer_archivos_clave(Path.cwd(), arbol)
-    print(contenido)
-
-    modulos = analizar_con_claude("AICLI", "python", arbol, contenido)
-    for m in modulos:
-        print(m)
-
 

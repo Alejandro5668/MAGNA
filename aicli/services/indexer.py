@@ -87,3 +87,43 @@ def analizar_con_claude(nombre: str, stack: str, arbol: list[str], contenido: st
     texto = texto.strip().removeprefix("```json").removeprefix("```").removesuffix("```").strip()
     modulos = json.loads(texto)
     return modulos
+
+def generar_contenido_modulo(nombre: str, file_path: str, contenido_fuente: str) -> str:
+    prompt = f""" Eres un asistente tecnico. Genera documentacion detallada en markdown para este modulo.
+
+    Modulo: {nombre}
+    Archivo: {file_path}
+
+    Codigo fuente: {contenido_fuente}
+
+    Generá un documento markdown con exactamente estas secciones:
+    - Qué hace este módulo
+    - Funciones o clases principales (con descripción de cada una)
+    - Conexiones con otros módulos
+    - Convenciones o decisiones técnicas relevantes
+
+    Solo el markdown, sin texto adicional antes ni después.
+    """
+    cliente = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
+
+    respuesta = cliente.messages.create(
+        model="claude-sonnet-4-6",
+        max_tokens=2048,
+        messages=[{"role": "user", "content": prompt}]
+    )
+    return respuesta.content[0].text
+
+def indexar_proyecto(path: Path, nombre: str, stack: str) -> list[dict]:
+    arbol = obtener_arbol(path)
+    contenido = leer_archivos_clave(path, arbol)
+    modulos = analizar_con_claude(nombre, stack, arbol, contenido)
+
+    for modulo in modulos:
+        ruta_fuente = path / modulo["file_path"]
+        try:
+            fuente = ruta_fuente.read_text(encoding="utf-8")
+        except FileNotFoundError:
+            fuente = ""
+        modulo["content_md"] = generar_contenido_modulo(modulo["name"], modulo["file_path"], fuente)
+
+    return modulos

@@ -1,11 +1,13 @@
 import typer
-from rich.console import Console
+from rich.console import Console, Group
 from pathlib import Path
 from datetime import datetime
 from rich.panel import Panel
 from sqlmodel import Session, select
 from aicli.db import engine
 from aicli.db.models import Project
+from aicli.services.indexer import indexar_proyecto
+from aicli.db.models import Module
 
 app = typer.Typer()
 console = Console()
@@ -43,7 +45,42 @@ def init():
 
         session.add(proyecto)
         session.commit()
+        session.refresh(proyecto)
 
-    console.print(f"[bold cyan]:) Proyecto [bold]{name}[/bold] registrado [/bold cyan]")
-    console.print(f"[bold dim]Stack: {stack}[/bold dim]")
-    console.print(f"[bold dim]Ruta: {path}[/bold dim]")
+    with console.status("Analizando proyecto...", spinner="dots3", spinner_style="cyan"):
+        modulos = indexar_proyecto(path, name, stack)
+
+        directorio = Path.home() / ".mycontext" / "projects" / str(proyecto.id)
+        directorio.mkdir(parents=True, exist_ok=True)
+
+        for m in modulos:
+            archivo_md = directorio / f"{m['name']}"
+            archivo_md.write_text(m["content_md"], encoding="utf-8")
+            m["content_path"] = str(archivo_md)
+
+    with Session(engine) as session:
+        for m in modulos:
+            modulo = Module(
+                project_id = proyecto.id,
+                name = m["name"],
+                description = m["description"],
+                file_path = m["file_path"],
+                content_path = m["content_path"],
+                created_at=datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            )
+            session.add(modulo)
+            session.commit()
+
+    contenido_panel = Group(
+        f"[bold cyan]✔ Proyecto [bold]{name}[/bold] registrado [/bold cyan]",
+        f"[bold dim]Stack: {stack}[/bold dim]",
+        f"[bold dim]Ruta: {path}[/bold dim]"
+    )
+
+    console.print(
+        Panel(
+            contenido_panel,
+            title="Registro Exitoso",
+            border_style="green"
+        )
+    )
