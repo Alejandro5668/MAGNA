@@ -36,7 +36,7 @@ def status():
 
             # Si no hay resultados ...
             if not results:
-                console.print("[red]No hay módulos registrados.[/red]")
+                console.print("[yellow]No hay módulos registrados.[/yellow]")
                 raise typer.Exit()
 
             for m in results:

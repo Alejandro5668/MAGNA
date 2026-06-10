@@ -21,7 +21,7 @@ def add(
         statement = session.exec(select(Module).where(Module.file_path == str(file))).first()
         if statement:
             contenido_panel = Group(
-                f"[cyan]El módulo [bold]{statement.name}[/bold] ya documentado [/cyan] ",
+                f"[cyan]El módulo [bold]{statement.name}[/bold] ya esta documentado[/cyan] ",
                 "[bold]Si quieres actualizarlo, borra el módulo primero y vuelve a correr este comando.[/bold]"
             )
             console.print(Panel(

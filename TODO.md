@@ -136,6 +136,7 @@ Fecha: <!-- actualizar -->
 | Fecha | Bloqueante | Estado |
 |-------|------------|--------|
 | — | — | — |
+| 2026-06-08 | Migrar MySQL → SQLite para habilitar distribución como .exe standalone. Solo requiere cambiar `aicli/db/__init__.py`. Pendiente intencional. | Pendiente |
 
 ---
 
@@ -151,3 +152,4 @@ Fecha: <!-- actualizar -->
 | 2026-06-06 | Instaladas 4 dependencias + PyMySQL, modelos Project y Module creados, conexión MySQL configurada con .env, tablas creadas en BD | Crear aicli/commands/init.py para guardar proyectos en la BD |
 | 2026-06-06 | init.py creado con lógica de duplicados y detección de stack, decisión de no ignorar knowledge/ ni CLAUDE.md en .gitignore | Corregir bug en WHERE clause de init.py (Project.path vs proyecto.path), verificar ctx init funcionando |
 | 2026-06-07 | Indexer completo con Claude API (obtener_arbol, leer_archivos_clave, analizar_con_claude, generar_contenido_modulo), ctx init guarda módulos + .md en ~/.mycontext/, fix DetachedInstanceError, fix where clause, knowledge/aprendizaje.md creado | Corregir extensión .md en archivo_md, implementar ctx status con datos reales de módulos, crear claude_service.py |
+| 2026-06-08 | ctx module add funcional con validación de duplicados + Claude API, status.py con datos reales, mensajes estandarizados (green/red/yellow/Group+Panel) | Crear claude_service.py, crear task.py, verificar ctx task |
