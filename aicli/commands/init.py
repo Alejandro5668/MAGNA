@@ -14,12 +14,51 @@ console = Console()
 
 
 def detectar_stack(path: Path) -> str:
-    if (path / "requirements.txt").exists():
+    if (path / "requirements.txt").exists() or (path / "pyproject.toml").exists():
         return "python"
     if (path / "composer.json").exists():
         return "laravel"
     if (path / "pom.xml").exists():
         return "java"
+    if (path / "build.gradle").exists() or (path / "build.gradle.kts").exists():
+        return "kotlin"
+    if (path / "Cargo.toml").exists():
+        return "rust"
+    if (path / "go.mod").exists():
+        return "go"
+    if (path / "*.csproj").exists() or (path / "*.sln").exists():
+        return "dotnet"
+    if (path / "package.json").exists():
+        pkg = path / "package.json"
+        try:
+            import json
+            data = json.loads(pkg.read_text(encoding="utf-8"))
+            deps = {**data.get("dependencies", {}), **data.get("devDependencies", {})}
+            if "next" in deps:
+                return "nextjs"
+            if "nuxt" in deps:
+                return "nuxt"
+            if "react" in deps:
+                return "react"
+            if "vue" in deps:
+                return "vue"
+            if "@angular/core" in deps:
+                return "angular"
+            if "svelte" in deps:
+                return "svelte"
+            if "express" in deps or "fastify" in deps or "koa" in deps:
+                return "nodejs"
+            if "typescript" in deps or (path / "tsconfig.json").exists():
+                return "typescript"
+        except Exception:
+            pass
+        return "javascript"
+    if (path / "Gemfile").exists():
+        return "ruby"
+    if (path / "pubspec.yaml").exists():
+        return "flutter"
+    if (path / "mix.exs").exists():
+        return "elixir"
     return "desconocido"
 
 

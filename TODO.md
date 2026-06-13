@@ -15,8 +15,8 @@
 | 2 | Rich — presentación | ✅ Completada |
 | 3 | SQLModel y base de datos | ✅ Completada |
 | 4 | Capa de servicios | ✅ Completada |
-| 5 | Anthropic SDK e IA | ⬜ Pendiente |
-| 6 | Comando `ctx claude` | ⬜ Pendiente |
+| 5 | Anthropic SDK e IA | ✅ Completada |
+| 6 | Comando `ctx claude` | ✅ Completada |
 
 ---
 
@@ -82,7 +82,7 @@ Fecha: <!-- actualizar -->
 - [x] Entender qué es un ORM y por qué SQLModel sobre SQLAlchemy puro
 - [x] Definir modelo `Project` en `aicli/db/`
 - [x] Definir modelo `Module` en `aicli/db/`
-- [x] Crear conexión a SQLite en `~/.mycontext/aicli.db`
+- [x] Crear conexión a SQLite en `~/.mycontext/ctx.db`
 - [x] Crear tablas automáticamente al primer uso
 - [x] Crear `aicli/commands/init.py` — guarda proyecto activo en la BD
 - [x] Verificar: `ctx init` + `ctx status` muestran el proyecto guardado
@@ -93,10 +93,10 @@ Fecha: <!-- actualizar -->
 
 ## Fase 4 — Capa de servicios
 
-**Objetivo:** Separar lógica de los comandos. Producto: `indexer_service.py` detecta stack de un proyecto.
+**Objetivo:** Separar lógica de los comandos. Producto: `indexer.py` detecta stack y documenta módulos con IA.
 
 - [x] Entender el patrón Service Layer y por qué importa
-- [x] Crear `aicli/services/indexer_service.py`
+- [x] Crear `aicli/services/indexer.py`
 - [x] Implementar detección de stack por heurísticas de archivos (requirements.txt, package.json, etc.)
 - [x] Conectar el servicio con `ctx init` — el comando solo llama al servicio
 - [x] Verificar: el indexer detecta correctamente el stack de AICLI mismo
@@ -109,11 +109,11 @@ Fecha: <!-- actualizar -->
 
 - [x] Configurar `ANTHROPIC_API_KEY` con `python-dotenv` (ver PAT-004)
 - [x] Entender cómo funciona la API de Claude: mensajes, roles, tokens
-- [ ] Crear `aicli/services/claude_service.py`
+- [x] Crear `aicli/services/builder.py` + `aicli/services/caller.py` (equivalente a `claude_service.py` — mejor separación)
 - [x] Implementar llamada básica: enviar prompt, recibir respuesta
 - [x] Implementar prompt para detección de módulos afectados
-- [ ] Crear `aicli/commands/task.py` — recibe texto libre, llama al servicio, muestra módulos
-- [ ] Verificar: `ctx task "implementar login"` devuelve módulos relevantes
+- [x] Crear `aicli/commands/task.py` — recibe texto libre, detecta módulos relevantes con IA, lanza Claude
+- [x] Verificar: `ctx task` detecta módulos y lanza Claude (rate limit resuelto, shell=True en Windows)
 
 ---
 
@@ -121,11 +121,37 @@ Fecha: <!-- actualizar -->
 
 **Objetivo:** AICLI completo end-to-end. Producto: Claude Code lanzado con contexto inyectado.
 
-- [ ] Entender `subprocess` en Python — cómo lanzar procesos externos
-- [ ] Implementar ensamblado dinámico del `CLAUDE.md` por sesión
-- [ ] Crear `aicli/commands/claude_cmd.py`
-- [ ] Lanzar Claude Code como subprocess con contexto pre-cargado
-- [ ] Verificar: `ctx claude` abre Claude Code sin necesidad de re-explicar el proyecto
+- [x] Entender `subprocess` en Python — cómo lanzar procesos externos
+- [x] Implementar ensamblado dinámico del contexto por sesión (`builder.py` + `session_context.md`)
+- [x] Crear `aicli/commands/claude_cmd.py`
+- [x] Lanzar Claude Code como subprocess con contexto pre-cargado
+- [x] Verificar: `ctx claude` abre Claude Code con contexto completo del proyecto
+
+---
+
+## Fase 7 — CLI completa y robusta *(fase nueva — trabajo de esta sesión)*
+
+**Objetivo:** CLI lista para distribuir como `.exe` a usuarios reales.
+
+- [x] Migrar BD de MySQL a SQLite (`aicli/db/__init__.py`) — DEC-001
+- [x] Señal de frescura: `last_updated_at`, `category`, `domain` en modelo `Module` — DEC-007 / DEC-008
+- [x] `modulo_necesita_actualizacion()` en `indexer.py` — re-documenta solo archivos modificados
+- [x] Refactor `init.py` — proyecto existente → actualizar en lugar de error
+- [x] Refactor `module.py` — módulo existente → actualizar si cambió
+- [x] Crear `aicli/commands/snapshot.py` — punto de restauración del knowledge store
+- [x] Menú interactivo con logo ASCII (pyfiglet) + flechas (questionary)
+- [x] Loop de menú — vuelve al menú después de cada comando en lugar de cerrar
+- [x] Menú completo con los 6 comandos disponibles
+- [x] Verificación y configuración de API key en primera ejecución
+- [x] Selector de proyecto para usuarios que abren el `.exe` sin estar en un directorio registrado
+- [x] Sistema de logs en `~/.mycontext/aicli.log` con niveles INFO y ERROR
+- [x] Rate limit handling: reintentos con backoff (30s → 60s → 120s) en `indexer.py`
+- [x] Límite de contenido (`MAX_CHARS_CONTENIDO`) para evitar prompts gigantes
+- [x] Fix `.next/`, `dist/`, `build/` y directorios de build en `IGNORAR`
+- [x] Fix `.tsx`, `.jsx` y extensiones de código ampliadas para soporte multi-stack
+- [x] Detección de stack ampliada: Next.js, React, Vue, Angular, TypeScript, Go, Rust, Kotlin, Ruby, Flutter, Elixir
+- [ ] Verificar `ctx task` y `ctx claude` end-to-end en otro PC con el `.exe`
+- [ ] Empaquetar como `.exe`: `pyinstaller --onefile --collect-data pyfiglet main.py --name ctx`
 
 ---
 
@@ -135,8 +161,7 @@ Fecha: <!-- actualizar -->
 
 | Fecha | Bloqueante | Estado |
 |-------|------------|--------|
-| — | — | — |
-| 2026-06-08 | Migrar MySQL → SQLite para habilitar distribución como .exe standalone. Solo requiere cambiar `aicli/db/__init__.py`. Pendiente intencional. | Pendiente |
+| 2026-06-08 | Migrar MySQL → SQLite para habilitar distribución como .exe standalone | ✅ Resuelto 2026-06-13 |
 
 ---
 
@@ -154,3 +179,4 @@ Fecha: <!-- actualizar -->
 | 2026-06-07 | Indexer completo con Claude API (obtener_arbol, leer_archivos_clave, analizar_con_claude, generar_contenido_modulo), ctx init guarda módulos + .md en ~/.mycontext/, fix DetachedInstanceError, fix where clause, knowledge/aprendizaje.md creado | Corregir extensión .md en archivo_md, implementar ctx status con datos reales de módulos, crear claude_service.py |
 | 2026-06-08 | ctx module add funcional con validación de duplicados + Claude API, status.py con datos reales, mensajes estandarizados (green/red/yellow/Group+Panel) | Crear claude_service.py, crear task.py, verificar ctx task |
 | 2026-06-11 | Sesión de planificación: DEC-007 señal de frescura, DEC-008 frontend Next.js, corrección DEC-001 SQLite, prompt para Lovable creado en design/lovable_prompt.md, progress.md reorganizado por fases | Implementar migración MySQL→SQLite en db/__init__.py, luego señal de frescura en models.py e indexer.py |
+| 2026-06-13 | Migración SQLite completa, señal de frescura, todos los comandos CLI implementados (task, claude, snapshot), menú interactivo con pyfiglet+questionary, API key flow, selector de proyecto, sistema de logs, rate limit handling, soporte multi-stack | Verificar ctx task y ctx claude end-to-end en otro PC, empaquetar como .exe |

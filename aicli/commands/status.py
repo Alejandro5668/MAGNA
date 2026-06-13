@@ -27,7 +27,13 @@ def status():
         results = list(session.exec(select(Module.name, Module.description, Module.file_path)).all())
 
     if not results:
-        console.print("[yellow]No hay módulos registrados.[/yellow]")
+        console.print(Panel(
+            "[yellow]Todavía no hay módulos documentados.[/yellow]\n\n"
+            "Seleccioná [bold cyan]ctx init[/bold cyan] en el menú para escanear "
+            "el proyecto activo y generar la documentación.",
+            title="Sin documentación",
+            border_style="yellow"
+        ))
         return
 
     tabla = Table(style="cyan")
