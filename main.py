@@ -1,3 +1,6 @@
+from dotenv import load_dotenv
+load_dotenv()
+
 import typer
 from rich.console import Console
 from rich.panel import Panel
@@ -6,6 +9,7 @@ from aicli.db import init_db
 from aicli.commands import init
 from aicli.commands import module
 
+# se inica la creacion de la BD primero antes
 init_db()
 
 app = typer.Typer(help="AICLI - Motor de contexto para Claude Code")

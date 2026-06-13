@@ -29,7 +29,7 @@ def init():
 
     proyecto = Project(
         name=name,
-        path=path,
+        path=str(path),
         stack=stack,
         created_at=datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     )

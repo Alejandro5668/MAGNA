@@ -1,18 +1,12 @@
-import os
-
-from dotenv import load_dotenv
-from sqlmodel import create_engine
-from sqlmodel import SQLModel
+from pathlib import Path
+from sqlmodel import create_engine, SQLModel
 from aicli.db import models
 
-load_dotenv()
+_db_path = Path.home() / ".mycontext" / "ctx.db"
+DATABASE_URL = f"sqlite:///{_db_path}"
 
-DATABASE_URL = (
-    f"mysql+pymysql://{os.getenv('DB_USER')}:{os.getenv('DB_PASSWORD')}"
-    f"@{os.getenv('DB_HOST')}:{os.getenv('DB_PORT')}/{os.getenv('DB_NAME')}"
-)
-
-engine = create_engine(DATABASE_URL, echo=True)
+engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
 
 def init_db():
+    Path.home().joinpath(".mycontext").mkdir(exist_ok=True)
     SQLModel.metadata.create_all(engine)
