@@ -16,3 +16,6 @@ class Module(SQLModel, table=True):
     file_path: str
     content_path: str
     created_at: str
+    last_updated_at: float | None = Field(default=None)
+    category: str | None = Field(default=None)
+    domain: str | None = Field(default=None)
