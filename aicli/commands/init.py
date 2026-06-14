@@ -100,9 +100,8 @@ def detectar_stack(path: Path) -> str:
         return "flutter"
     if (path / "mix.exs").exists():
         return "elixir"
-    # PHP puro sin composer.json
-    php_files = list(path.rglob("*.php"))
-    if len(php_files) > 10:
+    # PHP puro sin composer.json — solo raíz para no escanear miles de archivos
+    if any(path.glob("*.php")):
         return "php"
     return "desconocido"
 
@@ -220,7 +219,7 @@ def _actualizar_proyecto(proyecto: Project, path: Path) -> None:
         if modulo_necesita_actualizacion(modulo.file_path, path, modulo):
             ruta_fuente = path / modulo.file_path
             try:
-                fuente = ruta_fuente.read_text(encoding="utf-8")
+                fuente = ruta_fuente.read_text(encoding="latin-1")
             except FileNotFoundError:
                 console.print(f"  [bold yellow]⚠[/bold yellow] [dim]{modulo.file_path} — no encontrado, se omite[/dim]")
                 continue

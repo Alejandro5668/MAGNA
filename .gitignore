@@ -38,6 +38,9 @@ build/
 Thumbs.db
 desktop.ini
 
+# Assets e imágenes (logo, iconos, prompts de diseño)
+images/
+
 # Coverage y tests
 .coverage
 htmlcov/

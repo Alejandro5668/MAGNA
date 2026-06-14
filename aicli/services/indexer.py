@@ -36,7 +36,7 @@ ESPERA_INICIAL = 60
 
 def _cargar_ignorar(path: Path) -> set[str]:
     """
-    Lee el .gitignore + sección 8 de PROYECTO.md y lo combina con el mínimo universal.
+    Lee el .gitignore del proyecto y lo combina con el mínimo universal.
     El proyecto ya sabe qué es ruido — nosotros no.
     """
     ignorar = set(IGNORAR_UNIVERSAL)
