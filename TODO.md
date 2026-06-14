@@ -28,11 +28,11 @@
 
 > Actualizá esto al inicio de cada sesión. Máximo 3 tareas. Si tenés más de 3, el resto va al backlog.
 
-Fecha: <!-- actualizar -->
+Fecha: 2026-06-14
 
-- [ ] <!-- tarea 1 -->
-- [ ] <!-- tarea 2 -->
-- [ ] <!-- tarea 3 -->
+- [x] Verificar `ctx init --arquitectura` en proyecto PHP de empresa
+- [x] Verificar `ctx task --archivo` en proyecto PHP de empresa
+- [ ] Empaquetar `.exe` nuevo con cambios de hoy
 
 ---
 
@@ -229,6 +229,33 @@ usar múltiples agentes Claude especializados por zona del proyecto corriendo en
 
 ---
 
+## Fase 11 — Escalabilidad, precisión y UX para proyectos grandes *(2026-06-14)*
+
+**Objetivo:** Hacer que AICLI funcione correctamente en proyectos de cualquier escala,
+incluyendo monolitos PHP de 11.000 archivos. Mejorar la precisión de ctx task y la
+coherencia del patrón `modulo/archivo.php` en toda la CLI.
+
+- [x] `ctx init --zona <carpeta>` — documenta solo una subcarpeta específica
+- [x] `ctx init --reciente N` — documenta archivos modificados en los últimos N días (git log)
+- [x] `ctx init --arquitectura` — lee código real de carpetas de nivel 1, discrimina módulos de infraestructura
+- [x] Guía interactiva con questionary cuando el proyecto supera 500 archivos de código
+- [x] `documentar_arquitectura()` reescrito: lee código real (500 chars/archivo, prioriza archivo con nombre de la carpeta)
+- [x] Documentación almacenada espejando estructura del proyecto: `modulo/archivo.md` (DEC-009)
+- [x] `ctx task --archivo modulo/archivo.php` — ancla el contexto al archivo exacto del problema
+- [x] El módulo del `--archivo` siempre se incluye en el contexto, sin importar el filtrado
+- [x] `ctx module add modulo/archivo.php` — nombre derivado del stem, sin argumento separado (DEC-018)
+- [x] Diagnóstico automático cuando Claude no se encuentra: busca en rutas conocidas de Windows, muestra fix exacto, ofrece reintentar (DEC-019)
+- [x] `lanzar_claude()` lanza `claude.cmd` por ruta completa si lo encuentra aunque no esté en PATH
+- [x] `MAX_ARBOL_ENTRADAS = 300`, backoff `ESPERA_INICIAL = 60`, `MAX_REINTENTOS = 4` (fix rate limit proyecto PHP)
+- [x] Depuración: eliminados comentarios de historia en constantes, try/except redundantes, `OnProgreso` duplicado
+- [x] Decisiones DEC-009 a DEC-019 documentadas en `knowledge/decisions.md`
+- [x] `knowledge/progress.md` reescrito completo con estado real al 2026-06-14
+- [ ] Verificar `ctx init --arquitectura` en proyecto PHP de empresa (11.000 archivos)
+- [ ] Verificar `ctx task --archivo pagos/X.php` en proyecto PHP de empresa
+- [ ] Empaquetar `.exe` nuevo: `pyinstaller ctx.spec`
+
+---
+
 ## Bloqueantes activos
 
 > Registrá acá cualquier cosa que te frenó. Con fecha y contexto breve.
@@ -254,3 +281,4 @@ usar múltiples agentes Claude especializados por zona del proyecto corriendo en
 | 2026-06-08 | ctx module add funcional con validación de duplicados + Claude API, status.py con datos reales, mensajes estandarizados (green/red/yellow/Group+Panel) | Crear claude_service.py, crear task.py, verificar ctx task |
 | 2026-06-11 | Sesión de planificación: DEC-007 señal de frescura, DEC-008 frontend Next.js, corrección DEC-001 SQLite, prompt para Lovable creado en design/lovable_prompt.md, progress.md reorganizado por fases | Implementar migración MySQL→SQLite en db/__init__.py, luego señal de frescura en models.py e indexer.py |
 | 2026-06-13 | Migración SQLite completa, señal de frescura, todos los comandos CLI implementados (task, claude, snapshot), menú interactivo con pyfiglet+questionary, API key flow, selector de proyecto, sistema de logs, rate limit handling, soporte multi-stack | Verificar ctx task y ctx claude end-to-end en otro PC, empaquetar como .exe |
+| 2026-06-14 | Optimización completa: ctx init con 3 modos nuevos (--zona/--reciente/--arquitectura), ctx task con extended thinking + brief + --archivo, ctx module add simplificado a ruta, docs en estructura modulo/archivo.md, diagnóstico Claude en Windows, documentar_arquitectura con código real, depuración de código, decisiones DEC-009 a DEC-019 | Verificar todo en proyecto PHP de empresa (11.000 archivos), empaquetar .exe nuevo |

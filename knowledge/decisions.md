@@ -224,3 +224,149 @@ confianza antes de construirla.
   sobre el modelo de datos
 - Solo CLI sin frontend: válido para Fase 1 pero no escala a empresas que necesitan acceso
   para múltiples áreas sin conocimientos técnicos
+
+---
+
+## DEC-009 — Documentación espeja la estructura del proyecto
+
+**Decisión:** Los archivos `.md` de documentación se almacenan replicando la estructura
+de rutas del proyecto. `pagos/PagosController.php` genera `~/.mycontext/projects/<id>/pagos/PagosController.md`.
+
+**Por qué:** Consistencia total entre la ruta del archivo fuente y la ruta del documento.
+`ctx module add pagos/X.php` → `pagos/X.md`. `ctx task --archivo pagos/X.php` → lee `pagos/X.md`.
+El desarrollador usa el mismo patrón `modulo/archivo.php` en todos los comandos.
+
+**Alternativas descartadas:**
+- Archivos planos `nombre_modulo.md`: no relaciona visualmente la doc con el archivo fuente
+
+---
+
+## DEC-010 — analizar_y_documentar: una sola llamada en vez de N+1
+
+**Decisión:** `ctx init` hace UNA sola llamada a Claude que identifica módulos Y genera
+su documentación en la misma respuesta (campo `documentation` en el JSON).
+
+**Por qué:** El flujo anterior (1 llamada para identificar + N llamadas para documentar)
+tardaba 15 minutos en un proyecto Next.js con 15 módulos — 16 llamadas API secuenciales
+con `time.sleep(4)` entre cada una. La nueva arquitectura tarda ~25 segundos.
+
+**Alternativas descartadas:**
+- Batching paralelo con ThreadPoolExecutor: innecesario si una sola llamada alcanza
+
+---
+
+## DEC-011 — Tres modos de ctx init para proyectos grandes
+
+**Decisión:** `ctx init` tiene tres modos explícitos para proyectos con más de 500
+archivos de código: `--zona`, `--reciente`, `--arquitectura`. Sin modo explícito,
+muestra una guía interactiva con questionary.
+
+**Por qué:** Documentar 11.000 archivos en una sola llamada es inviable. El desarrollador
+necesita elegir conscientemente el alcance de la documentación según su tarea actual.
+
+**Alternativas descartadas:**
+- Auto-documentar todo siempre: 480.886 tokens en una llamada → rate limit garantizado
+- Solo mostrar mensaje de error: no ayuda al usuario a saber qué hacer
+
+---
+
+## DEC-012 — ctx init --arquitectura lee código real de cada carpeta
+
+**Decisión:** El modo `--arquitectura` escanea carpetas de nivel 1 que tienen archivos
+de código directamente adentro (patrón `modulo/`), lee los archivos más representativos
+de cada carpeta (priorizando los que tienen el nombre de la carpeta en el stem), y le
+pasa ese código real a Claude. Lee máximo 500 chars por archivo para control de tokens.
+
+**Por qué:** La versión anterior contaba archivos por carpeta y le pasaba a Claude solo
+números y nombres. Claude generaba "áreas arquitectónicas" vagas sin ver el código.
+Con código real, Claude discrimina módulos de negocio vs infraestructura y genera
+documentación basada en lo que realmente hace cada módulo.
+
+**Alternativas descartadas:**
+- Leer 1.500 chars por archivo: ~22.500 tokens solo en muestras → cerca del rate limit
+- Heurística "3 archivos más pequeños": el más pequeño puede ser `config.php`, no el controlador principal
+
+---
+
+## DEC-013 — Blocklist EXTENSIONES_NO_CODIGO en vez de allowlist
+
+**Decisión:** En vez de una lista de extensiones de código conocidas (`.py`, `.php`, `.js`...),
+se usa una blocklist de lo que definitivamente NO es código (imágenes, fuentes, binarios).
+Todo lo que no esté en la blocklist se considera potencialmente código.
+
+**Por qué:** La allowlist siempre queda corta — `.blade.php`, `.vue`, `.svelte`, `.dart`,
+`.ex` no estaban. La blocklist es más robusta: cuando aparece un lenguaje nuevo, funciona
+sin tocar AICLI.
+
+---
+
+## DEC-014 — .gitignore como fuente de verdad para archivos a ignorar
+
+**Decisión:** `_cargar_ignorar()` lee el `.gitignore` del proyecto y extrae patrones
+simples (sin wildcards) para combinarlos con un mínimo universal (`.git`, `node_modules`,
+`.venv`, `__pycache__`).
+
+**Por qué:** El proyecto ya sabe qué es ruido. Una lista estática en AICLI siempre
+asume convenciones que no todos los proyectos siguen. Un proyecto PHP puede tener su
+build en `public/` en vez de `dist/`. Con `.gitignore`, funciona automáticamente.
+
+---
+
+## DEC-015 — Extended thinking para detección de módulos en ctx task
+
+**Decisión:** La llamada de detección de módulos relevantes usa
+`thinking={"type": "enabled", "budget_tokens": 2000}`.
+
+**Por qué:** Sin extended thinking, Claude hace asociación superficial de palabras entre
+la tarea y los nombres de módulos. Con thinking, razona: "esta tarea dice X, eso implica
+tocar Y, que conecta con Z...". La selección pasa de buena a quirúrgica.
+Costo extra: ~$0.003 por invocación de `ctx task`.
+
+---
+
+## DEC-016 — Task brief generado antes de lanzar Claude Code
+
+**Decisión:** Después de detectar módulos relevantes, `ctx task` hace una segunda llamada
+rápida (max_tokens 512) para generar un plan técnico de 5-8 líneas. Este brief se
+incluye en `session_context.md` entre el contexto de módulos y la descripción de la tarea.
+
+**Por qué:** Claude Code actualmente recibe documentación + tarea y empieza a explorar.
+Con el brief, recibe documentación + plan + tarea. La diferencia es entre arrancar desde
+cero vs arrancar con el análisis ya hecho.
+
+---
+
+## DEC-017 — ctx task acepta --archivo con la ruta del problema
+
+**Decisión:** `ctx task` acepta `--archivo modulo/archivo.php`. Ese archivo:
+1. Se pasa al prompt de detección como "el problema ocurre específicamente aquí"
+2. Si tiene un módulo documentado con ese `file_path`, se incluye siempre en el contexto
+   sin importar si el filtrado de relevancia lo habría excluido
+3. Se incluye explícitamente en el `session_context.md` como "Archivo de entrada"
+
+**Por qué:** El desarrollador sabe exactamente en qué archivo está el bug. Pasarlo
+elimina la ambigüedad en la detección y ancla el plan técnico al archivo correcto.
+
+---
+
+## DEC-018 — ctx module add acepta solo la ruta
+
+**Decisión:** `ctx module add modulo/archivo.php` — sin argumento de nombre.
+El nombre del módulo se deriva del stem del path (`PagosController` de `pagos/PagosController.php`).
+
+**Por qué:** Consistencia con el patrón `modulo/archivo.php` que usa toda la CLI.
+Pedir nombre y ruta por separado era redundante — el nombre siempre debería ser el
+nombre del archivo sin extensión.
+
+---
+
+## DEC-019 — Diagnóstico automático de Claude Code no encontrado
+
+**Decisión:** Cuando `lanzar_claude()` falla con FileNotFoundError, en vez de mostrar
+un error genérico, busca `claude.cmd` en rutas conocidas de Windows (APPDATA/npm/,
+LOCALAPPDATA/Programs/Claude/), muestra diagnóstico específico y ofrece reintentar.
+Si encuentra `claude.cmd` aunque no esté en PATH, lo lanza directamente con ruta completa.
+
+**Por qué:** El `.exe` de AICLI corre con un PATH diferente al de la terminal del usuario.
+Claude puede estar instalado y funcionar en PowerShell pero ser invisible para el `.exe`.
+El diagnóstico elimina la fricción de arranque para usuarios nuevos.

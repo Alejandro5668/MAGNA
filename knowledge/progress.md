@@ -1,147 +1,148 @@
 # Estado del Proyecto
 
-Última actualización: 2026-06-11
+Última actualización: 2026-06-14
 
 ---
 
-## Completado
+## Resumen ejecutivo
 
-- [x] Entorno virtual creado en PyCharm
-- [x] Repositorio Git inicializado y conectado a GitHub
-- [x] Todas las dependencias instaladas: `typer`, `rich`, `sqlmodel`, `anthropic`, `httpx`, `python-dotenv`, `PyMySQL`
-- [x] Estructura de carpetas del proyecto creada (`aicli/`, `commands/`, `db/`, `services/`)
-- [x] `CLAUDE.md` con contexto completo del proyecto
-- [x] `knowledge/` con decisions, patterns, progress y commands
-- [x] `.claude/commands/start.md` — comando `/start`
-- [x] `main.py` — app Typer funcional con comandos `hello` y `bienvenido` (prueba)
+CLI completamente funcional y distribuida como `.exe`. Probada en proyectos reales
+(PHP puro con ~11.000 archivos, Next.js). El foco actual es validación en campo y
+refinamiento de calidad de documentación generada.
+
+---
+
+## Completado — Infraestructura base
+
+- [x] Entorno virtual, repositorio Git, dependencias instaladas
+- [x] Estructura de carpetas (`aicli/commands/`, `db/`, `services/`)
+- [x] `CLAUDE.md`, `knowledge/`, `.claude/commands/start.md`
 - [x] `aicli/db/models.py` — modelos `Project` y `Module` con SQLModel
-- [x] `aicli/db/__init__.py` — conexión MySQL con `create_engine` + `init_db()`
-- [x] `aicli/commands/status.py` — muestra panel con count de proyectos y tabla de módulos
-- [x] `aicli/commands/init.py` — registra proyecto activo en BD (detecta stack, guarda path)
-- [x] `aicli/commands/module.py` — documenta módulo con IA (Anthropic SDK integrado)
-- [x] `aicli/services/indexer.py` — analiza proyecto con Claude, genera contenido .md por módulo
+- [x] `aicli/db/__init__.py` — SQLite en `~/.mycontext/ctx.db` (migrado desde MySQL)
+- [x] Sistema de logs en `~/.mycontext/aicli.log`
+- [x] API key flow en primera ejecución (questionary)
+- [x] Selector de proyecto con menú interactivo (pyfiglet + questionary)
+- [x] Loop de menú — vuelve al menú después de cada comando
+- [x] `.exe` generado con PyInstaller (`ctx.spec`)
 
 ---
 
-## En progreso
+## Completado — Comandos CLI
 
-- [ ] Verificar que `ctx init` y `ctx status` funcionan end-to-end contra la BD MySQL
+### `ctx init`
+- [x] Detecta stack automáticamente (Python, Laravel, Next.js, PHP, Go, Rust, etc.)
+- [x] Modo normal: una sola llamada Claude que identifica Y documenta módulos (DEC-010)
+- [x] Modo `--zona <carpeta>`: documenta solo esa subcarpeta
+- [x] Modo `--reciente N`: documenta archivos modificados en los últimos N días (git log)
+- [x] Modo `--arquitectura`: lee código real de carpetas de nivel 1, identifica módulos reales
+- [x] Proyecto grande (>500 archivos): muestra guía interactiva con questionary
+- [x] Proyecto existente: actualización incremental con señal de frescura (`last_updated_at`)
+- [x] Progreso en vivo: muestra cada módulo conforme se documenta con tokens usados
+- [x] Documentación almacenada espejando estructura del proyecto (`modulo/archivo.md`)
+- [x] Agente orquestador por zonas para proyectos >80 archivos de código (DEC paralela)
+- [x] `analizar_y_documentar` con `_reparar_json` como safety net para JSON inválido
 
----
+### `ctx task`
+- [x] Extended thinking para detección de módulos relevantes (DEC-015)
+- [x] Genera task brief técnico antes de lanzar Claude Code (DEC-016)
+- [x] Acepta `--archivo modulo/archivo.php` para anclar el contexto al archivo exacto
+- [x] Si se pasa `--archivo`, ese módulo siempre se incluye sin importar el filtrado
+- [x] Muestra panel con módulos seleccionados y plan antes de abrir Claude Code
+- [x] Menú pregunta tanto descripción como ruta del archivo
 
-## Siguiente paso — Señal de frescura (DEC-007)
+### `ctx module add`
+- [x] Acepta solo la ruta `modulo/archivo.php` (nombre derivado del stem)
+- [x] Almacena documentación en `~/.mycontext/projects/<id>/modulo/archivo.md`
+- [x] Detecta si el módulo ya existe y lo actualiza si cambió
 
-Esta es la base de la filosofía de documentación viva del proyecto. Debe implementarse
-antes de avanzar con `ctx task` o `ctx claude` porque todos esos comandos dependen de
-que la documentación esté actualizada.
+### `ctx claude`
+- [x] Carga contexto completo de todos los módulos del proyecto
+- [x] Lanza Claude Code con `session_context.md`
 
-**Archivos a modificar:**
+### `ctx snapshot`
+- [x] Copia `~/.mycontext/projects/<id>/` a `~/.mycontext/snapshots/<id>/<timestamp>/`
 
-1. **`aicli/db/models.py`** — agregar campo al modelo `Module`:
-   ```python
-   last_updated_at: float | None = Field(default=None)
-   ```
-
-2. **`aicli/services/indexer.py`** — agregar función de comparación:
-   ```python
-   def modulo_necesita_actualizacion(file_path, proyecto_path, modulo_existente):
-       if modulo_existente is None or modulo_existente.last_updated_at is None:
-           return True
-       ruta = proyecto_path / file_path
-       if not ruta.exists():
-           return False
-       return os.path.getmtime(ruta) > modulo_existente.last_updated_at
-   ```
-
-3. **`aicli/commands/init.py`** — cambiar flujo de "proyecto ya existe → error" a:
-   - Módulo sin cambios → skip, mostrar `✓ archivo.py — sin cambios`
-   - Módulo modificado → re-documentar con Claude, actualizar `last_updated_at`
-   - Archivo nuevo → documentar como módulo nuevo
-
-4. **`aicli/commands/module.py`** — cambiar flujo de "módulo ya documentado → error" a:
-   - Si cambió → re-documentar, actualizar `last_updated_at`
-   - Si no cambió → informar "ya está al día, no hay cambios desde la última documentación"
-
-5. **Migración de BD** — ejecutar `ALTER TABLE module ADD COLUMN last_updated_at DOUBLE NULL;`
-   en MySQL, o recrear las tablas con `init_db()`.
+### `ctx status`
+- [x] Muestra tabla de módulos documentados con nombre, descripción y archivo
 
 ---
 
-## Backlog — Fase 1: CLI completa
+## Completado — Servicios
 
-> Completar esto antes de tocar el frontend. La calidad de la documentación generada
-> determina la calidad de todo lo que viene después.
+### `indexer.py`
+- [x] `_cargar_ignorar()`: lee `.gitignore` + mínimo universal (DEC-014)
+- [x] `EXTENSIONES_NO_CODIGO`: blocklist en vez de allowlist (DEC-013)
+- [x] `_ordenar_por_relevancia()`: raíz primero, más pequeños primero
+- [x] `analizar_y_documentar()`: análisis + documentación en una sola llamada
+- [x] `_indexar_secuencial()`: fallback si JSON falla después de reparación
+- [x] `documentar_arquitectura()`: lee código real de cada carpeta nivel 1 (DEC-012)
+- [x] `indexar_proyecto_orquestado()`: agente por zona con paralelismo (ThreadPoolExecutor)
+- [x] `obtener_arbol_zona()`: escanea subcarpeta específica
+- [x] `obtener_archivos_recientes()`: usa git log para archivos activos
+- [x] `MAX_ARBOL_ENTRADAS = 300`: previene prompts masivos en proyectos grandes
+- [x] `ESPERA_INICIAL = 60`, `MAX_REINTENTOS = 4`: backoff robusto para rate limit
 
-1. **Migrar BD de MySQL a SQLite** (DEC-001 corregida) ← PRIMERO
-   - Actualizar `aicli/db/__init__.py`: reemplazar `mysql+pymysql://...` por
-     `sqlite:///{Path.home()}/.mycontext/ctx.db`
-   - Eliminar variables `DB_USER`, `DB_PASSWORD`, `DB_HOST`, `DB_PORT`, `DB_NAME` del `.env`
-   - Eliminar `PyMySQL` de `requirements.txt`
-   - Verificar que `init_db()` crea el archivo SQLite correctamente al arrancar
+### `zone_detector.py`
+- [x] `detectar_zonas()`: Claude detecta zonas dinámicamente según estructura real
+- [x] Sin listas hardcodeadas de carpetas — funciona para cualquier stack
 
-2. **Señal de frescura** (DEC-007)
-   - Agregar `last_updated_at: float | None` al modelo `Module` en `models.py`
-   - Agregar `category: str` y `domain: str | None` al modelo `Module` (DEC-008)
-   - Función `modulo_necesita_actualizacion()` en `indexer.py`
-   - Refactorizar `init.py`: proyecto ya registrado → actualizar en lugar de error
-   - Refactorizar `module.py`: módulo ya documentado → actualizar si cambió
+### `builder.py`
+- [x] `construir_contexto()`: lee `.md` de módulos relevantes y arma el contexto
 
-2. **`services/builder.py`** — ensambla contexto desde los .md de módulos relevantes
-   - Recibe lista de módulos, lee sus `.md`, devuelve bloque de texto para Claude
+### `caller.py`
+- [x] `lanzar_claude()`: escribe `session_context.md` con Contexto → Plan → Archivo → Tarea
+- [x] Búsqueda automática de `claude.cmd` en rutas conocidas de Windows (APPDATA/npm/)
+- [x] Diagnóstico interactivo si Claude no se encuentra: found-but-PATH vs not-installed
+- [x] Opción de reintentar sin re-correr la tarea
 
-3. **`services/caller.py`** — lanza `claude` como subprocess con contexto inyectado
+---
 
-4. **Comando `ctx task <texto>`** — el comando más importante
-   - Detecta módulos afectados con IA
-   - Llama a `builder` con esos módulos
-   - Lanza Claude Code con el contexto específico
+## Pendiente — Validación en campo
 
-5. **Comando `ctx claude`** — contexto completo + Claude Code
-   - Igual que `ctx task` pero sin filtrado, inyecta todos los módulos
+- [ ] Verificar `ctx init --arquitectura` en proyecto PHP de 11.000 archivos
+- [ ] Verificar `ctx task --archivo modulo/archivo.php` en proyecto PHP
+- [ ] Verificar que los módulos se almacenan en estructura `modulo/archivo.md` correctamente
+- [ ] Empaquetar `.exe` nuevo con todos los cambios de la sesión 2026-06-14
+- [ ] Verificar que `caller.py` encuentra `claude.cmd` en la PC del trabajo
 
-6. **Comando `ctx snapshot`** — punto de restauración del knowledge store
-   - Copia `~/.mycontext/projects/<id>/` a `~/.mycontext/snapshots/<id>/<timestamp>/`
+---
+
+## Pendiente — Mejoras identificadas
+
+- [ ] `_guardar_modulos` no verifica duplicados — si se corre `ctx init --zona X` dos veces,
+  se crean módulos duplicados en la BD para el mismo `file_path`
+- [ ] `ctx status` muestra módulos de TODOS los proyectos, no solo el del directorio actual
+- [ ] El stack "desconocido" en PHP puro hace que el agente orquestador tenga menos contexto;
+  considerar heurística adicional para detectar PHP sin `composer.json`
 
 ---
 
 ## Backlog — Fase 2: Portal web
 
-> No iniciar hasta que Fase 1 esté validada con uso real.
+> No iniciar hasta que Fase 1 esté validada con uso real en el proyecto de la empresa.
 
-1. **API REST con FastAPI**
-   - Expone proyectos, módulos y contenido `.md` al frontend
-   - Endpoint de búsqueda full-text sobre nombre y descripción de módulos
-   - Endpoint para el chatbot: recibe pregunta, devuelve módulos relevantes + respuesta Claude
-
-2. **Frontend Next.js — Portal de documentación**
-   - Vista de proyectos registrados
-   - Vista de módulos por proyecto, agrupados por `category` y `domain`
-   - Buscador sobre toda la base de conocimiento
-   - Diseño personalizable (colores, logo) por organización
-
-3. **Chatbot IA con RAG**
-   - El usuario pregunta en lenguaje natural
-   - El sistema busca módulos relevantes en MySQL por similitud semántica o keywords
-   - Lee los `.md` correspondientes y los pasa a Claude como contexto
-   - Devuelve la respuesta en la interfaz web
-
-4. **Sistema de roles y acceso**
-   - No toda la documentación es pública para todos los usuarios de la organización
-   - Roles básicos: admin, desarrollador, consulta
+1. Migrar BD de SQLite a MySQL/PostgreSQL para acceso multi-desarrollador
+2. API REST con FastAPI (proyectos, módulos, contenido `.md`)
+3. Frontend Next.js — Portal de documentación por módulos
+4. Chatbot IA con RAG sobre la documentación generada
+5. Sistema de roles: admin, desarrollador, consulta
 
 ---
 
 ## Decisiones resueltas
 
-- BD: SQLite (no MySQL) — sin servidor, archivo en ~/.mycontext/ctx.db (DEC-001)
-- Schema `modules`: id, project_id (FK), name, description, file_path, content_path, created_at, last_updated_at, category, domain
-- Detección de stack: heurísticas de archivos en `init.py`
-- Señal de frescura: `last_updated_at` float Unix timestamp vs `os.path.getmtime()` (DEC-007)
-- Política de actualización: ningún comando bloquea con "ya existe" — todos actualizan si hay cambios
-- Frontend: Next.js con chatbot RAG sobre la documentación generada por CLI (DEC-008)
-- Arquitectura: CLI → MySQL+.md → FastAPI → Next.js (las capas son independientes y reemplazables)
+- BD: SQLite en `~/.mycontext/ctx.db` (DEC-001)
+- Estructura docs: `~/.mycontext/projects/<id>/modulo/archivo.md` (DEC-009)
+- Stack detection: heurísticas de archivos en `init.py`
+- Señal de frescura: `last_updated_at` float Unix timestamp (DEC-007)
+- Filtrado de archivos: blocklist `EXTENSIONES_NO_CODIGO` + `.gitignore` (DEC-013, DEC-014)
+- Módulos funcionales vs archivos individuales: `analizar_y_documentar` decide (DEC-010)
+- Extended thinking para `ctx task`: `budget_tokens=2000` (DEC-015)
+- Frontend Fase 2: Next.js + chatbot RAG (DEC-008)
+- Pattern consistente: `modulo/archivo.php` en toda la CLI (DEC-009)
 
 ## Decisiones pendientes
 
-- Definir cómo estructurar el contexto que se inyecta a Claude en `ctx task` (qué incluir, en qué orden, límite de tokens)
-- Definir estrategia de búsqueda para el chatbot RAG: keywords simples vs embeddings vectoriales
+- Estrategia para duplicados en `_guardar_modulos`: upsert vs insert siempre
+- Estrategia de búsqueda para chatbot RAG: keywords simples vs embeddings vectoriales
+- Detección de PHP puro sin `composer.json` para mejorar contexto del agente
