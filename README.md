@@ -120,5 +120,5 @@ aicli/
 ---
 
 <div align="center">
-  <sub>Construido con Python · Powered by Claude API</sub>
+  <sub>Hecho por Alejandro Campo</sub>
 </div>
