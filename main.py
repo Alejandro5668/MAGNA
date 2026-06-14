@@ -24,7 +24,7 @@ from rich.console import Console
 from rich.align import Align
 from rich.rule import Rule
 from rich.text import Text
-from aicli.commands import status, init, module, task, claude_cmd, snapshot
+from aicli.commands import status, init, archive, file_cmd, sync, task, claude_cmd, snapshot, proyecto
 from aicli.db import init_db, engine
 
 init_db()
@@ -32,10 +32,13 @@ init_db()
 app = typer.Typer(help="AICLI — Motor de contexto inteligente para Claude Code")
 app.add_typer(status.app, name="status")
 app.add_typer(init.app, name="init")
-app.add_typer(module.app, name="module")
+app.add_typer(archive.app, name="archive")
+app.add_typer(file_cmd.app, name="file")
+app.add_typer(sync.app, name="sync")
 app.add_typer(task.app, name="task")
 app.add_typer(claude_cmd.app, name="claude")
 app.add_typer(snapshot.app, name="snapshot")
+app.add_typer(proyecto.app, name="proyecto")
 
 console = Console()
 
@@ -176,13 +179,16 @@ def _mostrar_menu() -> None:
         opcion = questionary.select(
             "¿Qué quieres hacer?",
             choices=[
-                questionary.Choice("  ctx init        — Registrar e indexar el proyecto activo",      value="init"),
-                questionary.Choice("  ctx module add  — Documentar un módulo específico",             value="module"),
-                questionary.Choice("  ctx status      — Ver módulos ya documentados",                 value="status"),
-                questionary.Choice("  ctx task        — Lanzar Claude con contexto de una tarea",     value="task"),
-                questionary.Choice("  ctx claude      — Lanzar Claude con contexto completo",         value="claude"),
-                questionary.Choice("  ctx snapshot    — Guardar punto de restauración",               value="snapshot"),
-                questionary.Choice("  Salir",                                                         value="salir"),
+                questionary.Choice("  ctx init     — Mapear arquitectura del proyecto",              value="init"),
+                questionary.Choice("  ctx proyecto — Generar conocimiento estructural del proyecto",  value="proyecto"),
+                questionary.Choice("  ctx file     — Documentar una carpeta/zona en profundidad",    value="file"),
+                questionary.Choice("  ctx archive  — Analizar y documentar un archivo específico",   value="archive"),
+                questionary.Choice("  ctx sync     — Sincronizar documentación post-tarea",          value="sync"),
+                questionary.Choice("  ctx task     — Lanzar Claude con contexto de una tarea",       value="task"),
+                questionary.Choice("  ctx claude   — Lanzar Claude con contexto completo",           value="claude"),
+                questionary.Choice("  ctx status   — Ver módulos documentados",                      value="status"),
+                questionary.Choice("  ctx snapshot — Guardar punto de restauración",                 value="snapshot"),
+                questionary.Choice("  Salir",                                                        value="salir"),
             ],
             style=_ESTILO_MENU,
         ).ask()
@@ -195,15 +201,33 @@ def _mostrar_menu() -> None:
 
         if opcion == "init":
             init.init()
-        elif opcion == "module":
+
+        elif opcion == "proyecto":
+            proyecto.proyecto()
+
+        elif opcion == "file":
+            carpeta = questionary.text(
+                "  ¿Qué carpeta documentar?  (ej: pagos  o  controllers/pagos)",
+                style=_ESTILO_MENU
+            ).ask()
+            if not carpeta or not carpeta.strip():
+                console.print("  [bold yellow]Aviso:[/bold yellow] Indicá una carpeta para continuar.")
+                continue
+            file_cmd.file_cmd(carpeta.strip())
+
+        elif opcion == "archive":
             ruta = questionary.text(
                 "  Ruta del archivo  (ej: pagos/PagosController.php)",
                 style=_ESTILO_MENU
             ).ask()
-            if ruta and ruta.strip():
-                module.add(ruta.strip())
-        elif opcion == "status":
-            status.status()
+            if not ruta or not ruta.strip():
+                console.print("  [bold yellow]Aviso:[/bold yellow] Indicá la ruta del archivo para continuar.")
+                continue
+            archive.archive(ruta.strip())
+
+        elif opcion == "sync":
+            sync.sync()
+
         elif opcion == "task":
             tarea = questionary.text("  Describí la tarea", style=_ESTILO_MENU).ask()
             archivo = questionary.text(
@@ -213,8 +237,13 @@ def _mostrar_menu() -> None:
             if tarea and tarea.strip():
                 archivo_limpio = archivo.strip() if archivo and archivo.strip() else None
                 task.task(tarea.strip(), archivo_limpio)
+
         elif opcion == "claude":
             claude_cmd.claude()
+
+        elif opcion == "status":
+            status.status()
+
         elif opcion == "snapshot":
             snapshot.snapshot()
 

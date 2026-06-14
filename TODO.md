@@ -256,6 +256,36 @@ coherencia del patrón `modulo/archivo.php` en toda la CLI.
 
 ---
 
+## Fase 12 — Reorganización de comandos, contexto enriquecido y limpieza *(2026-06-14, sesión 2)*
+
+**Objetivo:** Rediseñar los comandos para que sean más precisos y enfocados, enriquecer
+el contexto que recibe Claude Code con conocimiento estructural del proyecto, y eliminar
+código muerto que acumuló la refactorización anterior.
+
+- [x] `ctx init` simplificado — corre `documentar_arquitectura()` directo, sin flags, sin guía de proyecto grande (DEC-024)
+- [x] `ctx file <carpeta>` — nuevo comando que reemplaza `--zona`: documenta zona en profundidad con 1000 chars × 5 archivos, prompt con sección SQL (DEC-021)
+- [x] `ctx archive <ruta>` — renombrado de `ctx module`: lee hasta 3000 chars del archivo real, documentación con funciones, SQL, dependencias y patrones (DEC-022)
+- [x] `ctx sync` — nuevo comando post-tarea: git diff → re-documenta archivos cambiados → documenta nuevos automáticamente → captura decisión técnica (DEC-023)
+- [x] `ctx proyecto` — nuevo comando: genera PROYECTO.md con Claude a partir de árbol + módulos documentados + muestra de `*_querys.php` (DEC-025)
+- [x] `rol.md` global — creado en `~/.mycontext/rol.md` al primer `ctx init`, prepended a todo `session_context.md`, rol PHP senior 10+ años (DEC-026)
+- [x] `PROYECTO.md` en knowledge store — `builder.py` lo inyecta automáticamente desde `~/.mycontext/projects/<id>/PROYECTO.md` en cada sesión (DEC-029)
+- [x] Fix encoding `latin-1` — reemplaza `utf-8, errors=ignore` en todas las lecturas de código PHP (DEC-028)
+- [x] Fix `_guardar_modulos` — upsert por `(project_id, file_path)` en vez de insert siempre, elimina duplicados (DEC-027)
+- [x] PHP detection sin `composer.json` — `detectar_stack()` cuenta archivos `.php` con rglob si hay más de 10 (DEC-031)
+- [x] `documentar_arquitectura` mejorado — max_tokens 8000, top 15 carpetas por cantidad de archivos descendente, docs concisas 3 secciones (DEC-020)
+- [x] `generar_proyecto_md()` — nueva función en indexer.py que genera PROYECTO.md estructurado con secciones pendiente para lo que no puede inferir (DEC-025)
+- [x] Eliminación del orquestador y `zone_detector.py` — código muerto tras la refactorización; 6 funciones + 1 archivo borrados (DEC-030)
+- [x] `prompt_proyecto.md` — prompt para extraer conocimiento del proyecto en otro Claude
+- [x] `PROYECTO.md` de empresa Kawak — generado con el prompt y disponible en raíz de AICLI
+- [x] Decisiones DEC-020 a DEC-031 documentadas en `knowledge/decisions.md`
+- [ ] Verificar `ctx init` en proyecto PHP de empresa con los fixes aplicados
+- [ ] Verificar `ctx file ce_control_equipos` sin error de JSON truncado
+- [ ] Verificar `ctx proyecto` genera PROYECTO.md correcto en proyecto PHP
+- [ ] Verificar `ctx sync` detecta cambios post-tarea correctamente
+- [ ] Empaquetar `.exe` nuevo: `pyinstaller ctx.spec`
+
+---
+
 ## Bloqueantes activos
 
 > Registrá acá cualquier cosa que te frenó. Con fecha y contexto breve.
@@ -282,3 +312,4 @@ coherencia del patrón `modulo/archivo.php` en toda la CLI.
 | 2026-06-11 | Sesión de planificación: DEC-007 señal de frescura, DEC-008 frontend Next.js, corrección DEC-001 SQLite, prompt para Lovable creado en design/lovable_prompt.md, progress.md reorganizado por fases | Implementar migración MySQL→SQLite en db/__init__.py, luego señal de frescura en models.py e indexer.py |
 | 2026-06-13 | Migración SQLite completa, señal de frescura, todos los comandos CLI implementados (task, claude, snapshot), menú interactivo con pyfiglet+questionary, API key flow, selector de proyecto, sistema de logs, rate limit handling, soporte multi-stack | Verificar ctx task y ctx claude end-to-end en otro PC, empaquetar como .exe |
 | 2026-06-14 | Optimización completa: ctx init con 3 modos nuevos (--zona/--reciente/--arquitectura), ctx task con extended thinking + brief + --archivo, ctx module add simplificado a ruta, docs en estructura modulo/archivo.md, diagnóstico Claude en Windows, documentar_arquitectura con código real, depuración de código, decisiones DEC-009 a DEC-019 | Verificar todo en proyecto PHP de empresa (11.000 archivos), empaquetar .exe nuevo |
+| 2026-06-14 (2) | Reorganización completa de comandos (ctx file/archive/sync/proyecto), rol.md global PHP-específico, PROYECTO.md automático con IA, fix encoding latin-1, fix duplicados _guardar_modulos, eliminación orquestador muerto, DEC-020 a DEC-031, PROYECTO.md Kawak generado | Verificar nuevos comandos en PHP empresa, empaquetar .exe |

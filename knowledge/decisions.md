@@ -360,6 +360,190 @@ nombre del archivo sin extensión.
 
 ---
 
+## DEC-020 — documentar_arquitectura: top 15 carpetas por densidad, max_tokens 8000
+
+**Decisión:** `documentar_arquitectura()` ordena las carpetas de nivel 1 por cantidad de
+archivos de código directos (descendente) y toma las 15 primeras. El límite de output
+sube de 6000 a 8000 tokens. La documentación por módulo se limita a 3 secciones concisas.
+
+**Por qué:** En el proyecto PHP de empresa (14.000 archivos), la llamada anterior llegó
+exactamente a 6000 tokens y el JSON quedó truncado. Las carpetas con más archivos directos
+son casi siempre los módulos de negocio principales — es el mejor heurístico disponible
+sin leer el código. El límite de 15 módulos × ~250 tokens/módulo = ~3.750 tokens de output,
+bien por debajo de 8000.
+
+---
+
+## DEC-021 — ctx file: documentación en profundidad de una zona
+
+**Decisión:** `ctx file <carpeta>` reemplaza `ctx init --zona`. Lee 1000 chars de los
+5 archivos más relevantes de la zona (priorizando los que tienen el nombre de la carpeta
+en el stem, luego por tamaño descendente). El prompt incluye sección explícita de
+"Queries SQL y tablas involucradas". Máximo 8 componentes por zona.
+
+**Por qué:** `--zona` era un flag de `ctx init` — poco visible y conceptualmente acoplado
+a la inicialización. `ctx file` es un comando dedicado que el usuario elige cuando quiere
+profundizar en una zona antes de un ticket. Los 1000 chars (vs 500 del arquitectura)
+permiten ver la estructura de clase y el primer método completo.
+
+**Error handling:** Si `documentar_zona()` falla (JSON truncado u otro), muestra error
+claro y vuelve al menú sin matar la CLI.
+
+---
+
+## DEC-022 — ctx archive: análisis profundo de archivo individual
+
+**Decisión:** `ctx archive <ruta>` reemplaza `ctx module add`. Lee hasta 3000 chars del
+archivo real. El prompt pide: funciones con parámetros, queries SQL con nombres exactos
+de tablas, dependencias directas, patrones observados. No tiene límite artificial de tokens.
+
+**Por qué:** `ctx module` con su flujo de `generar_contenido_modulo` leía el fuente
+completo pero el prompt era genérico. `ctx archive` está orientado a archivos PHP: pide
+explícitamente el `$querys[]`, los alias exactos del SELECT, y los métodos públicos con
+sus parámetros — lo que realmente necesita Claude Code para trabajar sin asumir nada.
+
+---
+
+## DEC-023 — ctx sync: sincronización post-tarea con git
+
+**Decisión:** `ctx sync` detecta archivos cambiados combinando tres fuentes git:
+`diff HEAD --name-only`, `diff --cached --name-only`, `diff HEAD~1 --name-only`.
+Para cada archivo: si existe módulo en BD → re-documenta. Si es nuevo → documenta
+automáticamente con `analizar_archivo_profundo()`. Al final pregunta por decisiones técnicas
+y hace append a `knowledge/decisions.md` con fecha.
+
+**Por qué:** El flujo correcto de trabajo es: ticket → Claude Code trabaja → código cambia →
+`ctx sync` actualiza la documentación. Sin este comando, la documentación decae después
+de cada tarea. Documentar archivos nuevos automáticamente elimina el paso manual de
+`ctx archive` para cada archivo creado durante la tarea.
+
+---
+
+## DEC-024 — ctx init corre arquitectura directamente
+
+**Decisión:** `ctx init` sin flags ejecuta `documentar_arquitectura()` directo. Eliminados:
+flags `--zona`, `--reciente`, `--arquitectura`; la guía interactiva de proyecto grande;
+el UMBRAL_MODO_ARQUITECTURA. Si el proyecto ya existe en BD, corre actualización incremental.
+
+**Por qué:** El modo arquitectura es el correcto para cualquier proyecto de más de unos
+pocos archivos. Los otros modos tenían sentido cuando `ctx init` intentaba documentar
+todo — con la nueva arquitectura de comandos (ctx file, ctx sync), cada uno tiene su
+responsabilidad y `ctx init` solo necesita hacer una cosa bien.
+
+---
+
+## DEC-025 — ctx proyecto genera PROYECTO.md con IA
+
+**Decisión:** `ctx proyecto` hace una sola llamada Claude usando árbol + módulos ya
+documentados (nombres/descripciones) + muestra de `*_querys.php` + muestra de `conf/`.
+Genera un PROYECTO.md estructurado en 10 secciones. Lo que puede inferir del código →
+lo completa con precisión. Lo que requiere conocimiento humano → escribe
+`> pendiente — enriquecé esta sección con tu conocimiento del proyecto`.
+
+**Por qué:** El PROYECTO.md manual (generar prompt → ejecutar en otro Claude → importar)
+es innecesariamente complejo. La CLI tiene acceso al código y a los módulos ya analizados —
+puede inferir el 70% del conocimiento estructural sin intervención humana. El 30% restante
+(reglas no obvias, decisiones acumuladas) se enriquece manualmente si el usuario quiere.
+
+**Almacenamiento:** `~/.mycontext/projects/<id>/PROYECTO.md` — fuera del repo.
+`builder.py` lo inyecta automáticamente en cada `session_context.md`.
+
+---
+
+## DEC-026 — rol.md global: comportamiento de Claude Code
+
+**Decisión:** En el primer `ctx init`, se crea `~/.mycontext/rol.md` con instrucciones
+de comportamiento para Claude Code. Contenido: idioma español, estilo de respuesta,
+rol de senior developer PHP 10+ años, verificación SQL obligatoria (leer `*_querys.php`
+antes de cualquier query), impacto multi-tenant, confirmación antes de acciones destructivas.
+`builder.py` lo prepende a todo `session_context.md`.
+
+**Por qué:** Sin rol, Claude Code decide su comportamiento solo. Con el rol, cada sesión
+arranca con el mismo contrato: responde en español, verifica el esquema antes de escribir
+SQL, sigue el patrón existente del archivo. El rol vive en `~/.mycontext/` — editable
+por el usuario sin tocar el `.exe`.
+
+---
+
+## DEC-027 — _guardar_modulos: upsert por (project_id, file_path)
+
+**Decisión:** `_guardar_modulos()` busca si ya existe un módulo con el mismo
+`(project_id, file_path)` antes de insertar. Si existe → actualiza `content_path`,
+`last_updated_at` y `description`. Si no → inserta nuevo.
+
+**Por qué:** El bug conocido: correr `ctx file` dos veces sobre la misma zona creaba
+módulos duplicados en la BD con el mismo `file_path`. El upsert elimina la duplicación
+sin necesidad de limpiar la BD manualmente.
+
+---
+
+## DEC-028 — Encoding latin-1 para lectura de archivos PHP
+
+**Decisión:** Todas las lecturas de archivos en `indexer.py` usan `encoding="latin-1"`
+en lugar de `encoding="utf-8", errors="ignore"`.
+
+**Por qué:** El proyecto PHP de la empresa usa codificación Windows-1252 / ISO-8859-1
+(documentado en PROYECTO.md sección 10). Con `utf-8, errors="ignore"`, Python descartaba
+silenciosamente todos los caracteres acentuados (tildes, ñ) del código PHP — generando
+documentación con strings cortados y contexto incompleto. `latin-1` decodifica
+correctamente el rango de bytes Windows-1252 sin pérdida.
+
+---
+
+## DEC-029 — PROYECTO.md en knowledge store, inyectado automáticamente
+
+**Decisión:** El archivo `PROYECTO.md` con conocimiento estructural del proyecto se almacena
+en `~/.mycontext/projects/<id>/PROYECTO.md` — dentro del knowledge store, fuera de cualquier
+repo. `builder.py` lo lee automáticamente si existe y lo inyecta como segunda sección de
+`session_context.md`, entre `rol.md` y la documentación de módulos.
+
+**Por qué:** No puede vivir en la raíz del proyecto PHP — sería commiteado al repo de la
+empresa. El knowledge store (`~/.mycontext/`) es exactamente el lugar correcto: privado,
+centralizado, fuera de repos.
+
+**Orden en session_context.md:**
+1. `rol.md` — comportamiento de Claude
+2. `PROYECTO.md` — conocimiento estructural del proyecto
+3. Documentación de módulos relevantes
+4. Plan de implementación (brief)
+5. Archivo de entrada
+6. Descripción de la tarea
+
+---
+
+## DEC-030 — Eliminación del orquestador y zone_detector.py
+
+**Decisión:** Se eliminaron `zone_detector.py` (archivo completo) y 6 funciones de
+`indexer.py`: `analizar_con_claude`, `analizar_y_documentar`, `_indexar_secuencial`,
+`_leer_archivos_zona`, `_analizar_zona`, `indexar_proyecto_orquestado`, `indexar_arbol`,
+`indexar_proyecto`. También las constantes `UMBRAL_PROYECTO_ORQUESTADO` y
+`UMBRAL_MODO_ARQUITECTURA`.
+
+**Por qué:** Tras la refactorización de comandos, ningún comando en `aicli/commands/`
+llamaba a ninguna de estas funciones. El problema que resolvían (documentar proyectos
+grandes con agentes paralelos por zona) está ahora resuelto de forma más simple:
+`ctx init` → arquitectura top-down en una llamada, `ctx file` → zona específica cuando
+el usuario la necesita. Código muerto es deuda — se elimina.
+
+**El patrón sigue siendo válido:** Si en el futuro se necesita un `ctx full` que documente
+profundamente todos los módulos en paralelo, el patrón orquestador/zona es el correcto.
+Pero no se implementa hasta que haya un caso de uso real que lo justifique.
+
+---
+
+## DEC-031 — Detección de PHP puro sin composer.json
+
+**Decisión:** `detectar_stack()` agrega una heurística final: si no coincidió ningún
+indicador conocido, cuenta archivos `.php` con `path.rglob("*.php")`. Si hay más de 10,
+retorna `"php"` en lugar de `"desconocido"`.
+
+**Por qué:** El proyecto de la empresa es PHP puro sin framework — no tiene `composer.json`
+(que habría indicado Laravel). Con stack `"desconocido"`, los prompts de Claude no tenían
+contexto del lenguaje. Con `"php"`, los prompts incluyen el stack correcto y Claude puede
+inferir el patrón `$querys[]`, PHPMailer, EasyUI, etc.
+
+---
+
 ## DEC-019 — Diagnóstico automático de Claude Code no encontrado
 
 **Decisión:** Cuando `lanzar_claude()` falla con FileNotFoundError, en vez de mostrar

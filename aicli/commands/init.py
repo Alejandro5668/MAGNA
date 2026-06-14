@@ -1,6 +1,5 @@
 import typer
 import time
-from typing import Annotated, Optional
 from rich.console import Console, Group
 from rich.panel import Panel
 from pathlib import Path
@@ -9,20 +8,52 @@ from sqlmodel import Session, select
 from aicli.db import engine
 from aicli.db.models import Project, Module
 from aicli.services.indexer import (
-    indexar_proyecto,
-    indexar_arbol,
     obtener_arbol,
-    obtener_arbol_zona,
-    obtener_archivos_recientes,
     documentar_arquitectura,
     generar_contenido_modulo,
     modulo_necesita_actualizacion,
     EXTENSIONES_NO_CODIGO,
-    UMBRAL_MODO_ARQUITECTURA,
 )
 
 app = typer.Typer()
 console = Console()
+
+_ROL_DEFAULT = """# Instrucciones — Claude Code + AICLI
+
+## Contexto de sesión
+AICLI ha cargado documentación del proyecto en este archivo de contexto.
+Si un módulo no aparece en el contexto, leé el archivo real antes de hacer suposiciones.
+
+## Idioma
+Respondé siempre en **español**. Código, variables y comentarios: en el idioma que ya usa el proyecto.
+
+## Estilo de respuesta
+- Una oración de qué vas a hacer antes del primer tool call.
+- Actualizaciones breves cuando encuentres algo relevante o cambies de dirección.
+- Al final: 1-2 oraciones — qué cambió y qué sigue.
+- Referenciá código como `archivo.php:línea`.
+
+## Rol técnico
+Actuá como desarrollador senior con 10+ años en PHP, MySQL y JavaScript:
+- Identificá el patrón del código antes de proponer cambios.
+- Seguí el estilo existente del archivo — no introduzcas convenciones nuevas.
+- Explicá la causa raíz antes de proponer el fix de un bug.
+- No agregues features ni abstracciones más allá de lo pedido.
+- Editá archivos existentes antes de crear nuevos.
+
+## SQL — verificación obligatoria
+**Nunca asumas nombres de tablas o campos.**
+Antes de cualquier query:
+1. Leé `*_querys.php` del módulo → tablas reales en los FROM/JOIN de `$querys[]`.
+2. Usá los alias exactos del SELECT de ese archivo.
+3. Considerá el impacto multi-tenant: todo filtro por empresa/sesión.
+4. Incluí un SELECT de verificación antes de cualquier UPDATE/DELETE en producción.
+
+## Confirmación obligatoria antes de:
+- Queries UPDATE/DELETE/DROP sobre datos de producción.
+- Borrar archivos, ramas o contenido irreversible.
+- Push a repositorios remotos o acciones visibles para otros.
+"""
 
 
 def detectar_stack(path: Path) -> str:
@@ -69,6 +100,10 @@ def detectar_stack(path: Path) -> str:
         return "flutter"
     if (path / "mix.exs").exists():
         return "elixir"
+    # PHP puro sin composer.json
+    php_files = list(path.rglob("*.php"))
+    if len(php_files) > 10:
+        return "php"
     return "desconocido"
 
 
@@ -77,7 +112,6 @@ def _progreso_print(msg: str) -> None:
 
 
 def _ruta_md(proyecto_id: int, file_path: str) -> Path:
-    """Espeja la estructura del proyecto: pagos/X.php → ~/.mycontext/projects/42/pagos/X.md"""
     base = Path.home() / ".mycontext" / "projects" / str(proyecto_id)
     return base / Path(file_path).with_suffix(".md")
 
@@ -87,185 +121,86 @@ def _guardar_modulos(modulos: list[dict], proyecto: Project) -> None:
         for m in modulos:
             archivo_md = _ruta_md(proyecto.id, m["file_path"])
             archivo_md.parent.mkdir(parents=True, exist_ok=True)
-            archivo_md.write_text(m["content_md"], encoding="utf-8")
-            modulo = Module(
-                project_id=proyecto.id,
-                name=m["name"],
-                description=m["description"],
-                file_path=m["file_path"],
-                content_path=str(archivo_md),
-                created_at=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                last_updated_at=m.get("last_updated_at"),
-                category=m.get("category"),
-                domain=m.get("domain"),
-            )
-            session.add(modulo)
-            session.commit()
+            archivo_md.write_text(m.get("content_md", m.get("documentation", "")), encoding="utf-8")
+
+            existente = session.exec(
+                select(Module).where(
+                    Module.file_path == m["file_path"],
+                    Module.project_id == proyecto.id
+                )
+            ).first()
+
+            if existente:
+                existente.content_path = str(archivo_md)
+                existente.last_updated_at = m.get("last_updated_at", time.time())
+                existente.description = m.get("description", existente.description)
+                session.add(existente)
+            else:
+                session.add(Module(
+                    project_id=proyecto.id,
+                    name=m["name"],
+                    description=m.get("description", ""),
+                    file_path=m["file_path"],
+                    content_path=str(archivo_md),
+                    created_at=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                    last_updated_at=m.get("last_updated_at", time.time()),
+                    category=m.get("category"),
+                    domain=m.get("domain"),
+                ))
+        session.commit()
 
 
-def _mostrar_guia_proyecto_grande(name: str, n_codigo: int) -> None:
-    console.print(Panel(
-        Group(
-            f"[bold]{name}[/bold] tiene [bold cyan]{n_codigo:,}[/bold cyan] archivos de código.",
-            "[dim]Documentar todo el proyecto no es viable. Elegí un modo:[/dim]",
-            "",
-            "  [bold cyan]ctx init --zona <carpeta>[/bold cyan]",
-            "  [dim]Documenta solo esa área.  Ej: ctx init --zona controllers/pagos[/dim]",
-            "",
-            "  [bold cyan]ctx init --reciente 90[/bold cyan]",
-            "  [dim]Solo archivos modificados en los últimos 90 días (requiere git)[/dim]",
-            "",
-            "  [bold cyan]ctx init --arquitectura[/bold cyan]",
-            "  [dim]Lee código real de cada módulo y genera un mapa del sistema completo[/dim]",
-        ),
-        title="Proyecto grande detectado",
-        border_style="yellow"
-    ))
+def _crear_rol_si_no_existe() -> None:
+    rol_path = Path.home() / ".mycontext" / "rol.md"
+    if not rol_path.exists():
+        rol_path.write_text(_ROL_DEFAULT, encoding="utf-8")
 
 
 @app.callback(invoke_without_command=True)
-def init(
-    zona: Annotated[Optional[str], typer.Option("--zona", "-z", help="Documentar solo esta carpeta o área")] = None,
-    reciente: Annotated[Optional[int], typer.Option("--reciente", "-r", help="Archivos modificados en los últimos N días")] = None,
-    arquitectura: Annotated[bool, typer.Option("--arquitectura", "-a", help="Mapa estructural del sistema")] = False,
-):
-    """Registra el proyecto activo y documenta sus módulos con IA."""
+def init():
+    """Registra el proyecto activo y genera su mapa arquitectural con IA."""
     path = Path.cwd()
     name = path.name
     stack = detectar_stack(path)
 
-    arbol = obtener_arbol(path)
-    n_codigo = len([f for f in arbol if Path(f).suffix not in EXTENSIONES_NO_CODIGO])
-    modo_especifico = zona or (reciente is not None) or arquitectura
-
-    # Proyecto grande sin modo explícito → mostrar guía y preguntar
-    if n_codigo > UMBRAL_MODO_ARQUITECTURA and not modo_especifico:
-        _mostrar_guia_proyecto_grande(name, n_codigo)
-
-        import questionary
-        from questionary import Style as QStyle
-
-        _estilo = QStyle([
-            ("qmark",       "fg:cyan bold"),
-            ("question",    "fg:white bold"),
-            ("pointer",     "fg:cyan bold"),
-            ("highlighted", "fg:cyan bold"),
-            ("selected",    "fg:cyan"),
-            ("answer",      "fg:cyan bold"),
-        ])
-
-        eleccion = questionary.select(
-            "¿Qué modo querés usar?",
-            choices=[
-                questionary.Choice("  --zona          → Documentar una carpeta específica", value="zona"),
-                questionary.Choice("  --reciente      → Archivos modificados en los últimos N días", value="reciente"),
-                questionary.Choice("  --arquitectura  → Mapa estructural del sistema", value="arquitectura"),
-                questionary.Choice("  Cancelar", value="cancelar"),
-            ],
-            style=_estilo,
-        ).ask()
-
-        if eleccion is None or eleccion == "cancelar":
-            return
-
-        if eleccion == "zona":
-            zona = questionary.text(
-                "  Ruta de la carpeta (ej: controllers/pagos)",
-                style=_estilo
-            ).ask()
-            if not zona or not zona.strip():
-                return
-            zona = zona.strip()
-
-        elif eleccion == "reciente":
-            dias_str = questionary.text(
-                "  ¿Cuántos días atrás?",
-                default="90",
-                style=_estilo
-            ).ask()
-            try:
-                reciente = int(dias_str.strip())
-            except (ValueError, AttributeError):
-                reciente = 90
-
-        elif eleccion == "arquitectura":
-            arquitectura = True
-
-        modo_especifico = True
+    _crear_rol_si_no_existe()
 
     with Session(engine) as session:
         proyecto_existente = session.exec(select(Project).where(Project.path == str(path))).first()
 
-    # Proyecto normal sin modo explícito → actualización incremental si ya existe
-    if proyecto_existente and not modo_especifico:
+    if proyecto_existente:
         _actualizar_proyecto(proyecto_existente, path)
         return
 
-    # Registrar proyecto si no existe aún
-    if proyecto_existente:
-        proyecto = proyecto_existente
-    else:
-        proyecto = Project(
-            name=name,
-            path=str(path),
-            stack=stack,
-            created_at=datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        )
-        with Session(engine) as session:
-            session.add(proyecto)
-            session.commit()
-            session.refresh(proyecto)
+    proyecto = Project(
+        name=name,
+        path=str(path),
+        stack=stack,
+        created_at=datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    )
+    with Session(engine) as session:
+        session.add(proyecto)
+        session.commit()
+        session.refresh(proyecto)
 
-    # ── Modo zona ──────────────────────────────────────────────────────────
-    if zona:
-        try:
-            arbol_zona = obtener_arbol_zona(path, zona)
-        except ValueError as e:
-            console.print(f"[bold red]Error:[/bold red] {e}")
-            raise typer.Exit(code=1)
+    arbol = obtener_arbol(path)
+    n_codigo = len([f for f in arbol if Path(f).suffix not in EXTENSIONES_NO_CODIGO])
 
-        n_zona = len([f for f in arbol_zona if Path(f).suffix not in EXTENSIONES_NO_CODIGO])
-        console.print(f"\n[bold cyan]Documentando zona '{zona}' en {name}...[/bold cyan]")
-        console.print(f"  [dim]{n_zona:,} archivos de código en esta zona[/dim]")
-        modulos = indexar_arbol(path, name, stack, arbol_zona, on_progreso=_progreso_print)
-        modo_label = f"zona '{zona}'"
+    console.print(f"\n[bold cyan]Mapeando arquitectura de {name}...[/bold cyan]")
+    console.print(f"  [dim]{n_codigo:,} archivos de código · {stack}[/dim]")
 
-    # ── Modo reciente ───────────────────────────────────────────────────────
-    elif reciente is not None:
-        archivos = obtener_archivos_recientes(path, reciente)
-        if not archivos:
-            console.print(f"[bold yellow]Aviso:[/bold yellow] No se encontraron archivos modificados en los últimos {reciente} días.")
-            console.print("  ¿Es este directorio un repositorio git con historial?")
-            raise typer.Exit(code=1)
-        console.print(f"\n[bold cyan]Documentando archivos recientes de {name}...[/bold cyan]")
-        console.print(f"  [dim]{len(archivos):,} archivos modificados en los últimos {reciente} días[/dim]")
-        modulos = indexar_arbol(path, name, stack, archivos, on_progreso=_progreso_print)
-        modo_label = f"últimos {reciente} días"
-
-    # ── Modo arquitectura ───────────────────────────────────────────────────
-    elif arquitectura:
-        console.print(f"\n[bold cyan]Mapeando arquitectura de {name}...[/bold cyan]")
-        console.print(f"  [dim]{n_codigo:,} archivos de código · {len(arbol):,} archivos totales[/dim]")
-        modulos_raw = documentar_arquitectura(path, name, stack, arbol, on_progreso=_progreso_print)
-        modulos = []
-        for m in modulos_raw:
-            m["content_md"] = m.pop("documentation", "")
-            m["last_updated_at"] = time.time()
-            modulos.append(m)
-        modo_label = "arquitectura"
-
-    # ── Modo normal (primera vez, proyecto no grande) ───────────────────────
-    else:
-        console.print(f"\n[bold cyan]Analizando {name} ({stack})...[/bold cyan]")
-        modulos = indexar_proyecto(path, name, stack, on_progreso=_progreso_print)
-        modo_label = stack
+    modulos_raw = documentar_arquitectura(path, name, stack, arbol, on_progreso=_progreso_print)
+    modulos = [
+        {**m, "content_md": m.pop("documentation", ""), "last_updated_at": time.time()}
+        for m in modulos_raw
+    ]
 
     _guardar_modulos(modulos, proyecto)
 
     console.print(Panel(
         Group(
             f"[bold cyan]✔ {name} — {len(modulos)} módulos documentados[/bold cyan]",
-            f"[bold dim]Modo: {modo_label}[/bold dim]",
+            f"[bold dim]Stack: {stack}[/bold dim]",
             f"[bold dim]Ruta: {path}[/bold dim]",
         ),
         title="ctx init",
