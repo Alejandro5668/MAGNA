@@ -200,6 +200,36 @@ Solo el markdown, sin texto adicional antes ni después."""
         raise
 
 
+def generar_mensaje_jira(tarea: str, diff_texto: str) -> tuple[str, int]:
+    """
+    Genera mensaje de Jira (Causa Raiz + Solucion Aplicada) desde la tarea y el git diff.
+    """
+    prompt = f"""Eres un desarrollador senior documentando el resultado de un ticket para Jira.
+
+Tarea resuelta: {tarea}
+
+Cambios realizados (git diff):
+{diff_texto[:3000]}
+
+Genera EXACTAMENTE este formato, sin texto adicional antes ni despues:
+
+- *\U0001f331 Causa Raiz:* [Origen tecnico del problema. Menciona archivo:linea, tabla, campo o funcion especifica. 1-3 oraciones.]
+
+- *\U0001f6e0️ Solucion Aplicada:* [Cambios implementados. Si fue SQL: tabla y campo exacto. Si fue codigo: archivo y funcion. 2-4 puntos concretos.]
+
+REGLAS CRITICAS:
+- Maximo 6 lineas en total entre los dos puntos
+- SOLO caracteres ASCII puros en el texto. PROHIBIDO tildes y acentos.
+  Escribir "raiz" no "raiz con tilde", "solucion" no "solucion con tilde".
+  Los emojis son la unica excepcion permitida.
+- Causa Raiz: explica el ORIGEN, no el sintoma
+- Solucion Aplicada: describe QUE se hizo, no como se investigo
+- Si el fix fue SQL: nombra la tabla y el campo exacto
+- Si el fix fue codigo PHP: nombra el archivo y la funcion"""
+
+    return _llamar_claude(prompt, contexto="jira", max_tokens=512)
+
+
 def describir_imagen(ruta_imagen: str) -> tuple[str, int]:
     """
     Envía una imagen a Claude con visión y devuelve (descripción_técnica, tokens).
