@@ -234,9 +234,14 @@ def _mostrar_menu() -> None:
                 "  Ruta del archivo  (ej: pagos/PagosController.php) — Enter para omitir",
                 style=_ESTILO_MENU,
             ).ask()
+            imagen = questionary.text(
+                "  Ruta de imagen de referencia  (ej: C:\\screenshots\\bug.png) — Enter para omitir",
+                style=_ESTILO_MENU,
+            ).ask()
             if tarea and tarea.strip():
                 archivo_limpio = archivo.strip() if archivo and archivo.strip() else None
-                task.task(tarea.strip(), archivo_limpio)
+                imagen_limpia = imagen.strip() if imagen and imagen.strip() else None
+                task.task(tarea.strip(), archivo_limpio, imagen_limpia)
 
         elif opcion == "claude":
             claude_cmd.claude()

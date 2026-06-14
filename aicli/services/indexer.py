@@ -200,6 +200,53 @@ Solo el markdown, sin texto adicional antes ni después."""
         raise
 
 
+def describir_imagen(ruta_imagen: str) -> tuple[str, int]:
+    """
+    Envía una imagen a Claude con visión y devuelve (descripción_técnica, tokens).
+    Soporta PNG, JPG, WEBP, GIF.
+    """
+    import base64
+
+    TIPOS = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+             ".webp": "image/webp", ".gif": "image/gif"}
+
+    ruta = Path(ruta_imagen)
+    media_type = TIPOS.get(ruta.suffix.lower())
+    if not media_type:
+        raise ValueError(f"Formato no soportado: {ruta.suffix}. Usá PNG, JPG, WEBP o GIF.")
+
+    imagen_b64 = base64.standard_b64encode(ruta.read_bytes()).decode("utf-8")
+
+    cliente = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
+    respuesta = cliente.messages.create(
+        model="claude-sonnet-4-6",
+        max_tokens=1024,
+        messages=[{
+            "role": "user",
+            "content": [
+                {
+                    "type": "image",
+                    "source": {"type": "base64", "media_type": media_type, "data": imagen_b64},
+                },
+                {
+                    "type": "text",
+                    "text": (
+                        "Describí esta imagen con precisión técnica para un desarrollador.\n"
+                        "Si es una interfaz web o app: identificá elementos visibles, mensajes de error, "
+                        "texto en pantalla, comportamiento observable, clases CSS o IDs visibles.\n"
+                        "Si es un diagrama o esquema: describí la estructura y relaciones.\n"
+                        "Si es un bug visual: describí exactamente qué está mal y dónde.\n"
+                        "Sé específico. No uses frases genéricas."
+                    ),
+                },
+            ],
+        }],
+    )
+    tokens = respuesta.usage.input_tokens + respuesta.usage.output_tokens
+    logging.info("describir_imagen — %s · %d tokens", ruta.name, tokens)
+    return respuesta.content[0].text.strip(), tokens
+
+
 def analizar_archivo_profundo(path: Path, ruta: str, proyecto_name: str, stack: str) -> tuple[str, int]:
     """
     Genera documentación profunda de un archivo individual.
