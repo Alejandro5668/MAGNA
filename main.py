@@ -5,7 +5,7 @@ import logging
 
 Path.home().joinpath(".mycontext").mkdir(exist_ok=True)
 logging.basicConfig(
-    filename=Path.home() / ".mycontext" / "aicli.log",
+    filename=Path.home() / ".mycontext" / "aicli_log.log",
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
     datefmt="%Y-%m-%d %H:%M:%S",
