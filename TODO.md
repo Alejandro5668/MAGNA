@@ -17,6 +17,10 @@
 | 4 | Capa de servicios | ✅ Completada |
 | 5 | Anthropic SDK e IA | ✅ Completada |
 | 6 | Comando `ctx claude` | ✅ Completada |
+| 7 | CLI completa y robusta | ✅ Completada |
+| 8 | Optimización IA — velocidad (`ctx init`) | ✅ Completada |
+| 9 | Optimización IA — precisión (`ctx task`) | ✅ Completada |
+| 10 | Agente orquestador por zonas | ✅ Completada |
 
 ---
 
@@ -152,6 +156,76 @@ Fecha: <!-- actualizar -->
 - [x] Detección de stack ampliada: Next.js, React, Vue, Angular, TypeScript, Go, Rust, Kotlin, Ruby, Flutter, Elixir
 - [ ] Verificar `ctx task` y `ctx claude` end-to-end en otro PC con el `.exe`
 - [ ] Empaquetar como `.exe`: `pyinstaller --onefile --collect-data pyfiglet main.py --name ctx`
+
+---
+
+---
+
+## Fase 8 — Optimización IA: velocidad en `ctx init`
+
+**Objetivo:** Reducir el tiempo de `ctx init` de ~15 minutos a ~25 segundos entendiendo
+por qué las llamadas secuenciales son el cuello de botella y cómo diseñar prompts que
+hacen más trabajo en menos llamadas.
+
+**Qué vas a aprender:**
+- Cómo calcular el costo real de N llamadas secuenciales vs 1 llamada combinada
+- Técnica de prompt "haz todo en una respuesta": análisis + documentación en un solo JSON
+- Cuándo el rate limit es un síntoma de diseño malo, no un límite a aceptar
+- La diferencia entre módulos por archivo vs módulos funcionales y por qué importa
+- Cómo diseñar una blocklist vs allowlist y cuándo cada una tiene sentido
+
+**Referencia:** `plan_optimizacion.md` — Eje 1
+
+- [x] **1.1** Entender el problema: N+1 llamadas secuenciales con sleep(4) entre cada una.
+- [x] **1.2** Implementar `analizar_y_documentar()` en `indexer.py` — una sola llamada que devuelve 6-12 módulos funcionales con documentación incrustada en el JSON. Incluye `_reparar_json()` como safety net para JSON con saltos de línea literales.
+- [x] **1.3** Reemplazar `indexar_proyecto()`: usa `analizar_y_documentar()` como camino principal, `_indexar_secuencial()` como fallback si el JSON falla, y `indexar_proyecto_orquestado()` para proyectos >80 archivos de código. El sleep(4) desapareció como consecuencia.
+- [x] **1.4** Reemplazar listas estáticas por lógica dinámica.
+- [ ] **Verificar:** Correr `ctx init` en el proyecto Next.js donde tardaba 15 min y medir el tiempo real.
+
+---
+
+## Fase 9 — Optimización IA: precisión en `ctx task`
+
+**Objetivo:** Hacer que `ctx task` seleccione módulos relevantes con precisión quirúrgica
+y que Claude Code arranque con un plan técnico en lugar de desde cero.
+
+**Qué vas a aprender:**
+- Qué es extended thinking y cuándo activarlo (no en toda llamada — solo donde la
+  calidad de razonamiento impacta directamente el resultado)
+- Cómo extraer el bloque de texto de una respuesta con bloques `thinking` + `text`
+- El concepto de "task brief" como contexto generado, no hardcodeado
+- Por qué el orden en que Claude Code recibe información afecta cómo trabaja
+- Cómo diseñar prompts de sistema que configuran el rol antes de la tarea
+
+**Referencia:** `plan_optimizacion.md` — Eje 2 y Eje 3
+
+- [x] **2.1** Extended thinking: `thinking={"type": "enabled", "budget_tokens": 2000}` en `_detectar_modulos_relevantes()`. El texto se extrae con `next(b.text for b in respuesta.content if b.type == "text")` porque la respuesta tiene bloques thinking + text mezclados.
+- [x] **2.2** Implementar `_generar_task_brief()` en `task.py` — llamada rápida (max_tokens 512) que genera el plan técnico.
+- [x] **2.3** Integrar el brief en el flujo de `task`: spinner, Panel con el plan antes de lanzar Claude Code, pasar al caller.
+- [x] **2.4** `lanzar_claude()` recibe `brief` y lo escribe en el archivo de contexto entre los módulos y la tarea.
+- [ ] **Verificar:** Correr `ctx task "agregar dark mode"` y observar la selección de módulos y el panel de plan generado.
+
+---
+
+## Fase 10 — Agente orquestador por zonas
+
+**Objetivo:** Para proyectos grandes (monorepos, aplicaciones full-stack complejas),
+usar múltiples agentes Claude especializados por zona del proyecto corriendo en paralelo.
+
+**Qué vas a aprender:**
+- El patrón orquestador/subagente: un coordinador que delega trabajo especializado
+- Cómo diseñar prompts de agentes con roles específicos ("sos un agente especializado en la zona frontend")
+- Por qué la especialización del contexto mejora la calidad: cada agente ve solo su parte, sin ruido
+- Cuándo el patrón de agentes tiene sentido vs cuándo es sobreingeniería (criterio: tamaño del proyecto)
+- Cómo ejecutar múltiples llamadas a la API al mismo tiempo en Python (solo cuando la Fase 8 lo requiera)
+
+**Referencia:** `plan_optimizacion.md` — Eje 4, pasos 4.1 al 4.3
+
+- [x] **4.1** Crear `aicli/services/zone_detector.py` con `detectar_zonas(path, stack, arbol)` — recibe el árbol ya calculado para no hacer doble scan. Claude detecta las zonas según la estructura real del proyecto, sin listas hardcodeadas.
+- [x] **4.2** Implementar `_analizar_zona()` en `indexer.py` — agente especializado por zona con `_leer_archivos_zona()` para contexto filtrado.
+- [x] **4.3** Implementar `indexar_proyecto_orquestado()` — lanza agentes en paralelo con `ThreadPoolExecutor(max_workers=3)`, consolida resultados, con fallback a `_indexar_secuencial()` si no se detectan zonas.
+- [x] **4.4** `indexar_proyecto()` enruta automáticamente: ≤80 archivos → `analizar_y_documentar()`, >80 archivos → `indexar_proyecto_orquestado()`.
+- [ ] **Verificar:** Correr `ctx init` en el proyecto Next.js grande y confirmar zonas detectadas en logs y tiempo total.
 
 ---
 

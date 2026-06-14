@@ -196,16 +196,23 @@ def _mostrar_menu() -> None:
         if opcion == "init":
             init.init()
         elif opcion == "module":
-            nombre = questionary.text("  Nombre del módulo", style=_ESTILO_MENU).ask()
-            archivo = questionary.text("  Ruta del archivo  (ej: aicli/commands/init.py)", style=_ESTILO_MENU).ask()
-            if nombre and archivo:
-                module.add(nombre.strip(), archivo.strip())
+            ruta = questionary.text(
+                "  Ruta del archivo  (ej: pagos/PagosController.php)",
+                style=_ESTILO_MENU
+            ).ask()
+            if ruta and ruta.strip():
+                module.add(ruta.strip())
         elif opcion == "status":
             status.status()
         elif opcion == "task":
             tarea = questionary.text("  Describí la tarea", style=_ESTILO_MENU).ask()
+            archivo = questionary.text(
+                "  Ruta del archivo  (ej: pagos/PagosController.php) — Enter para omitir",
+                style=_ESTILO_MENU,
+            ).ask()
             if tarea and tarea.strip():
-                task.task(tarea.strip())
+                archivo_limpio = archivo.strip() if archivo and archivo.strip() else None
+                task.task(tarea.strip(), archivo_limpio)
         elif opcion == "claude":
             claude_cmd.claude()
         elif opcion == "snapshot":

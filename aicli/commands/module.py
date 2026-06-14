@@ -15,10 +15,9 @@ console = Console()
 
 @app.command("add")
 def add(
-    name: str = typer.Argument(..., help="Nombre del módulo a documentar"),
-    file: str = typer.Argument(..., help="Ruta relativa al archivo principal del módulo"),
+    ruta: str = typer.Argument(..., help="Ruta del archivo a documentar (ej: pagos/PagosController.php)"),
 ):
-    """Documenta un módulo con IA. Si ya existe y cambió, lo actualiza."""
+    """Documenta un archivo con IA siguiendo la estructura modulo/archivo.php."""
     path = Path.cwd()
 
     with Session(engine) as session:
@@ -32,17 +31,22 @@ def add(
         ))
         raise typer.Exit(code=1)
 
-    ruta_archivo = path / file
+    ruta_archivo = path / ruta
     if not ruta_archivo.exists():
-        console.print(f"[bold red]Error:[/bold red] No se encontró el archivo [bold]{file}[/bold]")
+        console.print(f"[bold red]Error:[/bold red] No se encontró [bold]{ruta}[/bold]")
         raise typer.Exit(code=1)
 
-    with Session(engine) as session:
-        modulo_existente = session.exec(select(Module).where(Module.file_path == str(file))).first()
+    # Nombre derivado del path: pagos/PagosController.php → PagosController
+    name = Path(ruta).stem
 
-    if modulo_existente and not modulo_necesita_actualizacion(file, path, modulo_existente):
+    with Session(engine) as session:
+        modulo_existente = session.exec(
+            select(Module).where(Module.file_path == ruta, Module.project_id == proyecto.id)
+        ).first()
+
+    if modulo_existente and not modulo_necesita_actualizacion(ruta, path, modulo_existente):
         console.print(Panel(
-            f"[cyan]El módulo [bold]{modulo_existente.name}[/bold] ya está al día — sin cambios desde la última documentación.[/cyan]",
+            f"[cyan][bold]{ruta}[/bold] ya está al día — sin cambios desde la última documentación.[/cyan]",
             title="Sin cambios",
             border_style="yellow"
         ))
@@ -50,12 +54,13 @@ def add(
 
     fuente = ruta_archivo.read_text(encoding="utf-8")
 
-    with console.status("[bold cyan]Generando documentación...[/bold cyan]", spinner="dots3", spinner_style="cyan"):
-        contenido_md = generar_contenido_modulo(name, file, fuente)
+    with console.status(f"[bold cyan]Documentando {ruta}...[/bold cyan]", spinner="dots3", spinner_style="cyan"):
+        contenido_md, tokens = generar_contenido_modulo(name, ruta, fuente)
 
-    directorio = Path.home() / ".mycontext" / "projects" / str(proyecto.id)
-    directorio.mkdir(parents=True, exist_ok=True)
-    archivo_md = directorio / f"{name}.md"
+    # Espeja la estructura del proyecto: pagos/X.php → ~/.mycontext/projects/42/pagos/X.md
+    base = Path.home() / ".mycontext" / "projects" / str(proyecto.id)
+    archivo_md = base / Path(ruta).with_suffix(".md")
+    archivo_md.parent.mkdir(parents=True, exist_ok=True)
     archivo_md.write_text(contenido_md, encoding="utf-8")
 
     with Session(engine) as session:
@@ -71,7 +76,7 @@ def add(
                 project_id=proyecto.id,
                 name=name,
                 description=contenido_md.splitlines()[0].lstrip("# "),
-                file_path=file,
+                file_path=ruta,
                 content_path=str(archivo_md),
                 created_at=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                 last_updated_at=time.time(),
@@ -80,9 +85,13 @@ def add(
             session.commit()
             titulo = "Módulo registrado"
 
-    contenido_panel = Group(
-        f"[bold cyan]✔ Módulo [bold]{name}[/bold] documentado[/bold cyan]",
-        f"[bold dim]Archivo fuente: {file}[/bold dim]",
-        f"[bold dim]Documentación: {archivo_md}[/bold dim]",
-    )
-    console.print(Panel(contenido_panel, title=titulo, border_style="green"))
+    console.print(Panel(
+        Group(
+            f"[bold cyan]✔ {ruta} documentado[/bold cyan]",
+            f"[bold dim]Módulo: {name}[/bold dim]",
+            f"[bold dim]Doc: {archivo_md}[/bold dim]",
+            f"[bold dim]Tokens: {tokens:,}[/bold dim]",
+        ),
+        title=titulo,
+        border_style="green"
+    ))
