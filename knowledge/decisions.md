@@ -611,6 +611,45 @@ renombrarlo manualmente: `Rename-Item "$env:USERPROFILE\.mycontext\ctx.db" "ctx_
 
 ---
 
+## DEC-036 — Hoja de ruta para soporte multi-stack dinámico
+
+**Decisión pendiente:** La CLI está acoplada al stack PHP/MySQL del proyecto inicial de la empresa.
+El desacoplamiento se hará en tres fases cuando haya un segundo proyecto real que lo justifique.
+No se abstrae antes — las fases 1 y 2 son ~50 líneas de cambio y no valen el costo sin un caso concreto.
+
+**Tres capas de acoplamiento identificadas:**
+1. `_ROL_DEFAULT` en `init.py` — hardcodeado con PHP, MySQL, multi-tenant, `$querys[]`
+2. Prompts en `indexer.py` — hints de PHP embebidos en `analizar_archivo_profundo()` y `documentar_arquitectura()`
+3. `encoding="latin-1"` en lecturas de archivos — decisión específica del proyecto PHP (ver DEC-028)
+
+**Fase 1 — rol dinámico por stack (bajo esfuerzo)**
+`_crear_rol_si_no_existe()` → `_crear_rol_para_stack(stack)`.
+Un dict `_ROL_POR_STACK` con keys por stack (`"php"`, `"python"`, `"nextjs"`, `"_base"`).
+La sección base (idioma, estilo, confirmación antes de destructivos) es universal.
+La sección de stack se agrega encima.
+
+**Fase 2 — prompts stack-aware en indexer.py (esfuerzo medio, junto con Fase 1)**
+Agregar un dict de hints por stack en `documentar_arquitectura()` y `analizar_archivo_profundo()`:
+```python
+hints = {
+    "php":    "Buscá $querys[], métodos públicos con parámetros, includes.",
+    "python": "Buscá clases, decoradores, funciones públicas.",
+    "nextjs": "Buscá componentes, hooks, API routes.",
+}.get(stack, "Documentá las funciones y clases principales.")
+```
+
+**Fase 3 — rol generado con IA por proyecto (esfuerzo alto, para 5+ proyectos)**
+`ctx init` hace una llamada a Claude con stack + árbol + muestra de código y genera
+un `rol.md` específico para ese proyecto — captura convenciones que ningún template asume.
+Hacer solo cuando los templates estáticos queden cortos con proyectos reales.
+
+**Timing:**
+- Ahora → no tocar nada, el proyecto PHP es el validador real
+- Próximo proyecto real (no PHP) → Fase 1 + 2 juntas
+- Cuando haya 5+ proyectos distintos → Fase 3
+
+---
+
 ## DEC-019 — Diagnóstico automático de Claude Code no encontrado
 
 **Decisión:** Cuando `lanzar_claude()` falla con FileNotFoundError, en vez de mostrar

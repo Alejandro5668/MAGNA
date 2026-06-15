@@ -132,10 +132,6 @@ AICLI/
 └── requirements-build.txt # Dependencias de build (PyInstaller)
 ```
 
-## Licencia
-
-[MIT](LICENSE)
-
 ---
 
 <div align="center">
