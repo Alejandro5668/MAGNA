@@ -38,12 +38,6 @@ build/
 Thumbs.db
 desktop.ini
 
-# Assets e imágenes (archivos de trabajo, no el logo)
-images/gemini-svg.svg
-images/logo-je.png.png
-images/ctx.ico
-images/gen_logo.py
-
 # Coverage y tests
 .coverage
 htmlcov/

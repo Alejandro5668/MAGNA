@@ -206,6 +206,18 @@ def init():
         border_style="green"
     ))
 
+    console.print(Panel(
+        Group(
+            "[bold]Ponytail[/bold] reduce el código que genera Claude entre 80–94%.",
+            "[dim]Ejecutá estos comandos en cualquier sesión de Claude Code:[/dim]",
+            "",
+            "  [bold cyan]/plugin marketplace add DietrichGebert/ponytail[/bold cyan]",
+            "  [bold cyan]/plugin install ponytail@ponytail[/bold cyan]",
+        ),
+        title="[dim]Plus recomendado[/dim]",
+        border_style="dim",
+    ))
+
 
 def _actualizar_proyecto(proyecto: Project, path: Path) -> None:
     with Session(engine) as session:

@@ -7,8 +7,6 @@ import json
 import time
 import logging
 
-OnProgreso = Callable[[str], None]
-
 
 # Mínimo universal que siempre es ruido — independiente del stack
 IGNORAR_UNIVERSAL = {".git", "node_modules", ".venv", "__pycache__"}
@@ -312,7 +310,7 @@ Solo el markdown, sin texto adicional antes ni después."""
 
 def documentar_zona(
     path: Path, zona_path: Path, stack: str,
-    on_progreso: OnProgreso | None = None
+    on_progreso: Callable[[str], None] | None = None
 ) -> list[dict]:
     """
     Documenta en profundidad una zona/carpeta específica.
@@ -468,7 +466,7 @@ def _leer_muestra_patron(path: Path, arbol: list[str], patron: str, max_chars: i
 def generar_proyecto_md(
     path: Path, nombre: str, stack: str, arbol: list[str],
     modulos: list[dict],
-    on_progreso: OnProgreso | None = None
+    on_progreso: Callable[[str], None] | None = None
 ) -> tuple[str, int]:
     """
     Genera PROYECTO.md con conocimiento estructural inferido del código.
@@ -586,7 +584,7 @@ Filtros siempre presentes (multi-tenant, activo, etc.):
 
 def documentar_arquitectura(
     path: Path, nombre: str, stack: str, arbol: list[str],
-    on_progreso: OnProgreso | None = None
+    on_progreso: Callable[[str], None] | None = None
 ) -> list[dict]:
     """
     Detecta los módulos reales del proyecto leyendo código de cada carpeta de nivel 1.
