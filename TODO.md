@@ -278,6 +278,11 @@ código muerto que acumuló la refactorización anterior.
 - [x] `prompt_proyecto.md` — prompt para extraer conocimiento del proyecto en otro Claude
 - [x] `PROYECTO.md` de empresa Kawak — generado con el prompt y disponible en raíz de AICLI
 - [x] Decisiones DEC-020 a DEC-031 documentadas en `knowledge/decisions.md`
+- [x] `ctx task --imagen` — visión Claude API via base64, descripción inyectada en session_context.md (DEC-032)
+- [x] Mensaje de Jira: ASCII puro, emojis 🌱🛠️, máx 6 líneas (DEC-033)
+- [x] Errores no fatales usan `return` en vez de `raise typer.Exit` para mantener el loop de menú (DEC-034)
+- [x] BD y log renombrados: `ctx_bd.db` y `aicli_log.log` con sufijo de tipo (DEC-035)
+- [x] Corrección DEC-031: PHP detection usa `path.glob("*.php")` en raíz (no rglob — evita escanear 14k archivos)
 - [ ] Verificar `ctx init` en proyecto PHP de empresa con los fixes aplicados
 - [ ] Verificar `ctx file ce_control_equipos` sin error de JSON truncado
 - [ ] Verificar `ctx proyecto` genera PROYECTO.md correcto en proyecto PHP
@@ -313,3 +318,4 @@ código muerto que acumuló la refactorización anterior.
 | 2026-06-13 | Migración SQLite completa, señal de frescura, todos los comandos CLI implementados (task, claude, snapshot), menú interactivo con pyfiglet+questionary, API key flow, selector de proyecto, sistema de logs, rate limit handling, soporte multi-stack | Verificar ctx task y ctx claude end-to-end en otro PC, empaquetar como .exe |
 | 2026-06-14 | Optimización completa: ctx init con 3 modos nuevos (--zona/--reciente/--arquitectura), ctx task con extended thinking + brief + --archivo, ctx module add simplificado a ruta, docs en estructura modulo/archivo.md, diagnóstico Claude en Windows, documentar_arquitectura con código real, depuración de código, decisiones DEC-009 a DEC-019 | Verificar todo en proyecto PHP de empresa (11.000 archivos), empaquetar .exe nuevo |
 | 2026-06-14 (2) | Reorganización completa de comandos (ctx file/archive/sync/proyecto), rol.md global PHP-específico, PROYECTO.md automático con IA, fix encoding latin-1, fix duplicados _guardar_modulos, eliminación orquestador muerto, DEC-020 a DEC-031, PROYECTO.md Kawak generado | Verificar nuevos comandos en PHP empresa, empaquetar .exe |
+| 2026-06-14 (3) | Documentadas DEC-032 a DEC-035 (imagen/Jira/return-vs-exit/nombres de archivos); corrección a DEC-031 (glob no rglob) | Verificar comandos nuevos en PHP empresa, empaquetar .exe nuevo |

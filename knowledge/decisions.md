@@ -534,13 +534,80 @@ Pero no se implementa hasta que haya un caso de uso real que lo justifique.
 ## DEC-031 — Detección de PHP puro sin composer.json
 
 **Decisión:** `detectar_stack()` agrega una heurística final: si no coincidió ningún
-indicador conocido, cuenta archivos `.php` con `path.rglob("*.php")`. Si hay más de 10,
-retorna `"php"` en lugar de `"desconocido"`.
+indicador conocido, verifica si hay archivos `.php` en la raíz con `any(path.glob("*.php"))`.
+Si existe al menos uno, retorna `"php"` en lugar de `"desconocido"`.
 
 **Por qué:** El proyecto de la empresa es PHP puro sin framework — no tiene `composer.json`
 (que habría indicado Laravel). Con stack `"desconocido"`, los prompts de Claude no tenían
 contexto del lenguaje. Con `"php"`, los prompts incluyen el stack correcto y Claude puede
 inferir el patrón `$querys[]`, PHPMailer, EasyUI, etc.
+
+---
+
+## DEC-032 — ctx task --imagen: visión con Claude API via base64
+
+**Decisión:** `ctx task` acepta `--imagen <ruta>`. `describir_imagen()` en `indexer.py`
+lee el archivo, lo codifica en base64 y envía un mensaje multipart a `claude-sonnet-4-6`
+(bloque `image` + bloque `text`). La descripción técnica generada se inyecta en
+`session_context.md` entre el brief y el archivo de entrada, como contexto visual previo
+a la tarea.
+
+**Por qué:** El desarrollador a veces tiene una captura de pantalla del bug o del diseño
+esperado. Sin imagen, tiene que describir lo visual en texto — impreciso y lento. Con
+`--imagen`, Claude Code arranca la sesión habiendo "visto" exactamente lo que hay que
+resolver o implementar.
+
+**Formatos soportados:** PNG, JPG, JPEG, WEBP, GIF.
+**Alternativas descartadas:** URL externa — requiere que la imagen esté publicada, no funciona con capturas locales.
+
+---
+
+## DEC-033 — Formato del mensaje de Jira generado por ctx sync
+
+**Decisión:** `generar_mensaje_jira()` produce un formato fijo de dos puntos:
+`🌱 Causa Raiz` + `🛠️ Solucion Aplicada`, máximo 6 líneas en total. El cuerpo del
+mensaje es ASCII puro — sin tildes ni acentos. Los dos emojis son la única excepción.
+
+**Por qué:** Al pegar texto desde la terminal de Windows a Jira, los caracteres acentuados
+(tildes, ñ) se corrompen o generan encoding issues. ASCII puro garantiza copia limpia.
+Los emojis 🌱 y 🛠️ fueron verificados como renderizables en el Jira de la empresa.
+El límite de 6 líneas fuerza síntesis: causa + solución debe caber en un mensaje de
+transición de ticket, no en un ensayo.
+
+**Alternativas descartadas:**
+- UTF-8 completo con tildes: encoding corruption al pegar desde terminal Windows
+- Formato libre sin estructura: los revisores de tickets necesitan distinguir causa vs solución de un vistazo
+
+---
+
+## DEC-034 — return vs raise typer.Exit para errores no fatales en comandos CLI
+
+**Decisión:** Cuando un comando detecta un error de uso (ej: el usuario pasa un archivo
+a `ctx file` en lugar de una carpeta), muestra un aviso con `console.print()` y hace
+`return`. **No** usa `raise typer.Exit(code=1)`.
+
+**Por qué:** `raise typer.Exit(code=1)` termina el proceso entero — el menú interactivo
+muere y el usuario tiene que relanzar `ctx`. `return` devuelve el control al loop de menú:
+el usuario ve el aviso y puede elegir la opción correcta sin salir. La diferencia es entre
+"la CLI se cerró" y "cometí un error pero sigo aquí".
+
+**Cuándo sí usar typer.Exit:** Solo en errores fatales de configuración (API key ausente,
+proyecto no registrado en init) donde continuar en el menú no tiene sentido.
+
+---
+
+## DEC-035 — Sufijos de tipo en archivos de sistema de ~/.mycontext/
+
+**Decisión:** BD renombrada de `ctx.db` a `ctx_bd.db`. Log renombrado de `aicli.log`
+a `aicli_log.log`. El sufijo `_bd` y `_log` forma parte del nombre, no es la extensión.
+
+**Por qué:** Al browsear `~/.mycontext/` desde el explorador de archivos o una terminal,
+`.db` y `.log` son extensiones que no todos los sistemas asocian a un tipo visible. Con
+`_bd` y `_log` en el nombre, el propósito del archivo es obvio incluso si el SO oculta
+las extensiones.
+
+**Impacto en usuarios existentes:** Quien tenga `ctx.db` de versiones anteriores necesita
+renombrarlo manualmente: `Rename-Item "$env:USERPROFILE\.mycontext\ctx.db" "ctx_bd.db"`.
 
 ---
 
