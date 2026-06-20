@@ -187,7 +187,7 @@ def _mostrar_menu() -> None:
                 questionary.Choice("  ctx retomar  — Retomar ticket reabierto por QA",               value="retomar"),
                 questionary.Choice("  ctx task     — Lanzar Claude con contexto de una tarea",       value="task"),
                 questionary.Choice("  ctx claude   — Lanzar Claude con contexto completo",           value="claude"),
-                questionary.Choice("  ctx status   — Ver módulos documentados",                      value="status"),
+                questionary.Choice("  ctx status   — Ver arquitectura documentada del proyecto",     value="status"),
                 questionary.Choice("  ctx snapshot — Guardar punto de restauración",                 value="snapshot"),
                 questionary.Choice("  Salir",                                                        value="salir"),
             ],
