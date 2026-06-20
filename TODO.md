@@ -291,6 +291,26 @@ código muerto que acumuló la refactorización anterior.
 
 ---
 
+## Fase 13 — Tickets reabiertos, QA agent y mejoras de robustez *(2026-06-20)*
+
+**Objetivo:** Soporte completo para el ciclo real de trabajo con Jira: tickets reabiertos
+por QA, historial de rondas persistente, verificación pre-sync y correcciones de encoding.
+
+- [x] `aicli/services/tickets.py` — historial de tickets en `tickets.json`, purga automática 7 días, `ticket_activo.json` como puente entre retomar y sync
+- [x] `ctx retomar` en menú — lista tickets activos, muestra historial de rondas, pide motivo de reapertura + imagen + archivo, lanza Claude con historial inyectado
+- [x] `ctx task` refactorizado — lógica extraída a `_ejecutar_task()`, acepta `historial_ticket` opcional para flujo de retomar
+- [x] `ctx sync` — captura ticket Jira al cerrar, pre-rellena si viene de retomar, guarda ronda con archivos + mensaje + motivo
+- [x] `caller.py` — nuevo parámetro `historial_ticket`, inyectado en `session_context.md` entre contexto y plan
+- [x] `ctx status` reescrito — arquitectura por carpeta nivel 1 filtrada por proyecto actual, fecha de última doc, footer de sugerencia
+- [x] Fix encoding `builder.py` — `errors="replace"` en lectura de módulos .md
+- [x] Fix encoding `caller.py` — mensaje de launch sin tarea en argumento subprocess (evita encoding issues Windows)
+- [x] QA agent en `ctx sync` — `php -l` en archivos PHP + llamada Claude adversarial con diff + tarea, panel de reporte con veredicto ok/revisar/bloqueante, opción de cancelar sync si hay issues
+- [ ] Empaquetar `.exe` nuevo: `pyinstaller ctx.spec`
+- [ ] Verificar `ctx retomar` en proyecto PHP de empresa con ticket real
+- [ ] Verificar QA agent con un fix real antes de sync
+
+---
+
 ## Bloqueantes activos
 
 > Registrá acá cualquier cosa que te frenó. Con fecha y contexto breve.
@@ -320,3 +340,4 @@ código muerto que acumuló la refactorización anterior.
 | 2026-06-14 (2) | Reorganización completa de comandos (ctx file/archive/sync/proyecto), rol.md global PHP-específico, PROYECTO.md automático con IA, fix encoding latin-1, fix duplicados _guardar_modulos, eliminación orquestador muerto, DEC-020 a DEC-031, PROYECTO.md Kawak generado | Verificar nuevos comandos en PHP empresa, empaquetar .exe |
 | 2026-06-14 (3) | Documentadas DEC-032 a DEC-035 (imagen/Jira/return-vs-exit/nombres de archivos); corrección a DEC-031 (glob no rglob) | Verificar comandos nuevos en PHP empresa, empaquetar .exe nuevo |
 | 2026-06-15 | Integración Ponytail (tip en sync + panel en init), limpieza por audit (6 fixes), images→assets, README profesional, DEC-036 multi-stack | Verificar comandos en PHP empresa, empaquetar .exe |
+| 2026-06-20 | ctx retomar (historial de tickets reabiertos), QA agent en sync, ctx status reescrito por carpeta, fix encoding builder/caller | Empaquetar .exe, verificar retomar y QA con ticket real en PHP empresa |

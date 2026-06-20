@@ -1,7 +1,9 @@
 from dotenv import load_dotenv
 from pathlib import Path
+from datetime import datetime
 import os
 import logging
+import secrets
 
 Path.home().joinpath(".mycontext").mkdir(exist_ok=True)
 logging.basicConfig(
@@ -156,17 +158,19 @@ def _mostrar_menu() -> None:
     if not _verificar_api_key():
         raise typer.Exit(code=1)
 
-    logo = pyfiglet.figlet_format("AICLI", font="slant")
+    logo = pyfiglet.figlet_format("MAGNA", font="slant")
+    session_id = f"#MGN-{secrets.token_hex(2).upper()}"
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M")
 
     console.print()
     console.print(Align(Text(logo.rstrip(), style="bold cyan"), align="center"))
     console.print()
-    console.print(Align("[dim]Motor de contexto inteligente para Claude Code[/dim]", align="center"))
+    console.print(Rule(style="dim cyan"))
     console.print()
-    console.print(Align(
-        '[italic cyan]"La única persona que necesitas para lograr grandes cosas eres tú mismo"[/italic cyan]',
-        align="center"
-    ))
+    console.print(Align('[bold cyan]"You see what you believe..."[/bold cyan]', align="center"))
+    console.print()
+    console.print(Align(f"[dim]Session {session_id}  ·  {timestamp}  ·  claude-sonnet-4-6[/dim]", align="center"))
+    console.print()
 
     if not _seleccionar_proyecto():
         raise typer.Exit(code=1)

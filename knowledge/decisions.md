@@ -650,6 +650,97 @@ Hacer solo cuando los templates estáticos queden cortos con proyectos reales.
 
 ---
 
+## DEC-037 — Historial de tickets reabiertos en tickets.json
+
+**Decisión:** Los tickets de Jira reabiertos por QA se persisten en `~/.mycontext/tickets.json`.
+Cada entrada tiene una lista de rondas (fecha, archivos tocados, mensaje Jira, motivo de reapertura).
+Purga automática de entradas con más de 7 días sin actividad al cargar el archivo.
+Un archivo auxiliar `ticket_activo.json` actúa de puente entre `ctx retomar` y `ctx sync`
+para pasar el motivo de reapertura sin que el usuario lo tenga que re-ingresar.
+
+**Por qué:** El ciclo real de trabajo incluye tickets que se reabren 2-4 veces.
+Sin historial, Claude Code arranca desde cero en cada reapertura — el desarrollador
+tiene que re-explicar qué se hizo, por qué falló, y qué hay que cambiar.
+Con el historial inyectado en `session_context.md`, Claude arranca con contexto completo
+de todas las rondas anteriores.
+
+**Estructura mínima:**
+```json
+{
+  "PROJ-1234": {
+    "descripcion": "Validar pagos con monto cero",
+    "rondas": [
+      {"fecha": "2026-06-18", "archivos_tocados": ["pagos/PagosController.php"],
+       "mensaje_jira": "...", "motivo_reapertura": null},
+      {"fecha": "2026-06-20", "archivos_tocados": [],
+       "mensaje_jira": null, "motivo_reapertura": "QA: falla con descuento aplicado"}
+    ],
+    "ultima_actividad": 1750000000.0
+  }
+}
+```
+
+**Alternativas descartadas:**
+- Un `.md` por ticket: archivos acumulados sin purga automática, más difícil de leer programáticamente
+- Guardar en la BD SQLite: mezcla datos de sesión efímeros con conocimiento estructural persistente
+
+---
+
+## DEC-038 — ctx status como vista arquitectónica por carpeta
+
+**Decisión:** `ctx status` muestra los módulos documentados agrupados por carpeta de nivel 1,
+ordenados por fecha de última documentación descendente. Solo muestra el proyecto del
+directorio actual (no todos los proyectos). Footer estático sugiere `ctx init` si falta una carpeta.
+
+**Por qué:** La versión anterior listaba todos los módulos de todos los proyectos fila por fila.
+Con 50+ módulos documentados la tabla se volvía inutilizable. La vista por carpeta es una
+arquitectura legible en 5 segundos: el usuario ve qué zonas tiene documentadas y cuándo
+fue la última vez que se actualizaron.
+
+**Alternativas descartadas:**
+- Detección automática de carpetas no documentadas comparando con disco: requiere escanear
+  el proyecto, genera falsos positivos (vendor/, cache/, etc.), duplica lógica de init
+
+---
+
+## DEC-039 — QA adversarial integrado en ctx sync
+
+**Decisión:** Antes de documentar archivos, `ctx sync` ofrece correr un QA de dos pasos:
+1. `php -l` en cada archivo PHP cambiado (gratis, sin tokens, para en error de sintaxis)
+2. Una llamada Claude API con prompt adversarial: busca fallas, no confirma éxito.
+   Output estructurado JSON: `{"riesgos": [...], "veredicto": "ok|revisar|bloqueante"}`
+
+Si el veredicto no es "ok", muestra el panel de riesgos y pregunta si continuar.
+El QA es opcional — se puede saltar con N en la primera pregunta.
+
+**Por qué:** El riesgo de Claude Code dándose razón a sí mismo es real. El framing
+adversarial ("encontrá por qué puede fallar, no confirmes que funciona") cambia
+genuinamente el comportamiento del modelo. El php -l gratis captura el caso más común
+(error de sintaxis) antes de gastar tokens en el análisis.
+
+**Costo:** ~3.000-5.000 tokens por sync ≈ $0.02. Salteable cuando el usuario ya probó manualmente.
+
+**Alternativas descartadas:**
+- Agente de Claude Code como sub-agente QA: no retorna output estructurado a AICLI,
+  no controlable, más caro, diseñado para uso interactivo no batch
+
+---
+
+## DEC-040 — Fix encoding en builder.py y caller.py
+
+**Decisión:** `builder.py` lee archivos `.md` con `errors="replace"` en lugar de
+falla silenciosa. `caller.py` simplifica el mensaje del subprocess a una cadena
+ASCII pura sin incluir la tarea del usuario.
+
+**Por qué:** Los archivos `.md` generados por Claude pueden contener caracteres Unicode
+especiales. En Windows, el encoding del argumento de subprocess falla con caracteres
+no-ASCII cuando la tarea tiene tildes o caracteres especiales. La tarea ya está
+dentro de `session_context.md` — no necesita repetirse en el argumento del proceso.
+`errors="replace"` es más robusto que `errors="ignore"` porque el contenido sigue
+siendo legible (reemplaza con `?`) en vez de desaparecer silenciosamente.
+
+---
+
 ## DEC-019 — Diagnóstico automático de Claude Code no encontrado
 
 **Decisión:** Cuando `lanzar_claude()` falla con FileNotFoundError, en vez de mostrar
