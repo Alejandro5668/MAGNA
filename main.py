@@ -184,6 +184,7 @@ def _mostrar_menu() -> None:
                 questionary.Choice("  ctx file     — Documentar una carpeta/zona en profundidad",    value="file"),
                 questionary.Choice("  ctx archive  — Analizar y documentar un archivo específico",   value="archive"),
                 questionary.Choice("  ctx sync     — Sincronizar documentación post-tarea",          value="sync"),
+                questionary.Choice("  ctx retomar  — Retomar ticket reabierto por QA",               value="retomar"),
                 questionary.Choice("  ctx task     — Lanzar Claude con contexto de una tarea",       value="task"),
                 questionary.Choice("  ctx claude   — Lanzar Claude con contexto completo",           value="claude"),
                 questionary.Choice("  ctx status   — Ver módulos documentados",                      value="status"),
@@ -227,6 +228,75 @@ def _mostrar_menu() -> None:
 
         elif opcion == "sync":
             sync.sync()
+
+        elif opcion == "retomar":
+            from aicli.services.tickets import (
+                cargar_tickets, formatear_historial,
+                guardar_ticket_activo, leer_ticket_activo,
+            )
+            from rich.panel import Panel as RichPanel
+
+            tickets = cargar_tickets()
+
+            if tickets:
+                opciones_tickets = [
+                    questionary.Choice(
+                        f"  {tid}   {datos['descripcion']}  ({len(datos['rondas'])} ronda/s)",
+                        value=tid,
+                    )
+                    for tid, datos in tickets.items()
+                ]
+                opciones_tickets.append(questionary.Choice("  Ingresar ID manualmente...", value="__manual__"))
+                ticket_elegido = questionary.select(
+                    "¿Qué ticket retomar?",
+                    choices=opciones_tickets,
+                    style=_ESTILO_MENU,
+                ).ask()
+            else:
+                ticket_elegido = "__manual__"
+
+            if ticket_elegido == "__manual__":
+                ticket_elegido = questionary.text(
+                    "  ID del ticket (ej: PROJ-1234)",
+                    style=_ESTILO_MENU,
+                ).ask()
+
+            if not ticket_elegido or not ticket_elegido.strip():
+                console.print("  [bold yellow]Aviso:[/bold yellow] Indicá un ticket para continuar.")
+                continue
+
+            ticket_id = ticket_elegido.strip().upper()
+            historial = formatear_historial(ticket_id, tickets)
+
+            if historial:
+                console.print()
+                console.print(RichPanel(historial, title=f"[bold cyan]Historial {ticket_id}[/bold cyan]", border_style="cyan"))
+
+            console.print()
+            motivo = questionary.text(
+                "  Motivo de reapertura (pegá el comentario de QA)",
+                style=_ESTILO_MENU,
+            ).ask()
+
+            if not motivo or not motivo.strip():
+                console.print("  [bold yellow]Aviso:[/bold yellow] El motivo de reapertura es necesario.")
+                continue
+
+            imagen = questionary.text(
+                "  Imagen de evidencia (ruta local) — Enter para omitir",
+                style=_ESTILO_MENU,
+            ).ask()
+            archivo = questionary.text(
+                "  Archivo específico (ej: pagos/PagosController.php) — Enter para omitir",
+                style=_ESTILO_MENU,
+            ).ask()
+
+            guardar_ticket_activo(ticket_id, motivo.strip())
+
+            tarea_retomar = f"[TICKET REABIERTO {ticket_id}] {motivo.strip()}"
+            archivo_limpio = archivo.strip() if archivo and archivo.strip() else None
+            imagen_limpia = imagen.strip() if imagen and imagen.strip() else None
+            task._ejecutar_task(tarea_retomar, archivo_limpio, imagen_limpia, historial_ticket=historial)
 
         elif opcion == "task":
             tarea = questionary.text("  Describí la tarea", style=_ESTILO_MENU).ask()

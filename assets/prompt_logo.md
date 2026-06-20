@@ -1,48 +1,75 @@
-Create a professional app icon for a developer CLI tool called **AICLI** (also referred to as **ctx**).
+# AICLI — Prompt para generación de logo
 
-## What the tool does
-AICLI is a context engine that sits between a software developer and Claude Code (an AI coding assistant). It eliminates the friction of re-explaining project architecture at the start of every AI session — it knows the codebase, injects the right context, and lets the developer go straight to work.
+## Qué es el proyecto
 
-## Core concepts to convey
-- Intelligence distilled into simplicity
-- A bridge between the developer's knowledge and the AI
-- Precision — the right context, nothing more
-- A terminal/CLI tool — lives in the command line
+AICLI es un motor de contexto inteligente para Claude Code.
+Elimina el tiempo perdido re-explicando arquitectura, stack y convenciones en cada sesión de IA.
+Documenta el proyecto una vez y entrega a Claude exactamente el contexto que necesita — ni más ni menos.
 
-## Visual direction
+---
 
-**Style:** Minimal, geometric, flat design. No gradients, no shadows, no clutter.
-One strong idea executed perfectly.
+## Prompt principal (Midjourney / DALL-E 3 / Ideogram / Recraft)
 
-**Color palette:**
-- Primary: electric cyan `#00D4FF` or `#00E5CC`
-- Background: deep dark `#0D1117` or `#0A0E1A`
-- Accent (optional): white `#FFFFFF`
+```
+Minimal professional logo for a developer CLI tool called "AICLI".
 
-**Shape:** Square with rounded corners (standard app icon format, 1024×1024 px).
+Concept: A single sharp geometric symbol — a clean hexagon or
+diamond shape with a bold ">" terminal cursor at its center,
+radiating three thin concentric rings outward, suggesting
+context flowing into a core. The symbol feels precise, loaded,
+inevitable.
 
-## Icon concept options — pick the strongest
+Style: Ultra-minimal. One symbol, no text, no decoration.
+Flat vector. Zero gradients. Pure geometric.
 
-**Option A — The context bolt:**
-A minimalist lightning bolt or arrow pointing right, formed by the letters C and X (from *ctx*) merged into a single geometric shape. Suggests speed and precision. Cyan on dark background.
+Colors: Deep matte black background (#0A0A0F).
+Electric cyan symbol (#00E5FF) with a subtle inner glow —
+the kind that makes it feel like it's powered on.
+No other colors.
 
-**Option B — The neural bracket:**
-Code brackets `< >` with a small glowing dot or pulse in the center — representing the moment intelligence is injected into a conversation. Clean, technical.
+Mood: Imposing. Silent authority. A tool that knows exactly
+what it's doing. Like a scalpel, not a hammer.
 
-**Option C — The context layer:**
-Three thin horizontal lines (like a document or stack), with a small cyan spark or highlight on the top line — representing structured knowledge being activated. Extremely minimal.
+Output: Centered on square canvas. Lots of breathing room
+around the symbol. The symbol takes up 40% of the space —
+no more, no less.
 
-**Option D — The ctx monogram:**
-The three letters C-T-X arranged as a tight geometric wordmark inside the icon square, with the T slightly elevated or in a contrasting weight — making the tool name instantly recognizable.
+Do NOT include: gradients, shadows, lens flares, 3D effects,
+letters, wordmarks, sparkles, brains, robots, or anything
+that looks like generic AI iconography.
+```
 
-## What to avoid
-- Brains, robots, gears — overused in AI tools
-- Gradients or glassmorphism
-- More than 2 colors
-- Any text other than "ctx" if included at all
-- Complexity that doesn't read at 64×64 px
+**Midjourney:** agregá `--ar 1:1 --style raw --v 6` al final del prompt.
 
-## Output requested
-Generate 4 variations — one per concept above — so I can compare and choose.
-Each icon should look great at both 1024×1024 and 64×64 px.
-Clean white or dark background version for each.
+---
+
+## Por qué este concepto
+
+| Elemento | Significado |
+|----------|-------------|
+| `>` terminal cursor | Identifica la herramienta como CLI en un vistazo |
+| Anillos concéntricos | El contexto expandiéndose desde un punto preciso — lo que hace AICLI |
+| Hexágono / diamante | Estructura y peso visual sin decoración |
+| Cyan `#00E5FF` sobre negro `#0A0A0F` | Paleta oficial de la CLI |
+| 40% del canvas | Respiración visual — el símbolo impone sin gritar |
+
+---
+
+## Variantes a pedir
+
+Una vez elegido el concepto base, pedir estas variantes:
+
+1. **Ícono solo** — símbolo sin texto, fondo negro (para favicon y avatar)
+2. **Ícono + wordmark** — símbolo a la izquierda, "AICLI" a la derecha en tipografía monospace fina
+3. **Fondo claro** — mismo símbolo sobre blanco `#FAFAFA` para contextos con fondo claro
+4. **Tamaño pequeño** — verificar que el símbolo sigue leyéndose a 64×64 px
+
+---
+
+## Lo que no queremos
+
+- Cerebros, robots, engranajes — sobreusado en herramientas de IA
+- Gradientes o glassmorphism
+- Más de 2 colores
+- Cualquier texto que no sea "AICLI" si se incluye
+- Complejidad que no se lea a 64×64 px

@@ -95,6 +95,19 @@ refinamiento de calidad de documentación generada.
 - [x] Diagnóstico interactivo si Claude no se encuentra: found-but-PATH vs not-installed
 - [x] Opción de reintentar sin re-correr la tarea
 
+### `ctx retomar` (desde menú)
+- [x] Lista tickets activos de los últimos 7 días
+- [x] Muestra historial de rondas anteriores antes de arrancar
+- [x] Pide motivo de reapertura (comentario de QA), imagen opcional, archivo opcional
+- [x] Inyecta historial en `session_context.md` entre contexto y plan
+- [x] Guarda `ticket_activo.json` para que `ctx sync` capture el motivo al cerrar
+
+### `ctx sync` — captura de ticket
+- [x] Pregunta número de ticket Jira al final del flujo
+- [x] Pre-rellena con el ticket activo si viene de `ctx retomar`
+- [x] Guarda ronda con archivos tocados + mensaje Jira + motivo de reapertura
+- [x] Purga automática de tickets sin actividad en 7 días (`tickets.json`)
+
 ---
 
 ## Pendiente — Validación en campo
