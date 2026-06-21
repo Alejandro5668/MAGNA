@@ -13,7 +13,9 @@
 
 ---
 
-![MAGNA CLI](assets/PORT2.png)
+<div align="center">
+  <img src="assets/PORT2.png" alt="MAGNA CLI" />
+</div>
 
 ---
 
