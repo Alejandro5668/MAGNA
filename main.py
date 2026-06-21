@@ -1,9 +1,7 @@
 from dotenv import load_dotenv
 from pathlib import Path
-from datetime import datetime
 import os
 import logging
-import secrets
 
 Path.home().joinpath(".mycontext").mkdir(exist_ok=True)
 logging.basicConfig(
@@ -26,7 +24,7 @@ from rich.console import Console
 from rich.align import Align
 from rich.rule import Rule
 from rich.text import Text
-from aicli.commands import status, init, archive, file_cmd, sync, task, claude_cmd, snapshot, proyecto
+from aicli.commands import status, init, archive, file_cmd, sync, task, claude_cmd, proyecto
 from aicli.db import init_db, engine
 
 init_db()
@@ -39,7 +37,6 @@ app.add_typer(file_cmd.app, name="file")
 app.add_typer(sync.app, name="sync")
 app.add_typer(task.app, name="task")
 app.add_typer(claude_cmd.app, name="claude")
-app.add_typer(snapshot.app, name="snapshot")
 app.add_typer(proyecto.app, name="proyecto")
 
 console = Console()
@@ -158,9 +155,7 @@ def _mostrar_menu() -> None:
     if not _verificar_api_key():
         raise typer.Exit(code=1)
 
-    logo = pyfiglet.figlet_format("MAGNA", font="slant")
-    session_id = f"#MGN-{secrets.token_hex(2).upper()}"
-    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M")
+    logo = pyfiglet.figlet_format("MAGNA", font="ansi_shadow")
 
     console.print()
     console.print(Align(Text(logo.rstrip(), style="bold cyan"), align="center"))
@@ -168,8 +163,6 @@ def _mostrar_menu() -> None:
     console.print(Rule(style="dim cyan"))
     console.print()
     console.print(Align('[bold cyan]"You see what you believe..."[/bold cyan]', align="center"))
-    console.print()
-    console.print(Align(f"[dim]Session {session_id}  ·  {timestamp}  ·  claude-sonnet-4-6[/dim]", align="center"))
     console.print()
 
     if not _seleccionar_proyecto():
@@ -192,7 +185,6 @@ def _mostrar_menu() -> None:
                 questionary.Choice("  ctx task     — Lanzar Claude con contexto de una tarea",       value="task"),
                 questionary.Choice("  ctx claude   — Lanzar Claude con contexto completo",           value="claude"),
                 questionary.Choice("  ctx status   — Ver arquitectura documentada del proyecto",     value="status"),
-                questionary.Choice("  ctx snapshot — Guardar punto de restauración",                 value="snapshot"),
                 questionary.Choice("  Salir",                                                        value="salir"),
             ],
             style=_ESTILO_MENU,
@@ -323,8 +315,6 @@ def _mostrar_menu() -> None:
         elif opcion == "status":
             status.status()
 
-        elif opcion == "snapshot":
-            snapshot.snapshot()
 
 
 @app.callback(invoke_without_command=True)
