@@ -13,9 +13,7 @@
 
 ---
 
-<div align="center">
-  <img src="assets/PORT.png" alt="MAGNA CLI — pantalla de bienvenida" width="100%" />
-</div>
+![MAGNA CLI](assets/PORT.png)
 
 ---
 

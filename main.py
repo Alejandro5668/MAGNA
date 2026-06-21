@@ -161,7 +161,7 @@ def _mostrar_menu() -> None:
     console.print()
     for linea in logo.rstrip().splitlines():
         console.print(Align(Text(linea, style="bold cyan"), align="center"))
-        time.sleep(0.045)
+        time.sleep(0.09)
     console.print()
     console.print(Align('[bold cyan]"You see what you believe..."[/bold cyan]', align="center"))
     console.print()
