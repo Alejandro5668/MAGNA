@@ -13,7 +13,7 @@
 
 ---
 
-![MAGNA CLI](assets/PORT.png)
+![MAGNA CLI](assets/PORT2.png)
 
 ---
 
