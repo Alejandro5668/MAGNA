@@ -1,6 +1,6 @@
 <div align="center">
-  <img src="assets/logo.png" width="120" alt="AICLI logo" />
-  <h1>AICLI</h1>
+  <img src="assets/logo.png" width="120" alt="MAGNA logo" />
+  <h1>MAGNA</h1>
   <p><em>Motor de contexto inteligente para Claude Code.</em></p>
   <p>
     <img src="https://img.shields.io/badge/python-3.11+-3776AB?logo=python&logoColor=white" alt="Python 3.11+" />
@@ -13,9 +13,9 @@
 
 ---
 
-<div align="center">
-  <img src="assets/PORT2.png" alt="MAGNA CLI" />
-</div>
+<p align="center">
+  <img src="assets/PORT2.png" alt="MAGNA CLI — pantalla de bienvenida" />
+</p>
 
 ---
 
@@ -23,18 +23,18 @@
 
 Claude Code arranca cada sesión desde cero. Sin contexto, los primeros minutos se van en explorar el proyecto, entender la arquitectura y recordar las convenciones del equipo. En un proyecto de miles de archivos, ese costo se repite en cada ticket.
 
-**AICLI lo resuelve.** Documenta tu proyecto una sola vez y entrega a Claude exactamente el contexto que necesita para la tarea actual — ni más ni menos.
+**MAGNA lo resuelve.** Documenta tu proyecto una sola vez y entrega a Claude exactamente el contexto que necesita para la tarea actual — ni más ni menos.
 
 ## Antes / Después
 
-**Sin AICLI**
+**Sin MAGNA**
 ```
 Abrís Claude Code → explicás el stack → describís las convenciones →
 recordás qué archivo tiene el problema → Claude empieza a explorar.
 Costo: 5-10 minutos por sesión, multiplicado por cada ticket.
 ```
 
-**Con AICLI**
+**Con MAGNA**
 ```
 ctx task "arreglar el filtro de fecha en el reporte de ventas"
 → Claude Code abre con: rol de senior developer + arquitectura del proyecto
@@ -49,7 +49,7 @@ Costo: ~30 segundos.
 3. **`ctx file <zona>`** profundiza en la carpeta específica antes del ticket
 4. **`ctx task`** detecta con _extended thinking_ qué módulos son relevantes y genera un plan técnico
 5. Claude Code abre con todo el contexto ya cargado — sin exploración manual
-6. **`ctx sync`** detecta los cambios con git y actualiza la documentación post-tarea
+6. **`ctx sync`** detecta los cambios con git, corre QA adversarial y actualiza la documentación post-tarea
 
 El knowledge store vive en `~/.mycontext/` — completamente fuera de cualquier repositorio de cliente.
 
@@ -62,21 +62,22 @@ El knowledge store vive en `~/.mycontext/` — completamente fuera de cualquier 
 | `ctx file <carpeta>` | Documenta en profundidad una zona específica del proyecto |
 | `ctx archive <ruta>` | Analiza y documenta un archivo individual en detalle |
 | `ctx task "descripción"` | Detecta módulos relevantes, genera plan técnico y lanza Claude Code |
-| `ctx sync` | Detecta cambios con git y actualiza la documentación post-tarea |
+| `ctx retomar` | Retoma un ticket reabierto por QA con historial de rondas anteriores |
+| `ctx sync` | Detecta cambios con git, corre QA pre-commit y actualiza la documentación |
 | `ctx claude` | Lanza Claude Code con el contexto completo del proyecto |
-| `ctx status` | Muestra los módulos documentados del proyecto activo |
-| `ctx snapshot` | Guarda un punto de restauración del knowledge store |
+| `ctx status` | Muestra la arquitectura documentada del proyecto agrupada por carpeta |
 
 ## Contexto que recibe Claude
 
 Cada sesión arranca con esta estructura, en este orden:
 
 ```
-rol.md              ←  Rol de senior developer + reglas de comportamiento
-PROYECTO.md         ←  Arquitectura real, patrón SQL, convenciones del equipo
-Módulos relevantes  ←  Documentación de los archivos específicos de la tarea
-Plan técnico        ←  Pasos concretos generados antes de abrir Claude Code
-Archivo de entrada  ←  El archivo exacto donde ocurre el problema
+rol.md               ←  Rol de senior developer + reglas de comportamiento
+PROYECTO.md          ←  Arquitectura real, patrón SQL, convenciones del equipo
+Historial del ticket ←  Rondas anteriores si el ticket fue reabierto por QA
+Módulos relevantes   ←  Documentación de los archivos específicos de la tarea
+Plan técnico         ←  Pasos concretos generados antes de abrir Claude Code
+Archivo de entrada   ←  El archivo exacto donde ocurre el problema
 ```
 
 ## Instalación
@@ -113,24 +114,24 @@ Necesitás una [API key de Anthropic](https://console.anthropic.com) — `consol
 ## Arquitectura
 
 ```
-AICLI/
+MAGNA/
 ├── aicli/
 │   ├── commands/
 │   │   ├── init.py        # ctx init     — mapea arquitectura del proyecto
 │   │   ├── file_cmd.py    # ctx file     — documenta una zona en profundidad
 │   │   ├── archive.py     # ctx archive  — analiza un archivo individual
-│   │   ├── sync.py        # ctx sync     — sincroniza documentación post-tarea
+│   │   ├── sync.py        # ctx sync     — QA adversarial + sincroniza docs post-tarea
 │   │   ├── proyecto.py    # ctx proyecto — genera PROYECTO.md
 │   │   ├── task.py        # ctx task     — extended thinking + brief técnico
 │   │   ├── claude_cmd.py  # ctx claude   — lanza Claude Code con contexto completo
-│   │   ├── status.py      # ctx status   — panel de módulos documentados
-│   │   └── snapshot.py    # ctx snapshot — punto de restauración
+│   │   └── status.py      # ctx status   — arquitectura documentada por carpeta
 │   ├── db/
 │   │   └── models.py      # Modelos Project y Module (SQLModel)
 │   └── services/
 │       ├── indexer.py     # Análisis e indexación con Claude API
 │       ├── builder.py     # Ensambla el session_context.md por sesión
-│       └── caller.py      # Lanza Claude Code como subprocess
+│       ├── caller.py      # Lanza Claude Code como subprocess
+│       └── tickets.py     # Historial de tickets reabiertos con purga automática
 ├── knowledge/             # Decisiones técnicas, patrones y estado del proyecto
 ├── assets/                # Logo e íconos
 ├── main.py                # Entry point — menú interactivo principal
