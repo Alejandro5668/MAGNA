@@ -13,6 +13,12 @@
 
 ---
 
+<div align="center">
+  <img src="assets/PORT.png" alt="MAGNA CLI — pantalla de bienvenida" width="100%" />
+</div>
+
+---
+
 ## El problema
 
 Claude Code arranca cada sesión desde cero. Sin contexto, los primeros minutos se van en explorar el proyecto, entender la arquitectura y recordar las convenciones del equipo. En un proyecto de miles de archivos, ese costo se repite en cada ticket.

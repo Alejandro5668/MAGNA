@@ -1,6 +1,7 @@
 from dotenv import load_dotenv
 from pathlib import Path
 import os
+import time
 import logging
 
 Path.home().joinpath(".mycontext").mkdir(exist_ok=True)
@@ -158,9 +159,9 @@ def _mostrar_menu() -> None:
     logo = pyfiglet.figlet_format("MAGNA", font="ansi_shadow")
 
     console.print()
-    console.print(Align(Text(logo.rstrip(), style="bold cyan"), align="center"))
-    console.print()
-    console.print(Rule(style="dim cyan"))
+    for linea in logo.rstrip().splitlines():
+        console.print(Align(Text(linea, style="bold cyan"), align="center"))
+        time.sleep(0.045)
     console.print()
     console.print(Align('[bold cyan]"You see what you believe..."[/bold cyan]', align="center"))
     console.print()
