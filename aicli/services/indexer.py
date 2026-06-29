@@ -198,34 +198,56 @@ Solo el markdown, sin texto adicional antes ni después."""
         raise
 
 
-def generar_mensaje_jira(tarea: str, diff_texto: str) -> tuple[str, int]:
+def generar_resumen_caso(
+    tarea: str,
+    diff: str,
+    archivos: list[str],
+    historial_previo: str = "",
+) -> tuple[str, dict, int]:
     """
-    Genera mensaje de Jira (Causa Raiz + Solucion Aplicada) desde la tarea y el git diff.
+    Genera en una sola llamada: mensaje Jira + memoria del caso.
+    Si historial_previo tiene contenido, el mensaje Jira documenta solo esta ronda.
+    Devuelve (jira_msg, memoria_dict, tokens).
     """
-    prompt = f"""Eres un desarrollador senior documentando el resultado de un ticket para Jira.
+    archivos_str = "\n".join(f"- {a}" for a in archivos)
 
+    contexto_ronda = (
+        f"\nHistorial de rondas anteriores:\n{historial_previo}\n"
+        "Esta es una ronda de seguimiento. El mensaje Jira debe documentar SOLO los cambios "
+        "de esta ronda, no repetir lo que ya esta en el historial.\n"
+    ) if historial_previo else ""
+
+    prompt = f"""Sos un desarrollador senior cerrando un ticket de trabajo.
+{contexto_ronda}
 Tarea resuelta: {tarea}
 
-Cambios realizados (git diff):
-{diff_texto[:3000]}
+Archivos modificados:
+{archivos_str}
 
-Genera EXACTAMENTE este formato, sin texto adicional antes ni despues:
+Cambios aplicados (git diff):
+{diff[:5000]}
 
-- *\U0001f331 Causa Raiz:* [Origen tecnico del problema. Menciona archivo:linea, tabla, campo o funcion especifica. 1-3 oraciones.]
+Genera un JSON con exactamente estas claves, sin texto adicional antes ni despues:
 
-- *\U0001f6e0️ Solucion Aplicada:* [Cambios implementados. Si fue SQL: tabla y campo exacto. Si fue codigo: archivo y funcion. 2-4 puntos concretos.]
+{{
+  "jira": "mensaje para pegar en Jira. Formato: '🌱 Causa Raiz: [origen tecnico, archivo:linea o tabla:campo]\\n🛠️ Solucion Aplicada: [cambios concretos, maximo 4 puntos]'. SOLO ASCII puro sin tildes. Maximo 6 lineas totales.",
+  "investigado": "que causa genero el problema — especifico con archivo/funcion/tabla si aplica — maximo 2 oraciones",
+  "hecho": "que cambios se aplicaron exactamente — archivos y funciones modificadas — maximo 2 oraciones",
+  "tener_en_cuenta": "gotchas, restricciones no obvias, edge cases a considerar en el futuro — maximo 2 oraciones"
+}}"""
 
-REGLAS CRITICAS:
-- Maximo 6 lineas en total entre los dos puntos
-- SOLO caracteres ASCII puros en el texto. PROHIBIDO tildes y acentos.
-  Escribir "raiz" no "raiz con tilde", "solucion" no "solucion con tilde".
-  Los emojis son la unica excepcion permitida.
-- Causa Raiz: explica el ORIGEN, no el sintoma
-- Solucion Aplicada: describe QUE se hizo, no como se investigo
-- Si el fix fue SQL: nombra la tabla y el campo exacto
-- Si el fix fue codigo PHP: nombra el archivo y la funcion"""
-
-    return _llamar_claude(prompt, contexto="jira", max_tokens=512)
+    texto, tokens = _llamar_claude(prompt, contexto="resumen-caso", max_tokens=800)
+    try:
+        limpio = texto.strip().removeprefix("```json").removeprefix("```").removesuffix("```").strip()
+        data = json.loads(limpio)
+        memoria = {
+            "investigado": data.get("investigado", ""),
+            "hecho": data.get("hecho", ""),
+            "tener_en_cuenta": data.get("tener_en_cuenta", ""),
+        }
+        return data.get("jira", ""), memoria, tokens
+    except Exception:
+        return texto, {"investigado": "", "hecho": "", "tener_en_cuenta": ""}, tokens
 
 
 def describir_imagen(ruta_imagen: str) -> tuple[str, int]:
