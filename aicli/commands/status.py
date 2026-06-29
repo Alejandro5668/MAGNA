@@ -18,16 +18,16 @@ def status():
     path = Path.cwd()
 
     with Session(engine) as session:
-        proyecto = session.exec(select(Project).where(Project.path == str(path))).first()
+        project = session.exec(select(Project).where(Project.path == str(path))).first()
 
-    if not proyecto:
+    if not project:
         console.print("[bold yellow]Aviso:[/bold yellow] Este directorio no está registrado. Ejecutá [bold]ctx init[/bold] primero.")
         return
 
     with Session(engine) as session:
-        modulos = list(session.exec(select(Module).where(Module.project_id == proyecto.id)).all())
+        modules = list(session.exec(select(Module).where(Module.project_id == project.id)).all())
 
-    if not modulos:
+    if not modules:
         console.print(Panel(
             "[yellow]Todavía no hay módulos documentados.[/yellow]\n\n"
             "Ejecutá [bold cyan]ctx init[/bold cyan] para mapear la arquitectura del proyecto.",
@@ -36,33 +36,33 @@ def status():
         ))
         return
 
-    carpetas: dict[str, list[Module]] = {}
-    for m in modulos:
-        partes = Path(m.file_path).parts
-        carpeta = partes[0] if len(partes) > 1 else "[raíz]"
-        carpetas.setdefault(carpeta, []).append(m)
+    folders: dict[str, list[Module]] = {}
+    for m in modules:
+        parts = Path(m.file_path).parts
+        folder = parts[0] if len(parts) > 1 else "[raíz]"
+        folders.setdefault(folder, []).append(m)
 
-    def _ultima(mods: list[Module]) -> float:
+    def _last_updated(mods: list[Module]) -> float:
         return max((m.last_updated_at or 0.0) for m in mods)
 
-    carpetas_ordenadas = sorted(carpetas.items(), key=lambda x: _ultima(x[1]), reverse=True)
+    sorted_folders = sorted(folders.items(), key=lambda x: _last_updated(x[1]), reverse=True)
 
-    tabla = Table(style="cyan", show_header=True, header_style="bold cyan")
-    tabla.add_column("Carpeta", style="bold", min_width=22)
-    tabla.add_column("Módulos", justify="right", style="dim")
-    tabla.add_column("Última doc", style="dim")
+    table = Table(style="cyan", show_header=True, header_style="bold cyan")
+    table.add_column("Carpeta", style="bold", min_width=22)
+    table.add_column("Módulos", justify="right", style="dim")
+    table.add_column("Última doc", style="dim")
 
-    for carpeta, mods in carpetas_ordenadas:
-        ts = _ultima(mods)
-        fecha = datetime.fromtimestamp(ts).strftime("%Y-%m-%d") if ts else "—"
-        tabla.add_row(f"{carpeta}/", str(len(mods)), fecha)
+    for folder, mods in sorted_folders:
+        ts = _last_updated(mods)
+        date = datetime.fromtimestamp(ts).strftime("%Y-%m-%d") if ts else "—"
+        table.add_row(f"{folder}/", str(len(mods)), date)
 
     console.print()
     console.print(Panel(
-        tabla,
-        title=f"[bold cyan]Arquitectura documentada — {proyecto.name}[/bold cyan]",
+        table,
+        title=f"[bold cyan]Arquitectura documentada — {project.name}[/bold cyan]",
         border_style="cyan",
     ))
-    console.print(f"  [dim]{len(modulos)} módulos en {len(carpetas)} carpetas[/dim]")
+    console.print(f"  [dim]{len(modules)} módulos en {len(folders)} carpetas[/dim]")
     console.print()
     console.print("  [dim]¿No ves una carpeta? Ejecutá [bold cyan]ctx init[/bold cyan] para actualizar la arquitectura.[/dim]")

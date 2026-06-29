@@ -8,11 +8,11 @@ from sqlmodel import Session, select
 from aicli.db import engine
 from aicli.db.models import Project, Module
 from aicli.services.indexer import (
-    obtener_arbol,
-    documentar_arquitectura,
-    generar_contenido_modulo,
-    modulo_necesita_actualizacion,
-    EXTENSIONES_NO_CODIGO,
+    get_tree,
+    document_architecture,
+    generate_module_content,
+    module_needs_update,
+    NON_CODE_EXTENSIONS,
 )
 
 app = typer.Typer()
@@ -56,7 +56,7 @@ Antes de cualquier query:
 """
 
 
-def detectar_stack(path: Path) -> str:
+def detect_stack(path: Path) -> str:
     if (path / "requirements.txt").exists() or (path / "pyproject.toml").exists():
         return "python"
     if (path / "composer.json").exists():
@@ -110,37 +110,37 @@ def _progreso_print(msg: str) -> None:
     console.print(f"  [bold green]✔[/bold green] [dim]{msg}[/dim]")
 
 
-def _ruta_md(proyecto_id: int, file_path: str) -> Path:
-    base = Path.home() / ".mycontext" / "projects" / str(proyecto_id)
+def _md_path(project_id: int, file_path: str) -> Path:
+    base = Path.home() / ".mycontext" / "projects" / str(project_id)
     return base / Path(file_path).with_suffix(".md")
 
 
-def _guardar_modulos(modulos: list[dict], proyecto: Project) -> None:
+def _save_modules(modules: list[dict], project: Project) -> None:
     with Session(engine) as session:
-        for m in modulos:
-            archivo_md = _ruta_md(proyecto.id, m["file_path"])
-            archivo_md.parent.mkdir(parents=True, exist_ok=True)
-            archivo_md.write_text(m.get("content_md", m.get("documentation", "")), encoding="utf-8")
+        for m in modules:
+            md_file = _md_path(project.id, m["file_path"])
+            md_file.parent.mkdir(parents=True, exist_ok=True)
+            md_file.write_text(m.get("content_md", m.get("documentation", "")), encoding="utf-8")
 
-            existente = session.exec(
+            existing = session.exec(
                 select(Module).where(
                     Module.file_path == m["file_path"],
-                    Module.project_id == proyecto.id
+                    Module.project_id == project.id
                 )
             ).first()
 
-            if existente:
-                existente.content_path = str(archivo_md)
-                existente.last_updated_at = m.get("last_updated_at", time.time())
-                existente.description = m.get("description", existente.description)
-                session.add(existente)
+            if existing:
+                existing.content_path = str(md_file)
+                existing.last_updated_at = m.get("last_updated_at", time.time())
+                existing.description = m.get("description", existing.description)
+                session.add(existing)
             else:
                 session.add(Module(
-                    project_id=proyecto.id,
+                    project_id=project.id,
                     name=m["name"],
                     description=m.get("description", ""),
                     file_path=m["file_path"],
-                    content_path=str(archivo_md),
+                    content_path=str(md_file),
                     created_at=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                     last_updated_at=m.get("last_updated_at", time.time()),
                     category=m.get("category"),
@@ -149,7 +149,7 @@ def _guardar_modulos(modulos: list[dict], proyecto: Project) -> None:
         session.commit()
 
 
-def _crear_rol_si_no_existe() -> None:
+def _create_rol_if_missing() -> None:
     rol_path = Path.home() / ".mycontext" / "rol.md"
     if not rol_path.exists():
         rol_path.write_text(_ROL_DEFAULT, encoding="utf-8")
@@ -160,45 +160,45 @@ def init():
     """Registra el proyecto activo y genera su mapa arquitectural con IA."""
     path = Path.cwd()
     name = path.name
-    stack = detectar_stack(path)
+    stack = detect_stack(path)
 
-    _crear_rol_si_no_existe()
+    _create_rol_if_missing()
 
     with Session(engine) as session:
-        proyecto_existente = session.exec(select(Project).where(Project.path == str(path))).first()
+        existing_project = session.exec(select(Project).where(Project.path == str(path))).first()
 
-    if proyecto_existente:
-        _actualizar_proyecto(proyecto_existente, path)
+    if existing_project:
+        _update_project(existing_project, path)
         return
 
-    proyecto = Project(
+    project = Project(
         name=name,
         path=str(path),
         stack=stack,
         created_at=datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     )
     with Session(engine) as session:
-        session.add(proyecto)
+        session.add(project)
         session.commit()
-        session.refresh(proyecto)
+        session.refresh(project)
 
-    arbol = obtener_arbol(path)
-    n_codigo = len([f for f in arbol if Path(f).suffix not in EXTENSIONES_NO_CODIGO])
+    tree = get_tree(path)
+    n_code = len([f for f in tree if Path(f).suffix not in NON_CODE_EXTENSIONS])
 
     console.print(f"\n[bold cyan]Mapeando arquitectura de {name}...[/bold cyan]")
-    console.print(f"  [dim]{n_codigo:,} archivos de código · {stack}[/dim]")
+    console.print(f"  [dim]{n_code:,} archivos de código · {stack}[/dim]")
 
-    modulos_raw = documentar_arquitectura(path, name, stack, arbol, on_progreso=_progreso_print)
-    modulos = [
+    raw_modules = document_architecture(path, name, stack, tree, on_progreso=_progreso_print)
+    modules = [
         {**m, "content_md": m.pop("documentation", ""), "last_updated_at": time.time()}
-        for m in modulos_raw
+        for m in raw_modules
     ]
 
-    _guardar_modulos(modulos, proyecto)
+    _save_modules(modules, project)
 
     console.print(Panel(
         Group(
-            f"[bold cyan]✔ {name} — {len(modulos)} módulos documentados[/bold cyan]",
+            f"[bold cyan]✔ {name} — {len(modules)} módulos documentados[/bold cyan]",
             f"[bold dim]Stack: {stack}[/bold dim]",
             f"[bold dim]Ruta: {path}[/bold dim]",
         ),
@@ -219,45 +219,45 @@ def init():
     ))
 
 
-def _actualizar_proyecto(proyecto: Project, path: Path) -> None:
+def _update_project(project: Project, path: Path) -> None:
     with Session(engine) as session:
-        modulos_db = list(session.exec(select(Module).where(Module.project_id == proyecto.id)).all())
+        modules_db = list(session.exec(select(Module).where(Module.project_id == project.id)).all())
 
-    actualizados = 0
-    sin_cambios = 0
+    updated = 0
+    unchanged = 0
 
-    console.print(f"\n[bold cyan]Verificando módulos de {proyecto.name}...[/bold cyan]")
-    for modulo in modulos_db:
-        if modulo_necesita_actualizacion(modulo.file_path, path, modulo):
-            ruta_fuente = path / modulo.file_path
+    console.print(f"\n[bold cyan]Verificando módulos de {project.name}...[/bold cyan]")
+    for module in modules_db:
+        if module_needs_update(module.file_path, path, module):
+            source_file = path / module.file_path
             try:
-                fuente = ruta_fuente.read_text(encoding="latin-1")
+                source = source_file.read_text(encoding="latin-1")
             except FileNotFoundError:
-                console.print(f"  [bold yellow]⚠[/bold yellow] [dim]{modulo.file_path} — no encontrado, se omite[/dim]")
+                console.print(f"  [bold yellow]⚠[/bold yellow] [dim]{module.file_path} — no encontrado, se omite[/dim]")
                 continue
 
-            contenido_md, tokens = generar_contenido_modulo(modulo.name, modulo.file_path, fuente)
-            archivo_md = _ruta_md(proyecto.id, modulo.file_path)
-            archivo_md.parent.mkdir(parents=True, exist_ok=True)
-            archivo_md.write_text(contenido_md, encoding="utf-8")
+            content_md, tokens = generate_module_content(module.name, module.file_path, source)
+            md_file = _md_path(project.id, module.file_path)
+            md_file.parent.mkdir(parents=True, exist_ok=True)
+            md_file.write_text(content_md, encoding="utf-8")
 
             with Session(engine) as session:
-                m = session.get(Module, modulo.id)
-                m.content_path = str(archivo_md)
+                m = session.get(Module, module.id)
+                m.content_path = str(md_file)
                 m.last_updated_at = time.time()
                 session.add(m)
                 session.commit()
 
-            console.print(f"  [bold green]✔[/bold green] [dim]{modulo.file_path} — actualizado · {tokens:,} tokens[/dim]")
-            actualizados += 1
+            console.print(f"  [bold green]✔[/bold green] [dim]{module.file_path} — actualizado · {tokens:,} tokens[/dim]")
+            updated += 1
         else:
-            console.print(f"  [dim]✔ {modulo.file_path} — sin cambios[/dim]")
-            sin_cambios += 1
+            console.print(f"  [dim]✔ {module.file_path} — sin cambios[/dim]")
+            unchanged += 1
 
     console.print(Panel(
         Group(
-            f"[bold cyan]{proyecto.name} — contexto al día[/bold cyan]",
-            f"[bold dim]Actualizados: {actualizados}  |  Sin cambios: {sin_cambios}[/bold dim]",
+            f"[bold cyan]{project.name} — contexto al día[/bold cyan]",
+            f"[bold dim]Actualizados: {updated}  |  Sin cambios: {unchanged}[/bold dim]",
         ),
         title="ctx init",
         border_style="cyan"

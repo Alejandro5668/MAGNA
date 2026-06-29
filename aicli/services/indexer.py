@@ -9,11 +9,11 @@ import logging
 
 
 # Mínimo universal que siempre es ruido — independiente del stack
-IGNORAR_UNIVERSAL = {".git", "node_modules", ".venv", "__pycache__"}
+IGNORE_UNIVERSAL = {".git", "node_modules", ".venv", "__pycache__"}
 
 # Blocklist de extensiones que definitivamente NO son código fuente.
 # Todo lo que no esté acá se considera potencialmente legible.
-EXTENSIONES_NO_CODIGO = {
+NON_CODE_EXTENSIONS = {
     ".png", ".jpg", ".jpeg", ".gif", ".svg", ".ico", ".webp", ".avif", ".bmp",
     ".ttf", ".woff", ".woff2", ".eot", ".otf",
     ".mp4", ".mp3", ".wav", ".avi", ".mov", ".webm",
@@ -24,164 +24,164 @@ EXTENSIONES_NO_CODIGO = {
     ".csv", ".parquet", ".sqlite", ".db",
 }
 
-MAX_CHARS_ARCHIVO_RAIZ = 5_000
-MAX_CHARS_ARCHIVO_NORMAL = 1_500
-MAX_CHARS_CONTENIDO = 20_000
-MAX_ARBOL_ENTRADAS = 300
-MAX_REINTENTOS = 4
-ESPERA_INICIAL = 60
+MAX_CHARS_ROOT_FILE = 5_000
+MAX_CHARS_NORMAL_FILE = 1_500
+MAX_CHARS_CONTENT = 20_000
+MAX_TREE_ENTRIES = 300
+MAX_RETRIES = 4
+INITIAL_WAIT = 60
 
 
-def _cargar_ignorar(path: Path) -> set[str]:
+def _load_ignore(path: Path) -> set[str]:
     """
     Lee el .gitignore del proyecto y lo combina con el mínimo universal.
     El proyecto ya sabe qué es ruido — nosotros no.
     """
-    ignorar = set(IGNORAR_UNIVERSAL)
+    ignored = set(IGNORE_UNIVERSAL)
 
     gitignore = path / ".gitignore"
     if not gitignore.exists():
-        return ignorar
-    for linea in gitignore.read_text(encoding="latin-1").splitlines():
-        linea = linea.strip()
-        if not linea or linea.startswith("#") or linea.startswith("!"):
+        return ignored
+    for line in gitignore.read_text(encoding="latin-1").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or line.startswith("!"):
             continue
-        nombre = linea.lstrip("/").rstrip("/")
-        if "*" not in nombre and "?" not in nombre and "[" not in nombre:
-            ignorar.add(nombre)
-    return ignorar
+        name = line.lstrip("/").rstrip("/")
+        if "*" not in name and "?" not in name and "[" not in name:
+            ignored.add(name)
+    return ignored
 
 
-def _ordenar_por_relevancia(archivos: list[str], path: Path) -> list[str]:
+def _sort_by_relevance(files: list[str], path: Path) -> list[str]:
     """
     Archivos en la raíz y más pequeños primero.
     Los entry points y configs tienden a estar en la raíz y ser pequeños.
     """
-    def clave(ruta_relativa: str) -> tuple[int, int]:
-        p = Path(ruta_relativa)
-        profundidad = len(p.parts)
+    def key(relative_path: str) -> tuple[int, int]:
+        p = Path(relative_path)
+        depth = len(p.parts)
         try:
-            tamaño = (path / ruta_relativa).stat().st_size
+            size = (path / relative_path).stat().st_size
         except OSError:
-            tamaño = 999_999
-        return (profundidad, tamaño)
-    return sorted(archivos, key=clave)
+            size = 999_999
+        return (depth, size)
+    return sorted(files, key=key)
 
 
-def obtener_arbol(path: Path) -> list[str]:
-    ignorar = _cargar_ignorar(path)
-    archivos = []
-    for archivo in path.rglob("*"):
-        if archivo.is_file():
-            if any(parte in ignorar for parte in archivo.parts):
+def get_tree(path: Path) -> list[str]:
+    ignored = _load_ignore(path)
+    files = []
+    for file in path.rglob("*"):
+        if file.is_file():
+            if any(part in ignored for part in file.parts):
                 continue
-            archivos.append(str(archivo.relative_to(path)))
-    return sorted(archivos)
+            files.append(str(file.relative_to(path)))
+    return sorted(files)
 
 
-def leer_archivos_clave(path: Path, arbol: list[str]) -> str:
-    candidatos = [r for r in arbol if Path(r).suffix not in EXTENSIONES_NO_CODIGO]
-    ordenados = _ordenar_por_relevancia(candidatos, path)
+def read_key_files(path: Path, tree: list[str]) -> str:
+    candidates = [r for r in tree if Path(r).suffix not in NON_CODE_EXTENSIONS]
+    sorted_files = _sort_by_relevance(candidates, path)
 
-    fragmentos = []
+    fragments = []
     total_chars = 0
-    for ruta_relativa in ordenados:
-        if total_chars >= MAX_CHARS_CONTENIDO:
+    for relative_path in sorted_files:
+        if total_chars >= MAX_CHARS_CONTENT:
             break
-        profundidad = len(Path(ruta_relativa).parts)
-        limite = MAX_CHARS_ARCHIVO_RAIZ if profundidad == 1 else MAX_CHARS_ARCHIVO_NORMAL
+        depth = len(Path(relative_path).parts)
+        limit = MAX_CHARS_ROOT_FILE if depth == 1 else MAX_CHARS_NORMAL_FILE
         try:
-            texto = (path / ruta_relativa).read_text(encoding="latin-1")[:limite]
-            fragmento = f"### {ruta_relativa}\n{texto}"
-            total_chars += len(fragmento)
-            fragmentos.append(fragmento)
+            text = (path / relative_path).read_text(encoding="latin-1")[:limit]
+            fragment = f"### {relative_path}\n{text}"
+            total_chars += len(fragment)
+            fragments.append(fragment)
         except Exception:
             continue
-    return "\n\n".join(fragmentos)
+    return "\n\n".join(fragments)
 
 
-def modulo_necesita_actualizacion(file_path: str, proyecto_path: Path, modulo_existente) -> bool:
-    if modulo_existente is None or modulo_existente.last_updated_at is None:
+def module_needs_update(file_path: str, project_path: Path, existing_module) -> bool:
+    if existing_module is None or existing_module.last_updated_at is None:
         return True
-    ruta = proyecto_path / file_path
-    if not ruta.exists():
+    file = project_path / file_path
+    if not file.exists():
         return False
-    return os.path.getmtime(ruta) > modulo_existente.last_updated_at
+    return os.path.getmtime(file) > existing_module.last_updated_at
 
 
-def _reparar_json(texto: str) -> str:
+def _reparar_json(text: str) -> str:
     """
     Repara el caso más común de JSON inválido: saltos de línea literales
     dentro de strings. Recorre carácter a carácter y escapa los que aparecen
     dentro de comillas.
     """
-    resultado = []
-    en_string = False
+    result = []
+    in_string = False
     i = 0
-    while i < len(texto):
-        c = texto[i]
-        if c == '"' and (i == 0 or texto[i - 1] != "\\"):
-            en_string = not en_string
-        if en_string and c == "\n":
-            resultado.append("\\n")
-        elif en_string and c == "\r":
-            resultado.append("\\r")
+    while i < len(text):
+        c = text[i]
+        if c == '"' and (i == 0 or text[i - 1] != "\\"):
+            in_string = not in_string
+        if in_string and c == "\n":
+            result.append("\\n")
+        elif in_string and c == "\r":
+            result.append("\\r")
         else:
-            resultado.append(c)
+            result.append(c)
         i += 1
-    return "".join(resultado)
+    return "".join(result)
 
 
-def _llamar_claude(prompt: str, contexto: str = "", max_tokens: int = 8192) -> tuple[str, int]:
+def _call_claude(prompt: str, context: str = "", max_tokens: int = 8192) -> tuple[str, int]:
     """
     Llama a la API de Claude y devuelve (texto, tokens_totales).
     Reintenta con backoff exponencial solo en rate limit.
     """
-    cliente = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
-    espera = ESPERA_INICIAL
+    client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
+    wait = INITIAL_WAIT
     chars = len(prompt)
-    tokens_estimados = chars // 4
+    estimated_tokens = chars // 4
 
-    for intento in range(MAX_REINTENTOS):
+    for attempt in range(MAX_RETRIES):
         try:
-            respuesta = cliente.messages.create(
+            response = client.messages.create(
                 model="claude-sonnet-4-6",
                 max_tokens=max_tokens,
                 messages=[{"role": "user", "content": prompt}]
             )
-            input_tokens = respuesta.usage.input_tokens
-            output_tokens = respuesta.usage.output_tokens
+            input_tokens = response.usage.input_tokens
+            output_tokens = response.usage.output_tokens
             total = input_tokens + output_tokens
             logging.info(
                 "Claude OK%s — input: %d | output: %d | total: %d tokens",
-                f" [{contexto}]" if contexto else "",
+                f" [{context}]" if context else "",
                 input_tokens, output_tokens, total
             )
-            return respuesta.content[0].text, total
+            return response.content[0].text, total
         except anthropic.RateLimitError as e:
             logging.error(
                 "Rate limit%s — ~%d tokens estimados. Intento %d/%d. Esperando %ds.",
-                f" [{contexto}]" if contexto else "",
-                tokens_estimados, intento + 1, MAX_REINTENTOS, espera
+                f" [{context}]" if context else "",
+                estimated_tokens, attempt + 1, MAX_RETRIES, wait
             )
-            if intento < MAX_REINTENTOS - 1:
-                print(f"  Rate limit. Esperando {espera}s...")
-                time.sleep(espera)
-                espera *= 2
+            if attempt < MAX_RETRIES - 1:
+                print(f"  Rate limit. Esperando {wait}s...")
+                time.sleep(wait)
+                wait *= 2
             else:
                 raise
 
 
 
 
-def generar_contenido_modulo(nombre: str, file_path: str, contenido_fuente: str) -> tuple[str, int]:
+def generate_module_content(name: str, file_path: str, source_content: str) -> tuple[str, int]:
     prompt = f"""Eres un asistente técnico. Genera documentación detallada en markdown para este módulo.
 
-Módulo: {nombre}
+Módulo: {name}
 Archivo: {file_path}
 
 Código fuente:
-{contenido_fuente}
+{source_content}
 
 Generá un documento markdown con exactamente estas secciones:
 - Qué hace este módulo
@@ -192,37 +192,37 @@ Generá un documento markdown con exactamente estas secciones:
 Solo el markdown, sin texto adicional antes ni después."""
 
     try:
-        return _llamar_claude(prompt, contexto=f"generar_contenido:{nombre}")
+        return _call_claude(prompt, context=f"generar_contenido:{name}")
     except Exception as e:
-        logging.error("generar_contenido_modulo falló para '%s' (%s): %s", nombre, file_path, e, exc_info=True)
+        logging.error("generate_module_content failed for '%s' (%s): %s", name, file_path, e, exc_info=True)
         raise
 
 
-def generar_resumen_caso(
-    tarea: str,
+def generate_case_summary(
+    task: str,
     diff: str,
-    archivos: list[str],
-    historial_previo: str = "",
+    files: list[str],
+    previous_history: str = "",
 ) -> tuple[str, dict, int]:
     """
     Genera en una sola llamada: mensaje Jira + memoria del caso.
-    Si historial_previo tiene contenido, el mensaje Jira documenta solo esta ronda.
+    Si previous_history tiene contenido, el mensaje Jira documenta solo esta ronda.
     Devuelve (jira_msg, memoria_dict, tokens).
     """
-    archivos_str = "\n".join(f"- {a}" for a in archivos)
+    files_str = "\n".join(f"- {a}" for a in files)
 
-    contexto_ronda = (
-        f"\nHistorial de rondas anteriores:\n{historial_previo}\n"
+    round_context = (
+        f"\nHistorial de rondas anteriores:\n{previous_history}\n"
         "Esta es una ronda de seguimiento. El mensaje Jira debe documentar SOLO los cambios "
         "de esta ronda, no repetir lo que ya esta en el historial.\n"
-    ) if historial_previo else ""
+    ) if previous_history else ""
 
     prompt = f"""Sos un desarrollador senior cerrando un ticket de trabajo.
-{contexto_ronda}
-Tarea resuelta: {tarea}
+{round_context}
+Tarea resuelta: {task}
 
 Archivos modificados:
-{archivos_str}
+{files_str}
 
 Cambios aplicados (git diff):
 {diff[:5000]}
@@ -236,21 +236,21 @@ Genera un JSON con exactamente estas claves, sin texto adicional antes ni despue
   "tener_en_cuenta": "gotchas, restricciones no obvias, edge cases a considerar en el futuro — maximo 2 oraciones"
 }}"""
 
-    texto, tokens = _llamar_claude(prompt, contexto="resumen-caso", max_tokens=800)
+    text, tokens = _call_claude(prompt, context="resumen-caso", max_tokens=800)
     try:
-        limpio = texto.strip().removeprefix("```json").removeprefix("```").removesuffix("```").strip()
-        data = json.loads(limpio)
-        memoria = {
+        clean = text.strip().removeprefix("```json").removeprefix("```").removesuffix("```").strip()
+        data = json.loads(clean)
+        case_memory = {
             "investigado": data.get("investigado", ""),
             "hecho": data.get("hecho", ""),
             "tener_en_cuenta": data.get("tener_en_cuenta", ""),
         }
-        return data.get("jira", ""), memoria, tokens
+        return data.get("jira", ""), case_memory, tokens
     except Exception:
-        return texto, {"investigado": "", "hecho": "", "tener_en_cuenta": ""}, tokens
+        return text, {"investigado": "", "hecho": "", "tener_en_cuenta": ""}, tokens
 
 
-def describir_imagen(ruta_imagen: str) -> tuple[str, int]:
+def describe_image(image_path: str) -> tuple[str, int]:
     """
     Envía una imagen a Claude con visión y devuelve (descripción_técnica, tokens).
     Soporta PNG, JPG, WEBP, GIF.
@@ -260,15 +260,15 @@ def describir_imagen(ruta_imagen: str) -> tuple[str, int]:
     TIPOS = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
              ".webp": "image/webp", ".gif": "image/gif"}
 
-    ruta = Path(ruta_imagen)
-    media_type = TIPOS.get(ruta.suffix.lower())
+    path = Path(image_path)
+    media_type = TIPOS.get(path.suffix.lower())
     if not media_type:
-        raise ValueError(f"Formato no soportado: {ruta.suffix}. Usá PNG, JPG, WEBP o GIF.")
+        raise ValueError(f"Formato no soportado: {path.suffix}. Usá PNG, JPG, WEBP o GIF.")
 
-    imagen_b64 = base64.standard_b64encode(ruta.read_bytes()).decode("utf-8")
+    image_b64 = base64.standard_b64encode(path.read_bytes()).decode("utf-8")
 
-    cliente = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
-    respuesta = cliente.messages.create(
+    client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
+    response = client.messages.create(
         model="claude-sonnet-4-6",
         max_tokens=1024,
         messages=[{
@@ -276,7 +276,7 @@ def describir_imagen(ruta_imagen: str) -> tuple[str, int]:
             "content": [
                 {
                     "type": "image",
-                    "source": {"type": "base64", "media_type": media_type, "data": imagen_b64},
+                    "source": {"type": "base64", "media_type": media_type, "data": image_b64},
                 },
                 {
                     "type": "text",
@@ -292,31 +292,31 @@ def describir_imagen(ruta_imagen: str) -> tuple[str, int]:
             ],
         }],
     )
-    tokens = respuesta.usage.input_tokens + respuesta.usage.output_tokens
-    logging.info("describir_imagen — %s · %d tokens", ruta.name, tokens)
-    return respuesta.content[0].text.strip(), tokens
+    tokens = response.usage.input_tokens + response.usage.output_tokens
+    logging.info("describe_image — %s · %d tokens", path.name, tokens)
+    return response.content[0].text.strip(), tokens
 
 
-def analizar_archivo_profundo(
+def analyze_file_deep(
     path: Path,
-    ruta: str,
-    proyecto_name: str,
+    file_path: str,
+    project_name: str,
     stack: str,
     diff: str = "",
-    doc_existente: str = "",
+    existing_doc: str = "",
 ) -> tuple[str, int]:
     """
     Genera o actualiza documentación de un archivo individual.
-    Lee hasta 8000 chars. Si recibe diff y doc_existente, hace actualización incremental.
+    Lee hasta 8000 chars. Si recibe diff y existing_doc, hace actualización incremental.
     """
-    ruta_archivo = path / ruta
+    source_file = path / file_path
     try:
-        contenido = ruta_archivo.read_text(encoding="latin-1")[:8000]
+        content = source_file.read_text(encoding="latin-1")[:8000]
     except FileNotFoundError:
-        contenido = ""
+        content = ""
 
-    nombre = Path(ruta).stem
-    secciones = (
+    name = Path(file_path).stem
+    sections = (
         "- Qué hace este archivo (propósito y rol en el sistema)\n"
         "- Funciones y clases principales (nombre, parámetros y qué hace cada una)\n"
         "- Queries SQL y tablas involucradas (nombres exactos del código, si aplica)\n"
@@ -324,120 +324,120 @@ def analizar_archivo_profundo(
         "- Patrones y convenciones observados"
     )
 
-    if doc_existente and diff:
+    if existing_doc and diff:
         prompt = f"""Actualizá la documentación técnica de este archivo incorporando los cambios recientes.
 
-Proyecto: {proyecto_name} | Stack: {stack}
-Archivo: {ruta}
+Proyecto: {project_name} | Stack: {stack}
+Archivo: {file_path}
 
 Documentación actual:
-{doc_existente}
+{existing_doc}
 
 Cambios aplicados (git diff):
 {diff[:4000]}
 
 Código fuente actualizado:
-{contenido}
+{content}
 
 Conservá todo el conocimiento previo que siga siendo válido.
 Actualizá las secciones afectadas por el diff: nuevas funciones, queries modificadas, dependencias cambiadas.
 Eliminá referencias a código que el diff borra.
 
 Generá el documento markdown completo con exactamente estas secciones:
-{secciones}
+{sections}
 
 Solo el markdown, sin texto adicional antes ni después."""
 
     elif diff:
         prompt = f"""Generá documentación técnica para este archivo. El diff muestra los cambios de la sesión actual.
 
-Proyecto: {proyecto_name} | Stack: {stack}
-Archivo: {ruta}
+Proyecto: {project_name} | Stack: {stack}
+Archivo: {file_path}
 
 Cambios de esta sesión (git diff):
 {diff[:4000]}
 
 Código fuente:
-{contenido}
+{content}
 
 Generá un documento markdown con exactamente estas secciones:
-{secciones}
+{sections}
 
 Solo el markdown, sin texto adicional antes ni después."""
 
     else:
         prompt = f"""Generá documentación técnica detallada para este archivo.
 
-Proyecto: {proyecto_name} | Stack: {stack}
-Archivo: {ruta}
+Proyecto: {project_name} | Stack: {stack}
+Archivo: {file_path}
 
 Código fuente:
-{contenido}
+{content}
 
 Generá un documento markdown con exactamente estas secciones:
-{secciones}
+{sections}
 
 Solo el markdown, sin texto adicional antes ni después."""
 
-    return _llamar_claude(prompt, contexto=f"archivo:{nombre}", max_tokens=4000)
+    return _call_claude(prompt, context=f"archivo:{name}", max_tokens=4000)
 
 
-def documentar_zona(
-    path: Path, zona_path: Path, stack: str,
+def document_zone(
+    path: Path, zone_path: Path, stack: str,
     on_progreso: Callable[[str], None] | None = None
 ) -> list[dict]:
     """
     Documenta en profundidad una zona/carpeta específica.
     Lee 1000 chars de los 5 archivos más relevantes de la zona.
     """
-    ignorar = _cargar_ignorar(path)
+    ignored = _load_ignore(path)
 
-    archivos = [
-        af for af in zona_path.rglob("*")
+    files = [
+        af for af in zone_path.rglob("*")
         if af.is_file()
-        and af.suffix not in EXTENSIONES_NO_CODIGO
-        and not any(p in ignorar for p in af.parts)
+        and af.suffix not in NON_CODE_EXTENSIONS
+        and not any(p in ignored for p in af.parts)
     ]
 
-    if not archivos:
+    if not files:
         return []
 
-    nombre_zona = zona_path.name.lower()
-    archivos_ordenados = sorted(
-        archivos,
-        key=lambda f: (0 if nombre_zona in f.stem.lower() else 1, -f.stat().st_size)
+    zone_name = zone_path.name.lower()
+    sorted_files = sorted(
+        files,
+        key=lambda f: (0 if zone_name in f.stem.lower() else 1, -f.stat().st_size)
     )
 
-    arbol = [str(af.relative_to(path)) for af in archivos_ordenados]
-    arbol_texto = "\n".join(arbol[:MAX_ARBOL_ENTRADAS])
+    tree = [str(af.relative_to(path)) for af in sorted_files]
+    tree_text = "\n".join(tree[:MAX_TREE_ENTRIES])
 
-    muestras = []
-    for af in archivos_ordenados[:5]:
+    samples = []
+    for af in sorted_files[:5]:
         try:
-            contenido = af.read_text(encoding="latin-1")[:1000]
-            muestras.append(f"### {af.relative_to(path)}\n{contenido}")
+            content = af.read_text(encoding="latin-1")[:1000]
+            samples.append(f"### {af.relative_to(path)}\n{content}")
         except Exception:
             continue
 
-    muestras_texto = "\n\n---\n\n".join(muestras)
-    nombre_zona_display = zona_path.name
+    samples_text = "\n\n---\n\n".join(samples)
+    zone_display = zone_path.name
 
     prompt = f"""Analizá esta zona del proyecto y documentá cada componente relevante.
 
 Stack: {stack}
-Zona: {nombre_zona_display}/
+Zona: {zone_display}/
 
 Archivos en esta zona:
-{arbol_texto}
+{tree_text}
 
 Código real de los archivos principales:
-{muestras_texto}
+{samples_text}
 
 Tu tarea:
 1. Identificá los componentes funcionales reales (controllers, models, helpers, etc.).
 2. Documentá cada componente basándote en el código que ves, no en suposiciones.
 3. "file_path" debe ser la ruta relativa al proyecto con extensión real.
-   Correcto: "{nombre_zona_display}/PagosController.php"
+   Correcto: "{zone_display}/PagosController.php"
 4. Máximo 8 componentes. Si hay más, priorizá los de mayor relevancia funcional.
 
 IMPORTANTE: "documentation" usa \\n para saltos de línea. Sin backticks adentro.
@@ -448,7 +448,7 @@ Devolvé ÚNICAMENTE este JSON:
   {{
     "name": "nombre_snake_case",
     "description": "qué hace este componente en una línea, basado en el código",
-    "file_path": "{nombre_zona_display}/ArchivoReal.php",
+    "file_path": "{zone_display}/ArchivoReal.php",
     "category": "backend",
     "domain": null,
     "documentation": "# Componente\\n\\n## Qué hace\\nBasado en el código real.\\n\\n## Funciones principales\\nNombre y descripción breve de cada función pública.\\n\\n## Queries SQL\\nTablas observadas (nombres exactos).\\n\\n## Dependencias\\nArchivos o módulos que usa directamente."
@@ -457,89 +457,89 @@ Devolvé ÚNICAMENTE este JSON:
 
 Valores válidos para category: backend, frontend, infraestructura, negocio."""
 
-    texto, tokens = _llamar_claude(prompt, contexto=f"zona:{nombre_zona_display}", max_tokens=8192)
-    texto = texto.strip().removeprefix("```json").removeprefix("```").removesuffix("```").strip()
+    text, tokens = _call_claude(prompt, context=f"zona:{zone_display}", max_tokens=8192)
+    text = text.strip().removeprefix("```json").removeprefix("```").removesuffix("```").strip()
     try:
-        modulos = json.loads(texto)
+        modules = json.loads(text)
     except json.JSONDecodeError:
-        logging.warning("documentar_zona — JSON con saltos de línea, intentando reparar")
-        modulos = json.loads(_reparar_json(texto))
+        logging.warning("document_zone — JSON con saltos de línea, intentando reparar")
+        modules = json.loads(_reparar_json(text))
 
     if on_progreso:
-        on_progreso(f"{len(modulos)} componentes documentados · {tokens:,} tokens")
+        on_progreso(f"{len(modules)} componentes documentados · {tokens:,} tokens")
 
-    return modulos
-
-
+    return modules
 
 
-def obtener_arbol_zona(path: Path, zona: str) -> list[str]:
+
+
+def get_zone_tree(path: Path, zone: str) -> list[str]:
     """
     Devuelve el árbol de archivos de una zona específica.
     Acepta ruta relativa ('controllers/pagos') o nombre de carpeta ('pagos').
     """
-    ignorar = _cargar_ignorar(path)
+    ignored = _load_ignore(path)
 
-    zona_path = path / zona
-    if not zona_path.is_dir():
+    zone_path = path / zone
+    if not zone_path.is_dir():
         matches = sorted(
-            [d for d in path.rglob(zona) if d.is_dir()],
+            [d for d in path.rglob(zone) if d.is_dir()],
             key=lambda d: len(d.parts)
         )
         if not matches:
-            raise ValueError(f"No se encontró la carpeta '{zona}' en el proyecto")
-        zona_path = matches[0]
+            raise ValueError(f"No se encontró la carpeta '{zone}' en el proyecto")
+        zone_path = matches[0]
 
-    archivos = []
-    for archivo in zona_path.rglob("*"):
-        if archivo.is_file():
-            if any(parte in ignorar for parte in archivo.parts):
+    files = []
+    for file in zone_path.rglob("*"):
+        if file.is_file():
+            if any(part in ignored for part in file.parts):
                 continue
-            archivos.append(str(archivo.relative_to(path)))
-    return sorted(archivos)
+            files.append(str(file.relative_to(path)))
+    return sorted(files)
 
 
-def obtener_archivos_recientes(path: Path, dias: int) -> list[str]:
+def get_recent_files(path: Path, days: int) -> list[str]:
     """
     Devuelve archivos de código modificados en los últimos N días usando git log.
     Retorna lista vacía si el directorio no es un repo git.
     """
     try:
-        resultado = subprocess.run(
+        result = subprocess.run(
             ["git", "log", f"--since={dias} days ago",
              "--name-only", "--pretty=format:", "--diff-filter=AM"],
             cwd=str(path), capture_output=True, text=True, timeout=30
         )
-        if resultado.returncode != 0:
+        if result.returncode != 0:
             return []
-        archivos = set()
-        for linea in resultado.stdout.splitlines():
-            linea = linea.strip()
-            if not linea:
+        files = set()
+        for line in result.stdout.splitlines():
+            line = line.strip()
+            if not line:
                 continue
-            if Path(linea).suffix not in EXTENSIONES_NO_CODIGO and (path / linea).exists():
-                archivos.add(linea)
-        return sorted(archivos)
+            if Path(line).suffix not in NON_CODE_EXTENSIONS and (path / line).exists():
+                files.add(line)
+        return sorted(files)
     except Exception as e:
-        logging.error("obtener_archivos_recientes falló: %s", e)
+        logging.error("get_recent_files failed: %s", e)
         return []
 
 
-def _leer_muestra_patron(path: Path, arbol: list[str], patron: str, max_chars: int) -> str:
+def _read_pattern_sample(path: Path, tree: list[str], pattern: str, max_chars: int) -> str:
     """Lee el primer archivo del árbol que contenga el patrón en su ruta."""
-    for ruta in arbol:
-        if patron in ruta and Path(ruta).suffix not in EXTENSIONES_NO_CODIGO:
+    for file_path in tree:
+        if pattern in file_path and Path(file_path).suffix not in NON_CODE_EXTENSIONS:
             try:
-                contenido = (path / ruta).read_text(encoding="latin-1")[:max_chars]
-                return f"### {ruta}\n{contenido}"
+                content = (path / file_path).read_text(encoding="latin-1")[:max_chars]
+                return f"### {file_path}\n{content}"
             except Exception:
                 continue
     return ""
 
 
-def generar_proyecto_md(
-    path: Path, nombre: str, stack: str, arbol: list[str],
-    modulos: list[dict],
+def generate_project_md(
+    path: Path, name: str, stack: str, tree: list[str],
+    modules: list[dict],
     on_progreso: Callable[[str], None] | None = None
 ) -> tuple[str, int]:
     """
@@ -547,31 +547,31 @@ def generar_proyecto_md(
     Usa árbol + módulos documentados + muestras de archivos clave.
     Secciones que requieren conocimiento humano quedan como 'pendiente'.
     """
-    arbol_texto = "\n".join(arbol[:MAX_ARBOL_ENTRADAS])
+    tree_text = "\n".join(tree[:MAX_TREE_ENTRIES])
 
-    modulos_texto = "\n".join([
+    modules_text = "\n".join([
         f"- {m['name']} ({m['file_path']}): {m['description']}"
-        for m in modulos[:30]
+        for m in modules[:30]
     ])
 
-    querys_muestra = _leer_muestra_patron(path, arbol, "_querys", 2000)
-    conf_muestra = _leer_muestra_patron(path, arbol, "conf/", 1000)
+    querys_sample = _read_pattern_sample(path, tree, "_querys", 2000)
+    conf_sample = _read_pattern_sample(path, tree, "conf/", 1000)
 
     pendiente = "> pendiente — enriquecé esta sección con tu conocimiento del proyecto"
 
     prompt = f"""Analizá este proyecto de software y generá un documento PROYECTO.md con conocimiento estructural.
 
-Proyecto: {nombre} | Stack: {stack}
+Proyecto: {name} | Stack: {stack}
 
 Árbol de archivos:
-{arbol_texto}
+{tree_text}
 
 Módulos de negocio ya identificados:
-{modulos_texto}
+{modules_text}
 
-{f"Muestra de código SQL:{chr(10)}{querys_muestra}" if querys_muestra else ""}
+{f"Muestra de código SQL:{chr(10)}{querys_sample}" if querys_sample else ""}
 
-{f"Muestra de infraestructura:{chr(10)}{conf_muestra}" if conf_muestra else ""}
+{f"Muestra de infraestructura:{chr(10)}{conf_sample}" if conf_sample else ""}
 
 Generá el siguiente documento markdown completando cada sección.
 REGLA: Si podés inferirlo del código o el árbol → escribilo con precisión y ejemplos reales.
@@ -585,7 +585,7 @@ Generá SOLO el contenido del archivo, sin introducción ni texto adicional:
 # PROYECTO.md — Conocimiento del proyecto para AICLI
 
 ## 1. Identidad del proyecto
-- **Nombre**: {nombre}
+- **Nombre**: {name}
 - **Stack exacto** (versión PHP, motor de templates si tiene, frontend):
 - **Base de datos**: motor, tablas más importantes del núcleo transversal:
 - **Multi-tenant**: columna que filtra por empresa, variable de sesión, ejemplo real de una query:
@@ -652,88 +652,88 @@ Filtros siempre presentes (multi-tenant, activo, etc.):
     if on_progreso:
         on_progreso("Generando PROYECTO.md...")
 
-    texto, tokens = _llamar_claude(prompt, contexto="generar_proyecto_md", max_tokens=8000)
-    return texto.strip(), tokens
+    text, tokens = _call_claude(prompt, context="generar_proyecto_md", max_tokens=8000)
+    return text.strip(), tokens
 
 
-def documentar_arquitectura(
-    path: Path, nombre: str, stack: str, arbol: list[str],
+def document_architecture(
+    path: Path, name: str, stack: str, tree: list[str],
     on_progreso: Callable[[str], None] | None = None
 ) -> list[dict]:
     """
     Detecta los módulos reales del proyecto leyendo código de cada carpeta de nivel 1.
     Sigue el patrón modulo/archivo.php — discrimina módulos de infraestructura/config.
     """
-    ignorar = _cargar_ignorar(path)
+    ignored = _load_ignore(path)
 
     # Detectar carpetas de nivel 1 que tienen archivos de código directamente adentro.
     # Identifica el patrón modulo/archivo.php sin asumir nombres fijos.
-    candidatos: list[dict] = []
+    candidates: list[dict] = []
     for item in sorted(path.iterdir()):
-        if not item.is_dir() or item.name in ignorar:
+        if not item.is_dir() or item.name in ignored:
             continue
-        todos = [f for f in item.iterdir()
-                 if f.is_file() and f.suffix not in EXTENSIONES_NO_CODIGO]
-        if not todos:
+        all_files = [f for f in item.iterdir()
+                     if f.is_file() and f.suffix not in NON_CODE_EXTENSIONS]
+        if not all_files:
             continue
 
         # Priorizar archivos cuyo nombre contiene el nombre de la carpeta (el archivo central del módulo)
         # Ej: en pagos/ → PagosController.php, PagosModel.php antes que helpers.php
-        nombre_carpeta = item.name.lower()
-        archivos_directos = sorted(
-            todos,
-            key=lambda f: (0 if nombre_carpeta in f.stem.lower() else 1, f.stat().st_size)
+        folder_name = item.name.lower()
+        direct_files = sorted(
+            all_files,
+            key=lambda f: (0 if folder_name in f.stem.lower() else 1, f.stat().st_size)
         )
 
         # 500 chars por archivo es suficiente para ver clase, imports y primer método
         # Mantiene los tokens bien por debajo del rate limit incluso con 100+ carpetas
-        muestras = []
-        for af in archivos_directos[:2]:
+        samples = []
+        for af in direct_files[:2]:
             try:
-                contenido = af.read_text(encoding="latin-1")[:500]
-                muestras.append(f"### {af.relative_to(path)}\n{contenido}")
+                content = af.read_text(encoding="latin-1")[:500]
+                samples.append(f"### {af.relative_to(path)}\n{content}")
             except Exception:
                 continue
 
-        candidatos.append({
+        candidates.append({
             "carpeta": item.name,
-            "n_archivos": len(archivos_directos),
-            "archivos": [str(f.relative_to(path)) for f in archivos_directos[:6]],
-            "muestra": "\n\n".join(muestras),
+            "n_archivos": len(direct_files),
+            "archivos": [str(f.relative_to(path)) for f in direct_files[:6]],
+            "muestra": "\n\n".join(samples),
         })
 
-    if not candidatos:
-        raiz = [f for f in arbol if len(Path(f).parts) == 1]
-        candidatos = [{"carpeta": "raiz", "n_archivos": len(raiz),
-                       "archivos": raiz[:6], "muestra": leer_archivos_clave(path, raiz)}]
+    if not candidates:
+        root = [f for f in tree if len(Path(f).parts) == 1]
+        candidates = [{"carpeta": "raiz", "n_archivos": len(root),
+                       "archivos": root[:6], "muestra": leer_archivos_clave(path, root)}]
 
     # Limitar a 15 candidatos para mantener el output dentro de 8000 tokens
     # En proyectos grandes (>15 carpetas) se priorizan las que tienen más archivos
-    candidatos_top = sorted(candidatos, key=lambda c: c["n_archivos"], reverse=True)[:15]
+    top_candidates = sorted(candidates, key=lambda c: c["n_archivos"], reverse=True)[:15]
 
-    resumen = "\n".join([
+    summary = "\n".join([
         f"- {c['carpeta']}/  ({c['n_archivos']} archivos directos): "
         f"{', '.join(c['archivos'][:4])}"
-        for c in candidatos_top
+        for c in top_candidates
     ])
 
-    muestras_codigo = "\n\n---\n\n".join([
+    code_samples = "\n\n---\n\n".join([
         f"## {c['carpeta']}/\n{c['muestra']}"
-        for c in candidatos_top
+        for c in top_candidates
     ])
 
     prompt = f"""Analizá este proyecto y documentá sus módulos de negocio reales.
 
-Proyecto: {nombre}  |  Stack: {stack}
+Proyecto: {name}  |  Stack: {stack}
 
 El proyecto sigue el patrón modulo/archivo.php — cada carpeta de nivel 1 puede ser
 un módulo del sistema o una carpeta de infraestructura (config, assets, libs, etc).
 
-Carpetas con archivos de código directamente adentro (las {len(candidatos_top)} con más archivos):
-{resumen}
+Carpetas con archivos de código directamente adentro (las {len(top_candidates)} con más archivos):
+{summary}
 
 Código real de cada carpeta (archivos principales):
-{muestras_codigo}
+{code_samples}
 
 Tu tarea:
 1. Identificá cuáles son MÓDULOS DE NEGOCIO reales. Descartá carpetas que sean
@@ -761,15 +761,15 @@ Devolvé ÚNICAMENTE este JSON:
 Valores válidos para category: backend, frontend, infraestructura, negocio."""
 
     try:
-        texto, tokens = _llamar_claude(prompt, contexto=f"arquitectura:{nombre}", max_tokens=8000)
-        texto = texto.strip().removeprefix("```json").removeprefix("```").removesuffix("```").strip()
+        text, tokens = _call_claude(prompt, context=f"arquitectura:{name}", max_tokens=8000)
+        text = text.strip().removeprefix("```json").removeprefix("```").removesuffix("```").strip()
         try:
-            modulos = json.loads(texto)
+            modules = json.loads(text)
         except json.JSONDecodeError:
-            modulos = json.loads(_reparar_json(texto))
+            modules = json.loads(_reparar_json(text))
         if on_progreso:
-            on_progreso(f"{len(modulos)} módulos identificados · {tokens:,} tokens")
-        return modulos
+            on_progreso(f"{len(modules)} módulos identificados · {tokens:,} tokens")
+        return modules
     except Exception as e:
-        logging.error("documentar_arquitectura falló para '%s': %s", nombre, e, exc_info=True)
+        logging.error("document_architecture falló para '%s': %s", name, e, exc_info=True)
         raise

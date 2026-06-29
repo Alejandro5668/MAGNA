@@ -1,0 +1,339 @@
+import typer
+import subprocess
+import time
+import json
+import questionary
+from datetime import datetime
+from rich.console import Console, Group
+from rich.panel import Panel
+from rich.rule import Rule
+from rich.text import Text
+from pathlib import Path
+from questionary import Style as QStyle
+from sqlmodel import Session, select
+from aicli.db import engine
+from aicli.db.models import Project, Module
+from aicli.services.indexer import analyze_file_deep, generate_case_summary, NON_CODE_EXTENSIONS
+from aicli.services.tickets import load_tickets, save_round, format_history, read_active_ticket, clear_active_ticket
+
+app = typer.Typer()
+console = Console()
+
+
+def _show_case_card(ticket_id: str, round_num: int, files: set[str], case_memory: dict) -> None:
+    files_txt = "\n".join(f"  · {a}" for a in sorted(files))
+
+    body = Group(
+        Text.from_markup(f"[dim]{files_txt}[/dim]"),
+        Rule(style="dim"),
+        Text(""),
+        Text.from_markup("[bold]  Investigado[/bold]"),
+        Text.from_markup(f"[dim]  {case_memory['investigado']}[/dim]"),
+        Text(""),
+        Text.from_markup("[bold green]  Hecho[/bold green]"),
+        Text.from_markup(f"[dim]  {case_memory['hecho']}[/dim]"),
+        Text(""),
+        Text.from_markup("[bold yellow]  Tener en cuenta[/bold yellow]"),
+        Text.from_markup(f"[dim]  {case_memory['tener_en_cuenta']}[/dim]"),
+        Text(""),
+    )
+
+    console.print(Panel(
+        body,
+        title=f"[bold cyan] {ticket_id} [/bold cyan][dim]· Ronda {round_num}[/dim]",
+        border_style="cyan",
+        padding=(1, 2),
+    ))
+
+_ESTILO = QStyle([
+    ("qmark",       "fg:cyan bold"),
+    ("question",    "fg:white bold"),
+    ("pointer",     "fg:cyan bold"),
+    ("highlighted", "fg:cyan bold"),
+    ("selected",    "fg:cyan"),
+    ("answer",      "fg:cyan bold"),
+])
+
+
+def _read_session_task() -> str:
+    """Lee la descripción de la tarea de la última sesión ctx task."""
+    ctx_path = Path.home() / ".mycontext" / "session_context.md"
+    if not ctx_path.exists():
+        return ""
+    content = ctx_path.read_text(encoding="utf-8")
+    if "# Tarea" not in content:
+        return ""
+    return content.split("# Tarea")[-1].strip()
+
+
+def _get_diff(path: Path, files: list[str]) -> str:
+    """Obtiene el git diff de los archivos cambiados. Prioriza uncommitted, luego último commit."""
+    file_args = ["--"] + files
+    for cmd in [
+        ["git", "diff", "HEAD"] + file_args,
+        ["git", "diff", "HEAD~1"] + file_args,
+    ]:
+        try:
+            result = subprocess.run(
+                cmd, cwd=str(path), capture_output=True, text=True, timeout=15
+            )
+            if result.returncode == 0 and result.stdout.strip():
+                return result.stdout
+        except Exception:
+            continue
+    return ""
+
+
+def _changed_files(path: Path) -> set[str]:
+    """Uncommitted primero; solo si no hay nada, mira el último commit."""
+    def _run(cmd: list[str]) -> set[str]:
+        try:
+            r = subprocess.run(cmd, cwd=str(path), capture_output=True, text=True, timeout=15)
+            if r.returncode == 0:
+                return {
+                    l.strip() for l in r.stdout.splitlines()
+                    if l.strip() and Path(l.strip()).suffix not in NON_CODE_EXTENSIONS
+                }
+        except Exception:
+            pass
+        return set()
+
+    changed = _run(["git", "diff", "HEAD", "--name-only"])
+    changed |= _run(["git", "diff", "--cached", "--name-only"])
+
+    if not changed:
+        changed = _run(["git", "diff", "HEAD~1", "--name-only"])
+
+    return changed
+
+
+def _check_php_syntax(path: Path, files: set[str]) -> list[str]:
+    errors = []
+    for file in sorted(files):
+        if not file.endswith(".php"):
+            continue
+        try:
+            r = subprocess.run(
+                ["php", "-l", str(path / file)],
+                capture_output=True, text=True, timeout=10,
+            )
+            if r.returncode != 0:
+                msg = (r.stderr or r.stdout).strip().splitlines()[0]
+                errors.append(f"{file}: {msg}")
+        except FileNotFoundError:
+            break  # php no instalado — saltar silenciosamente
+        except Exception:
+            continue
+    return errors
+
+
+
+@app.callback(invoke_without_command=True)
+def sync():
+    """Detecta archivos cambiados con git y actualiza su documentación."""
+    path = Path.cwd()
+
+    with Session(engine) as session:
+        project = session.exec(select(Project).where(Project.path == str(path))).first()
+
+    if not project:
+        console.print("[bold red]Error:[/bold red] Este directorio no está registrado. Ejecutá [bold]ctx init[/bold] primero.")
+        raise typer.Exit(code=1)
+
+    with console.status("Detectando archivos cambiados...", spinner="dots3", spinner_style="cyan"):
+        changed = _changed_files(path)
+
+    existing_files = {f for f in changed if (path / f).exists()}
+
+    if not existing_files:
+        console.print("[bold yellow]Sin cambios detectados.[/bold yellow] No hay archivos modificados en git.")
+        return
+
+    console.print(f"\n[bold cyan]{len(existing_files)} archivos cambiados detectados[/bold cyan]")
+
+    # Verificación de sintaxis PHP (gratis, sin tokens)
+    syntax_errors = _check_php_syntax(path, existing_files)
+    if syntax_errors:
+        console.print()
+        for e in syntax_errors:
+            console.print(f"  [bold red]✘[/bold red] [dim]{e}[/dim]")
+        console.print("\n  [bold red]Errores de sintaxis PHP. Corregí antes de continuar.[/bold red]")
+        return
+
+    with Session(engine) as session:
+        modules_db = list(session.exec(select(Module).where(Module.project_id == project.id)).all())
+
+    modules_by_path = {m.file_path: m for m in modules_db}
+
+    updated = 0
+    new_count = 0
+    base = Path.home() / ".mycontext" / "projects" / str(project.id)
+
+    for file_path in sorted(existing_files):
+        console.print(f"  [dim]Documentando {file_path}...[/dim]")
+
+        md_file = base / Path(file_path).with_suffix(".md")
+        existing_doc = md_file.read_text(encoding="utf-8") if md_file.exists() else ""
+        file_diff = _get_diff(path, [file_path])
+
+        try:
+            content_md, tokens = analyze_file_deep(
+                path, file_path, project.name, project.stack or "desconocido",
+                diff=file_diff,
+                existing_doc=existing_doc,
+            )
+        except Exception as e:
+            console.print(f"  [bold yellow]⚠[/bold yellow] [dim]{file_path} — falló: {e}[/dim]")
+            continue
+
+        md_file.parent.mkdir(parents=True, exist_ok=True)
+        md_file.write_text(content_md, encoding="utf-8")
+
+        name = Path(file_path).stem
+        description = next((l.lstrip("# ") for l in content_md.splitlines() if l.strip()), name)
+
+        with Session(engine) as session:
+            existing = modules_by_path.get(file_path)
+            if existing:
+                m = session.get(Module, existing.id)
+                m.content_path = str(md_file)
+                m.last_updated_at = time.time()
+                session.add(m)
+                session.commit()
+                updated += 1
+            else:
+                session.add(Module(
+                    project_id=project.id,
+                    name=name,
+                    description=description,
+                    file_path=file_path,
+                    content_path=str(md_file),
+                    created_at=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                    last_updated_at=time.time(),
+                ))
+                session.commit()
+                new_count += 1
+
+        console.print(f"  [bold green]✔[/bold green] [dim]{file_path} · {tokens:,} tokens[/dim]")
+
+    # Captura de decisión técnica post-tarea
+    console.print()
+    decision = questionary.text(
+        "  ¿Hubo alguna decisión técnica importante? (Enter para omitir)",
+        style=_ESTILO
+    ).ask()
+
+    if decision and decision.strip():
+        decisions_path = Path.home() / ".mycontext" / "projects" / str(project.id) / "decisions.md"
+        date = datetime.now().strftime("%Y-%m-%d")
+        entry = f"## {date}\n\n{decision.strip()}\n\n---\n\n"
+        if decisions_path.exists():
+            decisions_path.write_text(entry + decisions_path.read_text(encoding="utf-8"), encoding="utf-8")
+        else:
+            decisions_path.write_text(f"# Decisiones técnicas del proyecto\n\n{entry}", encoding="utf-8")
+        console.print(f"  [bold green]✔[/bold green] [dim]Decisión guardada en {decisions_path}[/dim]")
+
+    # Generar resumen del caso (Jira + memoria) en una sola llamada
+    original_task = _read_session_task()
+    full_diff = _get_diff(path, list(existing_files))
+    active_ticket = read_active_ticket()
+    ticket_prefill = active_ticket["ticket_id"] if active_ticket else ""
+    reason_prefill = active_ticket.get("motivo_reapertura") if active_ticket else None
+
+    jira_msg: str | None = None
+    case_memory: dict | None = None
+
+    if original_task:
+        previous_history = ""
+        if active_ticket:
+            prev_tid = active_ticket.get("ticket_id", "")
+            if prev_tid:
+                previous_history = format_history(prev_tid, load_tickets()) or ""
+
+        console.print()
+        with console.status("Generando resumen del caso...", spinner="dots3", spinner_style="cyan"):
+            try:
+                jira_msg, case_memory, tokens_res = generate_case_summary(
+                    original_task, full_diff, list(existing_files), previous_history
+                )
+            except Exception as e:
+                console.print(f"  [bold yellow]⚠[/bold yellow] [dim]No se pudo generar el resumen: {e}[/dim]")
+
+        if jira_msg:
+            console.print(Panel(
+                jira_msg,
+                title="[bold cyan]Mensaje de Jira[/bold cyan]",
+                border_style="cyan",
+                padding=(1, 2),
+            ))
+            console.print(f"  [dim]{tokens_res:,} tokens · copiá el texto del panel[/dim]")
+    else:
+        console.print()
+        console.print("  [bold yellow]⚠[/bold yellow] [dim]Sin tarea de sesión — ejecutá ctx task antes de sync para generar el resumen.[/dim]")
+
+    console.print()
+    console.print(Panel(
+        Group(
+            "[bold cyan]✔ Sync completado[/bold cyan]",
+            f"[bold dim]Actualizados: {updated}  |  Nuevos: {new_count}[/bold dim]",
+        ),
+        title="ctx sync",
+        border_style="green",
+    ))
+
+    # Guardar caso en historial
+    console.print()
+    ticket_id_raw = questionary.text(
+        "  ¿Número de ticket Jira? (Enter para omitir)",
+        default=ticket_prefill,
+        style=_ESTILO,
+    ).ask()
+
+    if ticket_id_raw and ticket_id_raw.strip():
+        ticket_id = ticket_id_raw.strip().upper()
+        current_tickets = load_tickets()
+        round_num = len(current_tickets.get(ticket_id, {}).get("rondas", [])) + 1
+
+        if case_memory:
+            console.print()
+            _show_case_card(ticket_id, round_num, existing_files, case_memory)
+
+            console.print()
+            addition = questionary.text(
+                "  ¿Algo más para 'Tener en cuenta'? (Enter para aceptar)",
+                style=_ESTILO,
+            ).ask()
+            if addition and addition.strip():
+                case_memory["tener_en_cuenta"] += " " + addition.strip()
+                console.print()
+                _show_case_card(ticket_id, round_num, existing_files, case_memory)
+
+        console.print()
+        save = questionary.confirm(
+            "  ¿Guardar este caso?",
+            default=True,
+            style=_ESTILO,
+        ).ask()
+
+        if save:
+            if ticket_id in current_tickets:
+                description = current_tickets[ticket_id]["descripcion"]
+            else:
+                description = original_task or ticket_id
+
+            save_round(
+                ticket_id=ticket_id,
+                description=description,
+                archivos_tocados=list(existing_files),
+                mensaje_jira=jira_msg,
+                motivo_reapertura=reason_prefill,
+                memoria=case_memory,
+            )
+            clear_active_ticket()
+            console.print(f"  [bold green]✔[/bold green] [dim]Ronda {round_num} guardada para {ticket_id}[/dim]")
+
+    console.print(
+        "\n  [bold cyan]💡[/bold cyan]  Ejecutá "
+        "[bold cyan]/ponytail-review[/bold cyan] en Claude Code "
+        "para revisar el código generado."
+    )

@@ -32,30 +32,30 @@ from aicli.db import init_db, engine
 init_db()
 
 
-def _purgar_evidencias() -> None:
-    carpeta = Path.home() / ".mycontext" / "evidencias"
-    limite = time.time() - 7 * 86400
-    for archivo in carpeta.iterdir():
+def _purge_evidence() -> None:
+    folder = Path.home() / ".mycontext" / "evidencias"
+    limit = time.time() - 7 * 86400
+    for file in folder.iterdir():
         try:
-            if archivo.is_file() and archivo.stat().st_mtime < limite:
-                archivo.unlink()
+            if file.is_file() and file.stat().st_mtime < limit:
+                file.unlink()
         except Exception:
             pass
 
 
-def _captura_desde_portapapeles() -> str | None:
+def _capture_from_clipboard() -> str | None:
     """Lee imagen del portapapeles de Windows y la guarda en evidencias/."""
     import subprocess
     from datetime import datetime
-    carpeta = Path.home() / ".mycontext" / "evidencias"
-    nombre = f"captura_{datetime.now().strftime('%Y%m%d_%H%M%S')}.png"
-    ruta = (carpeta / nombre).resolve()
-    ruta_ps = str(ruta).replace("\\", "/")
+    folder = Path.home() / ".mycontext" / "evidencias"
+    name = f"captura_{datetime.now().strftime('%Y%m%d_%H%M%S')}.png"
+    file_path = (folder / name).resolve()
+    ps_path = str(file_path).replace("\\", "/")
     ps = (
         "Add-Type -AssemblyName System.Windows.Forms; "
         "Add-Type -AssemblyName System.Drawing; "
         f"$img = [System.Windows.Forms.Clipboard]::GetImage(); "
-        f"if ($img) {{ $img.Save('{ruta_ps}', [System.Drawing.Imaging.ImageFormat]::Png); exit 0 }} "
+        f"if ($img) {{ $img.Save('{ps_path}', [System.Drawing.Imaging.ImageFormat]::Png); exit 0 }} "
         "else { exit 1 }"
     )
     try:
@@ -63,36 +63,36 @@ def _captura_desde_portapapeles() -> str | None:
             ["powershell", "-NoProfile", "-NonInteractive", "-Command", ps],
             capture_output=True, timeout=10,
         )
-        if r.returncode == 0 and ruta.exists():
-            return str(ruta)
+        if r.returncode == 0 and file_path.exists():
+            return str(file_path)
     except Exception:
         pass
     return None
 
 
-def _pedir_imagen() -> str | None:
+def _ask_image() -> str | None:
     """Flujo estándar de adjuntar imagen: portapapeles primero, ruta manual como fallback."""
-    usar_pb = questionary.confirm(
+    use_clipboard = questionary.confirm(
         "  ¿Tenés una captura en el portapapeles?",
         default=False,
         style=_ESTILO_MENU,
     ).ask()
 
-    if usar_pb:
-        ruta = _captura_desde_portapapeles()
-        if ruta:
-            console.print(f"  [bold green]✔[/bold green] [dim]Guardada: {ruta}[/dim]")
-            return ruta
+    if use_clipboard:
+        captured = _capture_from_clipboard()
+        if captured:
+            console.print(f"  [bold green]✔[/bold green] [dim]Guardada: {captured}[/dim]")
+            return captured
         console.print("  [bold yellow]⚠[/bold yellow] [dim]No hay imagen en el portapapeles.[/dim]")
 
-    ruta_manual = questionary.text(
+    manual_path = questionary.text(
         "  Ruta de imagen (Enter para omitir)",
         style=_ESTILO_MENU,
     ).ask()
-    return ruta_manual.strip() if ruta_manual and ruta_manual.strip() else None
+    return manual_path.strip() if manual_path and manual_path.strip() else None
 
 
-_purgar_evidencias()
+_purge_evidence()
 
 app = typer.Typer(help="AICLI — Motor de contexto inteligente para Claude Code")
 app.add_typer(status.app, name="status")
@@ -117,7 +117,7 @@ _ESTILO_MENU = QStyle([
 ])
 
 
-def _verificar_api_key() -> bool:
+def _check_api_key() -> bool:
     if os.getenv("ANTHROPIC_API_KEY"):
         return True
 
@@ -136,102 +136,102 @@ def _verificar_api_key() -> bool:
         return False
 
     key = key.strip()
-    ruta_env = Path.home() / ".mycontext" / ".env"
-    ruta_env.parent.mkdir(exist_ok=True)
-    ruta_env.write_text(f"ANTHROPIC_API_KEY={key}\n", encoding="utf-8")
+    env_path = Path.home() / ".mycontext" / ".env"
+    env_path.parent.mkdir(exist_ok=True)
+    env_path.write_text(f"ANTHROPIC_API_KEY={key}\n", encoding="utf-8")
     os.environ["ANTHROPIC_API_KEY"] = key
 
     console.print()
-    console.print(f"  [bold green]✔[/bold green] API key guardada en [dim]{ruta_env}[/dim]")
+    console.print(f"  [bold green]✔[/bold green] API key guardada en [dim]{env_path}[/dim]")
     console.print()
 
     return True
 
 
-def _seleccionar_proyecto() -> bool:
+def _select_project() -> bool:
     from sqlmodel import Session, select as sql_select
     from aicli.db.models import Project
 
-    path_actual = Path.cwd()
+    current_path = Path.cwd()
 
     with Session(engine) as session:
-        proyecto_actual = session.exec(
-            sql_select(Project).where(Project.path == str(path_actual))
+        current_project = session.exec(
+            sql_select(Project).where(Project.path == str(current_path))
         ).first()
 
-    if proyecto_actual:
+    if current_project:
         return True
 
     with Session(engine) as session:
-        proyectos = list(session.exec(sql_select(Project)).all())
+        projects = list(session.exec(sql_select(Project)).all())
 
     console.print()
     console.print(Rule(title="[bold cyan]Seleccioná un proyecto[/bold cyan]", style="cyan"))
     console.print()
 
-    if proyectos:
-        opciones = [
+    if projects:
+        choices = [
             questionary.Choice(f"  {p.name}   {p.path}", value=p.path)
-            for p in proyectos
+            for p in projects
         ]
-        opciones.append(questionary.Choice("  Registrar proyecto nuevo...", value="__nuevo__"))
+        choices.append(questionary.Choice("  Registrar proyecto nuevo...", value="__nuevo__"))
 
-        eleccion = questionary.select(
+        selection = questionary.select(
             "¿Con qué proyecto querés trabajar?",
-            choices=opciones,
+            choices=choices,
             style=_ESTILO_MENU,
         ).ask()
 
-        if eleccion is None:
+        if selection is None:
             return False
 
-        if eleccion != "__nuevo__":
-            ruta_path = Path(eleccion)
-            if not ruta_path.exists():
-                console.print(f"\n[bold red]Error:[/bold red] La ruta [bold]{eleccion}[/bold] ya no existe en disco.")
+        if selection != "__nuevo__":
+            selected_path = Path(selection)
+            if not selected_path.exists():
+                console.print(f"\n[bold red]Error:[/bold red] La ruta [bold]{selection}[/bold] ya no existe en disco.")
                 return False
-            os.chdir(ruta_path)
-            console.print(f"\n  [bold green]✔[/bold green] Trabajando en [dim]{ruta_path}[/dim]")
+            os.chdir(selected_path)
+            console.print(f"\n  [bold green]✔[/bold green] Trabajando en [dim]{selected_path}[/dim]")
             return True
 
     # Sin proyectos o eligió "Registrar nuevo"
     console.print("  Ingresá la ruta completa de tu proyecto:")
     console.print()
 
-    ruta_str = questionary.text(
+    path_str = questionary.text(
         "  Ruta del proyecto",
         style=_ESTILO_MENU,
     ).ask()
 
-    if not ruta_str or not ruta_str.strip():
+    if not path_str or not path_str.strip():
         return False
 
-    ruta_path = Path(ruta_str.strip())
-    if not ruta_path.exists():
-        console.print(f"\n[bold red]Error:[/bold red] La ruta [bold]{ruta_path}[/bold] no existe.")
+    new_path = Path(path_str.strip())
+    if not new_path.exists():
+        console.print(f"\n[bold red]Error:[/bold red] La ruta [bold]{new_path}[/bold] no existe.")
         return False
 
-    os.chdir(ruta_path)
-    console.print(f"\n  [bold green]✔[/bold green] Trabajando en [dim]{ruta_path}[/dim]")
+    os.chdir(new_path)
+    console.print(f"\n  [bold green]✔[/bold green] Trabajando en [dim]{new_path}[/dim]")
     console.print("  [dim]Seleccioná [bold]ctx init[/bold] para registrar e indexar este proyecto.[/dim]")
     return True
 
 
-def _mostrar_menu() -> None:
-    if not _verificar_api_key():
+def _show_menu() -> None:
+    if not _check_api_key():
         raise typer.Exit(code=1)
 
     logo = pyfiglet.figlet_format("MAGNA", font="ansi_shadow")
 
     console.print()
-    for linea in logo.rstrip().splitlines():
-        console.print(Align(Text(linea, style="bold cyan"), align="center"))
+    for line in logo.rstrip().splitlines():
+        console.print(Align(Text(line, style="bold cyan"), align="center"))
         time.sleep(0.09)
     console.print()
     console.print(Align('[bold cyan]"You see what you believe..."[/bold cyan]', align="center"))
     console.print()
 
-    if not _seleccionar_proyecto():
+    if not _select_project():
         raise typer.Exit(code=1)
 
     while True:
@@ -270,24 +270,24 @@ def _mostrar_menu() -> None:
             proyecto.proyecto()
 
         elif opcion == "file":
-            carpeta = questionary.text(
+            folder = questionary.text(
                 "  ¿Qué carpeta documentar?  (ej: pagos  o  controllers/pagos)",
                 style=_ESTILO_MENU
             ).ask()
-            if not carpeta or not carpeta.strip():
+            if not folder or not folder.strip():
                 console.print("  [bold yellow]Aviso:[/bold yellow] Indicá una carpeta para continuar.")
                 continue
-            file_cmd.file_cmd(carpeta.strip())
+            file_cmd.file_cmd(folder.strip())
 
         elif opcion == "archive":
-            ruta = questionary.text(
+            file_path = questionary.text(
                 "  Ruta del archivo  (ej: pagos/PagosController.php)",
                 style=_ESTILO_MENU
             ).ask()
-            if not ruta or not ruta.strip():
+            if not file_path or not file_path.strip():
                 console.print("  [bold yellow]Aviso:[/bold yellow] Indicá la ruta del archivo para continuar.")
                 continue
-            archive.archive(ruta.strip())
+            archive.archive(file_path.strip())
 
         elif opcion == "sync":
             sync.sync()
@@ -297,79 +297,79 @@ def _mostrar_menu() -> None:
 
         elif opcion == "retomar":
             from aicli.services.tickets import (
-                cargar_tickets, formatear_historial,
-                guardar_ticket_activo, leer_ticket_activo,
+                load_tickets, format_history,
+                save_active_ticket, read_active_ticket,
             )
             from rich.panel import Panel as RichPanel
 
-            tickets = cargar_tickets()
+            tickets = load_tickets()
 
             if tickets:
-                opciones_tickets = [
+                ticket_choices = [
                     questionary.Choice(
-                        f"  {tid}  ({len(datos['rondas'])} ronda/s)",
+                        f"  {tid}  ({len(data['rondas'])} ronda/s)",
                         value=tid,
                     )
-                    for tid, datos in tickets.items()
+                    for tid, data in tickets.items()
                 ]
-                opciones_tickets.append(questionary.Choice("  Ingresar ID manualmente...", value="__manual__"))
-                ticket_elegido = questionary.select(
+                ticket_choices.append(questionary.Choice("  Ingresar ID manualmente...", value="__manual__"))
+                chosen_ticket = questionary.select(
                     "¿Qué ticket retomar?",
-                    choices=opciones_tickets,
+                    choices=ticket_choices,
                     style=_ESTILO_MENU,
                 ).ask()
             else:
-                ticket_elegido = "__manual__"
+                chosen_ticket = "__manual__"
 
-            if ticket_elegido == "__manual__":
-                ticket_elegido = questionary.text(
+            if chosen_ticket == "__manual__":
+                chosen_ticket = questionary.text(
                     "  ID del ticket (ej: PROJ-1234)",
                     style=_ESTILO_MENU,
                 ).ask()
 
-            if not ticket_elegido or not ticket_elegido.strip():
+            if not chosen_ticket or not chosen_ticket.strip():
                 console.print("  [bold yellow]Aviso:[/bold yellow] Indicá un ticket para continuar.")
                 continue
 
-            ticket_id = ticket_elegido.strip().upper()
-            historial = formatear_historial(ticket_id, tickets)
+            ticket_id = chosen_ticket.strip().upper()
+            history = format_history(ticket_id, tickets)
 
-            if historial:
+            if history:
                 console.print()
-                console.print(RichPanel(historial, title=f"[bold cyan]Historial {ticket_id}[/bold cyan]", border_style="cyan"))
+                console.print(RichPanel(history, title=f"[bold cyan]Historial {ticket_id}[/bold cyan]", border_style="cyan"))
 
             console.print()
-            motivo = questionary.text(
+            reason = questionary.text(
                 "  Motivo de reapertura (pegá el comentario de QA)",
                 style=_ESTILO_MENU,
             ).ask()
 
-            if not motivo or not motivo.strip():
+            if not reason or not reason.strip():
                 console.print("  [bold yellow]Aviso:[/bold yellow] El motivo de reapertura es necesario.")
                 continue
 
-            imagen = _pedir_imagen()
-            archivo = questionary.text(
+            image = _ask_image()
+            file = questionary.text(
                 "  Archivo específico (ej: pagos/PagosController.php) — Enter para omitir",
                 style=_ESTILO_MENU,
             ).ask()
 
-            guardar_ticket_activo(ticket_id, motivo.strip())
+            save_active_ticket(ticket_id, reason.strip())
 
-            tarea_retomar = f"[TICKET REABIERTO {ticket_id}] {motivo.strip()}"
-            archivo_limpio = archivo.strip() if archivo and archivo.strip() else None
-            task._ejecutar_task(tarea_retomar, archivo_limpio, imagen, historial_ticket=historial)
+            reopen_task = f"[TICKET REABIERTO {ticket_id}] {reason.strip()}"
+            clean_file = file.strip() if file and file.strip() else None
+            task._execute_task(reopen_task, clean_file, image, ticket_history=history)
 
         elif opcion == "task":
-            tarea = questionary.text("  Describí la tarea", style=_ESTILO_MENU).ask()
-            archivo = questionary.text(
+            task_desc = questionary.text("  Describí la tarea", style=_ESTILO_MENU).ask()
+            file = questionary.text(
                 "  Ruta del archivo  (ej: pagos/PagosController.php) — Enter para omitir",
                 style=_ESTILO_MENU,
             ).ask()
-            imagen = _pedir_imagen()
-            if tarea and tarea.strip():
-                archivo_limpio = archivo.strip() if archivo and archivo.strip() else None
-                task.task(tarea.strip(), archivo_limpio, imagen)
+            image = _ask_image()
+            if task_desc and task_desc.strip():
+                clean_file = file.strip() if file and file.strip() else None
+                task.task(task_desc.strip(), clean_file, image)
 
         elif opcion == "claude":
             claude_cmd.claude()
@@ -383,7 +383,7 @@ def _mostrar_menu() -> None:
 def bienvenida(ctx: typer.Context):
     if ctx.invoked_subcommand is not None:
         return
-    _mostrar_menu()
+    _show_menu()
 
 
 if __name__ == "__main__":
