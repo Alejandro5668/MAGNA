@@ -238,7 +238,7 @@ def _mostrar_menu() -> None:
             if tickets:
                 opciones_tickets = [
                     questionary.Choice(
-                        f"  {tid}   {datos['descripcion']}  ({len(datos['rondas'])} ronda/s)",
+                        f"  {tid}  ({len(datos['rondas'])} ronda/s)",
                         value=tid,
                     )
                     for tid, datos in tickets.items()
