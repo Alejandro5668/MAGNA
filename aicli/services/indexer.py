@@ -275,20 +275,76 @@ def describir_imagen(ruta_imagen: str) -> tuple[str, int]:
     return respuesta.content[0].text.strip(), tokens
 
 
-def analizar_archivo_profundo(path: Path, ruta: str, proyecto_name: str, stack: str) -> tuple[str, int]:
+def analizar_archivo_profundo(
+    path: Path,
+    ruta: str,
+    proyecto_name: str,
+    stack: str,
+    diff: str = "",
+    doc_existente: str = "",
+) -> tuple[str, int]:
     """
-    Genera documentación profunda de un archivo individual.
-    Lee hasta 3000 chars del archivo real para contexto completo.
+    Genera o actualiza documentación de un archivo individual.
+    Lee hasta 8000 chars. Si recibe diff y doc_existente, hace actualización incremental.
     """
     ruta_archivo = path / ruta
     try:
-        contenido = ruta_archivo.read_text(encoding="latin-1")[:3000]
+        contenido = ruta_archivo.read_text(encoding="latin-1")[:8000]
     except FileNotFoundError:
         contenido = ""
 
     nombre = Path(ruta).stem
+    secciones = (
+        "- Qué hace este archivo (propósito y rol en el sistema)\n"
+        "- Funciones y clases principales (nombre, parámetros y qué hace cada una)\n"
+        "- Queries SQL y tablas involucradas (nombres exactos del código, si aplica)\n"
+        "- Dependencias (qué otros archivos o módulos usa directamente)\n"
+        "- Patrones y convenciones observados"
+    )
 
-    prompt = f"""Generá documentación técnica detallada para este archivo.
+    if doc_existente and diff:
+        prompt = f"""Actualizá la documentación técnica de este archivo incorporando los cambios recientes.
+
+Proyecto: {proyecto_name} | Stack: {stack}
+Archivo: {ruta}
+
+Documentación actual:
+{doc_existente}
+
+Cambios aplicados (git diff):
+{diff[:4000]}
+
+Código fuente actualizado:
+{contenido}
+
+Conservá todo el conocimiento previo que siga siendo válido.
+Actualizá las secciones afectadas por el diff: nuevas funciones, queries modificadas, dependencias cambiadas.
+Eliminá referencias a código que el diff borra.
+
+Generá el documento markdown completo con exactamente estas secciones:
+{secciones}
+
+Solo el markdown, sin texto adicional antes ni después."""
+
+    elif diff:
+        prompt = f"""Generá documentación técnica para este archivo. El diff muestra los cambios de la sesión actual.
+
+Proyecto: {proyecto_name} | Stack: {stack}
+Archivo: {ruta}
+
+Cambios de esta sesión (git diff):
+{diff[:4000]}
+
+Código fuente:
+{contenido}
+
+Generá un documento markdown con exactamente estas secciones:
+{secciones}
+
+Solo el markdown, sin texto adicional antes ni después."""
+
+    else:
+        prompt = f"""Generá documentación técnica detallada para este archivo.
 
 Proyecto: {proyecto_name} | Stack: {stack}
 Archivo: {ruta}
@@ -297,11 +353,7 @@ Código fuente:
 {contenido}
 
 Generá un documento markdown con exactamente estas secciones:
-- Qué hace este archivo (propósito y rol en el sistema)
-- Funciones y clases principales (nombre, parámetros y qué hace cada una)
-- Queries SQL y tablas involucradas (nombres exactos del código, si aplica)
-- Dependencias (qué otros archivos o módulos usa directamente)
-- Patrones y convenciones observados
+{secciones}
 
 Solo el markdown, sin texto adicional antes ni después."""
 

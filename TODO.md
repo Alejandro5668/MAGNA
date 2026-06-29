@@ -311,6 +311,18 @@ por QA, historial de rondas persistente, verificación pre-sync y correcciones d
 
 ---
 
+## Fase 14 — Rebrand MAGNA, animación y limpieza visual *(2026-06-20)*
+
+- [x] Rebrand completo a MAGNA — font `ansi_shadow` con efecto 3D de caracteres de caja
+- [x] Animación de bienvenida — líneas caen una a una con 90ms de delay (~0.55s total)
+- [x] Eliminación de `ctx snapshot` — comando, archivo, import y handler removidos
+- [x] Fix `Rule` import restaurado — eliminado por error al limpiar, causaba NameError en .exe
+- [x] `PORT2.png` agregada como portada del README y commiteada al repo
+- [x] README reescrito — nombre MAGNA, tabla de comandos actualizada, arquitectura real sin snapshot, tickets.py incluido
+- [ ] Empaquetar `.exe` nuevo: `pyinstaller ctx.spec` (bloqueado por PermissionError — cerrar ctx.exe antes)
+
+---
+
 ## Bloqueantes activos
 
 > Registrá acá cualquier cosa que te frenó. Con fecha y contexto breve.
@@ -341,3 +353,4 @@ por QA, historial de rondas persistente, verificación pre-sync y correcciones d
 | 2026-06-14 (3) | Documentadas DEC-032 a DEC-035 (imagen/Jira/return-vs-exit/nombres de archivos); corrección a DEC-031 (glob no rglob) | Verificar comandos nuevos en PHP empresa, empaquetar .exe nuevo |
 | 2026-06-15 | Integración Ponytail (tip en sync + panel en init), limpieza por audit (6 fixes), images→assets, README profesional, DEC-036 multi-stack | Verificar comandos en PHP empresa, empaquetar .exe |
 | 2026-06-20 | ctx retomar (historial de tickets reabiertos), QA agent en sync, ctx status reescrito por carpeta, fix encoding builder/caller | Empaquetar .exe, verificar retomar y QA con ticket real en PHP empresa |
+| 2026-06-20 (2) | Rebrand MAGNA (ansi_shadow + animación), eliminación snapshot, README reescrito, PORT2.png commiteada, fix Rule import | Empaquetar .exe (cerrar instancia antes), verificar retomar y QA en PHP empresa |
