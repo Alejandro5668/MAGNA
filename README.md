@@ -49,7 +49,8 @@ Costo: ~30 segundos.
 3. **`ctx file <zona>`** profundiza en la carpeta específica antes del ticket
 4. **`ctx task`** detecta con _extended thinking_ qué módulos son relevantes y genera un plan técnico
 5. Claude Code abre con todo el contexto ya cargado — sin exploración manual
-6. **`ctx sync`** detecta los cambios con git, corre QA adversarial y actualiza la documentación post-tarea
+6. **`ctx sync`** detecta los cambios con git y actualiza la documentación post-tarea. Genera automáticamente el mensaje de Jira y guarda la memoria del caso (qué se investigó, qué se hizo, qué tener en cuenta)
+7. **`ctx revision`** recibe la revisión del PR, extrae los críticos 🔴 y lanza Claude con el historial del ticket para resolverlos
 
 El knowledge store vive en `~/.mycontext/` — completamente fuera de cualquier repositorio de cliente.
 
@@ -63,7 +64,8 @@ El knowledge store vive en `~/.mycontext/` — completamente fuera de cualquier 
 | `ctx archive <ruta>` | Analiza y documenta un archivo individual en detalle |
 | `ctx task "descripción"` | Detecta módulos relevantes, genera plan técnico y lanza Claude Code |
 | `ctx retomar` | Retoma un ticket reabierto por QA con historial de rondas anteriores |
-| `ctx sync` | Detecta cambios con git, corre QA pre-commit y actualiza la documentación |
+| `ctx sync` | Detecta cambios con git, actualiza documentación y genera memoria del caso + mensaje Jira |
+| `ctx revision` | Parsea la revisión del PR, extrae críticos 🔴 y lanza Claude para resolverlos |
 | `ctx claude` | Lanza Claude Code con el contexto completo del proyecto |
 | `ctx status` | Muestra la arquitectura documentada del proyecto agrupada por carpeta |
 
@@ -120,7 +122,8 @@ MAGNA/
 │   │   ├── init.py        # ctx init     — mapea arquitectura del proyecto
 │   │   ├── file_cmd.py    # ctx file     — documenta una zona en profundidad
 │   │   ├── archive.py     # ctx archive  — analiza un archivo individual
-│   │   ├── sync.py        # ctx sync     — QA adversarial + sincroniza docs post-tarea
+│   │   ├── sync.py        # ctx sync     — sincroniza docs post-tarea, genera memoria del caso
+│   │   ├── revision.py    # ctx revision — resuelve críticos de revisión de PR
 │   │   ├── proyecto.py    # ctx proyecto — genera PROYECTO.md
 │   │   ├── task.py        # ctx task     — extended thinking + brief técnico
 │   │   ├── claude_cmd.py  # ctx claude   — lanza Claude Code con contexto completo
