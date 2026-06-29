@@ -751,3 +751,91 @@ Si encuentra `claude.cmd` aunque no esté en PATH, lo lanza directamente con rut
 **Por qué:** El `.exe` de AICLI corre con un PATH diferente al de la terminal del usuario.
 Claude puede estar instalado y funcionar en PowerShell pero ser invisible para el `.exe`.
 El diagnóstico elimina la fricción de arranque para usuarios nuevos.
+
+---
+
+## DEC-041 — _archivos_cambiados: HEAD~1 como fallback, no siempre
+
+**Decisión:** `_archivos_cambiados()` en `sync.py` primero acumula archivos de `git diff HEAD` y `git diff --cached`. Solo si ese conjunto está vacío ejecuta `git diff HEAD~1`. Los tres comandos ya no se corren siempre en unión.
+
+**Por qué:** El flujo anterior hacía unión de los tres comandos siempre. Si el usuario ya había commiteado sus 3 archivos, `git diff HEAD` y `--cached` devolvían vacío, pero `git diff HEAD~1` devolvía los archivos del commit anterior — que podían ser 17 archivos de una sesión distinta. El resultado era que sync documentaba 20 archivos en vez de los 3 reales.
+
+**Alternativas descartadas:**
+- Eliminar HEAD~1 del todo: dejaría sin cobertura el caso en que el usuario hace commit antes de correr sync
+- Preguntar al usuario cuántos commits atrás mirar: fricción innecesaria
+
+---
+
+## DEC-042 — analizar_archivo_profundo: 8000 chars + actualización incremental con diff
+
+**Decisión:** `analizar_archivo_profundo()` sube de 3000 a 8000 chars de lectura. Acepta dos parámetros opcionales: `diff: str = ""` y `doc_existente: str = ""`. El prompt varía según lo que llega: si hay ambos → actualización incremental ("conservá lo válido, actualizá lo que cambió"); si solo hay diff → documenta sabiendo qué cambió; si ninguno → comportamiento original.
+
+**Por qué:** Con 3000 chars, un archivo PHP real con métodos complejos quedaba cortado — Claude solo veía el `<?php` y las primeras funciones. Los métodos del medio y del final no existían para él. Además, `ctx sync` tenía el diff disponible pero no lo pasaba a la función, así que Claude documentaba el archivo entero desde cero como si fuera la primera vez — perdiendo el conocimiento acumulado de documentaciones anteriores.
+
+**Alternativas descartadas:**
+- 5000 chars: sigue siendo insuficiente para controladores PHP grandes
+- Siempre reescribir la doc completa: descarta conocimiento previo válido (anotaciones manuales, contexto de sesiones pasadas)
+
+---
+
+## DEC-043 — generar_resumen_caso reemplaza generar_mensaje_jira
+
+**Decisión:** `generar_mensaje_jira()` fue reemplazada por `generar_resumen_caso()` que devuelve `(jira_msg, memoria_dict, tokens)` en una sola llamada. El JSON generado tiene cuatro claves: `jira`, `investigado`, `hecho`, `tener_en_cuenta`. Si recibe `historial_previo` (caso retomado), el mensaje Jira documenta solo esa ronda, no repite el historial.
+
+**Por qué:** Antes había dos audiencias servidas por llamadas separadas: Jira (stakeholders) y la memoria del caso (Claude en futuras sesiones). La misma llamada puede servir a ambas con el mismo contexto. Una sola llamada es más barata, más coherente, y elimina la pregunta "¿Generar mensaje de Jira?" que interrumpía el flujo sin aportar valor.
+
+**Alternativas descartadas:**
+- Mantener dos llamadas separadas: mismo costo, más lento, riesgo de inconsistencia entre el mensaje Jira y la memoria
+- Eliminar el mensaje Jira: el equipo lo necesita para las transiciones de tickets
+
+---
+
+## DEC-044 — Case card UI: _mostrar_case_card con Rich
+
+**Decisión:** Nueva función `_mostrar_case_card()` en `sync.py` que muestra un Panel de Rich con: archivos modificados (dim, prefijo `·`), separador Rule, y tres secciones con labels con colores distintos — `Investigado` (bold blanco), `Hecho` (bold green), `Tener en cuenta` (bold yellow). El título del panel muestra `TICKET-ID · Ronda N`.
+
+**Por qué:** Antes el flujo pedía una "descripción breve del ticket" como campo de texto libre que nadie quería llenar manualmente. La case card auto-generada reemplaza eso con información estructurada y visualmente clara. El usuario puede verificar en 5 segundos que el resumen es correcto antes de guardar.
+
+**Tener en cuenta:** El campo `tener_en_cuenta` tiene un paso opcional donde el usuario puede agregar contexto que el diff no muestra (restricciones del cliente, acuerdos verbales). Si escribe algo, la card se re-muestra con el contenido actualizado antes de confirmar.
+
+---
+
+## DEC-045 — guardar_ronda con campo memoria estructurada
+
+**Decisión:** `guardar_ronda()` acepta `memoria: dict | None = None`. La ronda en `tickets.json` incluye el dict `{investigado, hecho, tener_en_cuenta}`. `formatear_historial()` muestra los tres campos si existen; si no (rondas viejas sin memoria), muestra el `mensaje_jira` como antes.
+
+**Por qué:** El historial que se inyecta en `ctx retomar` ahora da a Claude los tres puntos exactos que necesita: qué se investigó, qué se hizo, y qué gotchas tener en cuenta — sin que Claude tenga que re-leer el diff completo de rondas anteriores.
+
+**Compatibilidad:** Rondas guardadas antes de esta decisión no tienen el campo `memoria`. `formatear_historial()` maneja ambos formatos.
+
+---
+
+## DEC-046 — ctx retomar muestra solo ID y cantidad de rondas
+
+**Decisión:** El selector de tickets en `ctx retomar` muestra `PROJ-1234  (2 ronda/s)` — sin la descripción del ticket.
+
+**Por qué:** La descripción era texto libre que el usuario había ingresado manualmente y que en muchos casos era genérica o redundante con el ID. El ID del ticket es suficiente para que el desarrollador identifique el caso; el detalle está en el historial que se muestra al seleccionar.
+
+---
+
+## DEC-047 — ctx revision: nuevo comando para críticos de revisión de PR
+
+**Decisión:** `ctx revision` (en `aicli/commands/revision.py`) lee el texto de una revisión de PR pegado en terminal (doble Enter para terminar), parsea únicamente la sección 🔴, y si hay críticos: extrae archivos mencionados con regex, carga el historial del ticket de `tickets.json` (ticket ID extraído del header `[PROJ-NNN]`), carga documentación de los módulos afectados, y lanza Claude Code con el contexto completo.
+
+**Por qué:** El flujo real de trabajo incluye PRs que no pueden mergear por críticos del reviewer. Sin `ctx revision`, el desarrollador tiene que describir los problemas manualmente a Claude — que no sabe nada del ticket ni de los módulos afectados. Con el comando, Claude arranca sabiendo exactamente qué reparar, en qué archivos, y con el historial completo del ticket.
+
+**Parsing:** Solo sección 🔴 (Problemas críticos). Los items de 🟡 con `[bloqueante]` se ignoran — solo los rojos bloquean el merge en el flujo de la empresa. Si 🔴 dice `(Ninguno)` o está vacía, muestra "El PR puede mergear" y sale.
+
+**Alternativas descartadas:**
+- Leer review desde archivo .txt: fricción innecesaria para texto que el usuario ya tiene en el clipboard
+- Parsear 🟡 bloqueantes también: el equipo solo bloquea en 🔴; los amarillos son opcionales
+
+---
+
+## DEC-048 — QA agent eliminado de ctx sync; solo php -l
+
+**Decisión:** La llamada Claude adversarial ("encontrá por qué puede fallar") fue removida de `ctx sync`. Queda únicamente `php -l` (verificación de sintaxis, sin tokens, sin latencia). El QA real ahora lo hace el reviewer de PR externo, y los críticos se atienden con `ctx revision`.
+
+**Por qué:** El PR reviewer externo ya hace lo que hacía el QA agent pero en el contexto real del PR, con las reglas del equipo, y con formato estructurado. Correr el QA agent antes de subir el PR era redundante: el reviewer lo iba a correr igual. Eliminar el agente ahorra ~$0.02 y ~30 segundos por sync, y elimina una pregunta (`¿Correr QA?`) que interrumpía el flujo.
+
+**Lo que se conservó:** `php -l` en todos los `.php` cambiados. Es gratis, instantáneo, y captura el error más común (sintaxis rota) antes de que el PR siquiera exista.

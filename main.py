@@ -5,6 +5,7 @@ import time
 import logging
 
 Path.home().joinpath(".mycontext").mkdir(exist_ok=True)
+Path.home().joinpath(".mycontext", "evidencias").mkdir(exist_ok=True)
 logging.basicConfig(
     filename=Path.home() / ".mycontext" / "aicli_log.log",
     level=logging.INFO,
@@ -29,6 +30,69 @@ from aicli.commands import status, init, archive, file_cmd, sync, task, claude_c
 from aicli.db import init_db, engine
 
 init_db()
+
+
+def _purgar_evidencias() -> None:
+    carpeta = Path.home() / ".mycontext" / "evidencias"
+    limite = time.time() - 7 * 86400
+    for archivo in carpeta.iterdir():
+        try:
+            if archivo.is_file() and archivo.stat().st_mtime < limite:
+                archivo.unlink()
+        except Exception:
+            pass
+
+
+def _captura_desde_portapapeles() -> str | None:
+    """Lee imagen del portapapeles de Windows y la guarda en evidencias/."""
+    import subprocess
+    from datetime import datetime
+    carpeta = Path.home() / ".mycontext" / "evidencias"
+    nombre = f"captura_{datetime.now().strftime('%Y%m%d_%H%M%S')}.png"
+    ruta = (carpeta / nombre).resolve()
+    ruta_ps = str(ruta).replace("\\", "/")
+    ps = (
+        "Add-Type -AssemblyName System.Windows.Forms; "
+        "Add-Type -AssemblyName System.Drawing; "
+        f"$img = [System.Windows.Forms.Clipboard]::GetImage(); "
+        f"if ($img) {{ $img.Save('{ruta_ps}', [System.Drawing.Imaging.ImageFormat]::Png); exit 0 }} "
+        "else { exit 1 }"
+    )
+    try:
+        r = subprocess.run(
+            ["powershell", "-NoProfile", "-NonInteractive", "-Command", ps],
+            capture_output=True, timeout=10,
+        )
+        if r.returncode == 0 and ruta.exists():
+            return str(ruta)
+    except Exception:
+        pass
+    return None
+
+
+def _pedir_imagen() -> str | None:
+    """Flujo estándar de adjuntar imagen: portapapeles primero, ruta manual como fallback."""
+    usar_pb = questionary.confirm(
+        "  ¿Tenés una captura en el portapapeles?",
+        default=False,
+        style=_ESTILO_MENU,
+    ).ask()
+
+    if usar_pb:
+        ruta = _captura_desde_portapapeles()
+        if ruta:
+            console.print(f"  [bold green]✔[/bold green] [dim]Guardada: {ruta}[/dim]")
+            return ruta
+        console.print("  [bold yellow]⚠[/bold yellow] [dim]No hay imagen en el portapapeles.[/dim]")
+
+    ruta_manual = questionary.text(
+        "  Ruta de imagen (Enter para omitir)",
+        style=_ESTILO_MENU,
+    ).ask()
+    return ruta_manual.strip() if ruta_manual and ruta_manual.strip() else None
+
+
+_purgar_evidencias()
 
 app = typer.Typer(help="AICLI — Motor de contexto inteligente para Claude Code")
 app.add_typer(status.app, name="status")
@@ -284,10 +348,7 @@ def _mostrar_menu() -> None:
                 console.print("  [bold yellow]Aviso:[/bold yellow] El motivo de reapertura es necesario.")
                 continue
 
-            imagen = questionary.text(
-                "  Imagen de evidencia (ruta local) — Enter para omitir",
-                style=_ESTILO_MENU,
-            ).ask()
+            imagen = _pedir_imagen()
             archivo = questionary.text(
                 "  Archivo específico (ej: pagos/PagosController.php) — Enter para omitir",
                 style=_ESTILO_MENU,
@@ -297,8 +358,7 @@ def _mostrar_menu() -> None:
 
             tarea_retomar = f"[TICKET REABIERTO {ticket_id}] {motivo.strip()}"
             archivo_limpio = archivo.strip() if archivo and archivo.strip() else None
-            imagen_limpia = imagen.strip() if imagen and imagen.strip() else None
-            task._ejecutar_task(tarea_retomar, archivo_limpio, imagen_limpia, historial_ticket=historial)
+            task._ejecutar_task(tarea_retomar, archivo_limpio, imagen, historial_ticket=historial)
 
         elif opcion == "task":
             tarea = questionary.text("  Describí la tarea", style=_ESTILO_MENU).ask()
@@ -306,14 +366,10 @@ def _mostrar_menu() -> None:
                 "  Ruta del archivo  (ej: pagos/PagosController.php) — Enter para omitir",
                 style=_ESTILO_MENU,
             ).ask()
-            imagen = questionary.text(
-                "  Ruta de imagen de referencia  (ej: C:\\screenshots\\bug.png) — Enter para omitir",
-                style=_ESTILO_MENU,
-            ).ask()
+            imagen = _pedir_imagen()
             if tarea and tarea.strip():
                 archivo_limpio = archivo.strip() if archivo and archivo.strip() else None
-                imagen_limpia = imagen.strip() if imagen and imagen.strip() else None
-                task.task(tarea.strip(), archivo_limpio, imagen_limpia)
+                task.task(tarea.strip(), archivo_limpio, imagen)
 
         elif opcion == "claude":
             claude_cmd.claude()

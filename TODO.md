@@ -323,6 +323,25 @@ por QA, historial de rondas persistente, verificación pre-sync y correcciones d
 
 ---
 
+## Fase 15 — Calidad de sync, memoria de casos y ctx revision *(2026-06-29)*
+
+**Objetivo:** Mejorar la calidad de documentación de `ctx sync`, reemplazar el flujo
+manual de descripción de tickets por memoria auto-generada, y agregar soporte para
+el ciclo de revisión de PRs con críticos.
+
+- [x] Fix `_archivos_cambiados` — HEAD~1 solo como fallback, no siempre (DEC-041)
+- [x] `analizar_archivo_profundo` — 8000 chars, actualización incremental con diff + doc existente (DEC-042)
+- [x] `generar_resumen_caso` — reemplaza `generar_mensaje_jira`, JSON único con Jira + memoria del caso (DEC-043)
+- [x] Case card UI — `_mostrar_case_card` con Rich: archivos, Investigado / Hecho / Tener en cuenta (DEC-044)
+- [x] `guardar_ronda` con campo `memoria` estructurada (DEC-045)
+- [x] `ctx retomar` — muestra solo ID y cantidad de rondas, sin descripción (DEC-046)
+- [x] `ctx revision` — nuevo comando: parsea 🔴 de revisión de PR, lanza Claude con contexto del ticket (DEC-047)
+- [x] QA agent eliminado de `ctx sync` — solo `php -l` queda (DEC-048)
+- [x] DEC-041 a DEC-048 documentadas en `knowledge/decisions.md`
+- [ ] Empaquetar `.exe` nuevo: `pyinstaller ctx.spec`
+
+---
+
 ## Bloqueantes activos
 
 > Registrá acá cualquier cosa que te frenó. Con fecha y contexto breve.
@@ -354,3 +373,4 @@ por QA, historial de rondas persistente, verificación pre-sync y correcciones d
 | 2026-06-15 | Integración Ponytail (tip en sync + panel en init), limpieza por audit (6 fixes), images→assets, README profesional, DEC-036 multi-stack | Verificar comandos en PHP empresa, empaquetar .exe |
 | 2026-06-20 | ctx retomar (historial de tickets reabiertos), QA agent en sync, ctx status reescrito por carpeta, fix encoding builder/caller | Empaquetar .exe, verificar retomar y QA con ticket real en PHP empresa |
 | 2026-06-20 (2) | Rebrand MAGNA (ansi_shadow + animación), eliminación snapshot, README reescrito, PORT2.png commiteada, fix Rule import | Empaquetar .exe (cerrar instancia antes), verificar retomar y QA en PHP empresa |
+| 2026-06-29 | Fix scope de diff en sync, documentación incremental con diff+doc existente, case card UI, generar_resumen_caso, ctx revision para críticos de PR, QA agent removido, DEC-041–048 | Empaquetar .exe nuevo |
