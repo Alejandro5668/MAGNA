@@ -338,6 +338,9 @@ el ciclo de revisión de PRs con críticos.
 - [x] `ctx revision` — nuevo comando: parsea 🔴 de revisión de PR, lanza Claude con contexto del ticket (DEC-047)
 - [x] QA agent eliminado de `ctx sync` — solo `php -l` queda (DEC-048)
 - [x] DEC-041 a DEC-048 documentadas en `knowledge/decisions.md`
+- [x] `evidencias/` — carpeta con captura desde portapapeles Windows, purga 7 días, `_ask_image()` como estándar (DEC-049)
+- [x] Rename completo: todos los identificadores españoles → inglés en 15 archivos (DEC-050)
+- [x] DEC-049 y DEC-050 documentadas en `knowledge/decisions.md`
 - [ ] Empaquetar `.exe` nuevo: `pyinstaller ctx.spec`
 
 ---
@@ -374,3 +377,4 @@ el ciclo de revisión de PRs con críticos.
 | 2026-06-20 | ctx retomar (historial de tickets reabiertos), QA agent en sync, ctx status reescrito por carpeta, fix encoding builder/caller | Empaquetar .exe, verificar retomar y QA con ticket real en PHP empresa |
 | 2026-06-20 (2) | Rebrand MAGNA (ansi_shadow + animación), eliminación snapshot, README reescrito, PORT2.png commiteada, fix Rule import | Empaquetar .exe (cerrar instancia antes), verificar retomar y QA en PHP empresa |
 | 2026-06-29 | Fix scope de diff en sync, documentación incremental con diff+doc existente, case card UI, generar_resumen_caso, ctx revision para críticos de PR, QA agent removido, DEC-041–048 | Empaquetar .exe nuevo |
+| 2026-06-29 (2) | evidencias/ con portapapeles Windows, rename English identifiers (50+ en 15 archivos), DEC-049 y DEC-050 | Empaquetar .exe nuevo |

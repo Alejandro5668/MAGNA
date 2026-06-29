@@ -839,3 +839,41 @@ El diagnóstico elimina la fricción de arranque para usuarios nuevos.
 **Por qué:** El PR reviewer externo ya hace lo que hacía el QA agent pero en el contexto real del PR, con las reglas del equipo, y con formato estructurado. Correr el QA agent antes de subir el PR era redundante: el reviewer lo iba a correr igual. Eliminar el agente ahorra ~$0.02 y ~30 segundos por sync, y elimina una pregunta (`¿Correr QA?`) que interrumpía el flujo.
 
 **Lo que se conservó:** `php -l` en todos los `.php` cambiados. Es gratis, instantáneo, y captura el error más común (sintaxis rota) antes de que el PR siquiera exista.
+
+---
+
+## DEC-049 — Carpeta evidencias/ con captura desde portapapeles y purga automática
+
+**Decisión:** Las imágenes de evidencia se guardan en `~/.mycontext/evidencias/` con nombre `captura_YYYYMMDD_HHMMSS.png`. La captura lee el portapapeles de Windows via PowerShell subprocess (`System.Windows.Forms.Clipboard::GetImage()`), sin dependencias extra. La purga automática de archivos con más de 7 días corre al arrancar AICLI (`_purge_evidence()` en `main.py`). La función `_ask_image()` es el punto de entrada único: pregunta primero si hay captura en portapapeles; si no, cae a ruta manual como fallback.
+
+**Por qué:** El flujo anterior pedía guardar la imagen en una carpeta, copiar la ruta con click derecho y pegarla. Con esta decisión el flujo es: Win+Shift+S → seleccioná el área → AICLI lee el portapapeles automáticamente. Cero pasos manuales. La carpeta `evidencias/` centraliza todas las capturas fuera de repos de clientes, con purga automática para no acumular archivos indefinidamente.
+
+**Implementación:** Solo Windows (PowerShell siempre disponible). No se usa Pillow ni win32clipboard para evitar dependencias adicionales en el `.exe`.
+
+**Alternativas descartadas:**
+- Archivo fijo `captura.png`: se sobreescribe si hay dos capturas en la misma sesión
+- Pillow `ImageGrab.grabclipboard()`: dependencia adicional que complica el build con PyInstaller
+- Pedir ruta siempre: fricción innecesaria cuando el 90% de los casos son capturas recientes
+
+---
+
+## DEC-050 — Identificadores en inglés como estándar de código
+
+**Decisión:** Todos los identificadores del proyecto (nombres de funciones, variables, parámetros, constantes) están en inglés. Los strings visibles para el usuario (mensajes Rich, prompts de questionary, comentarios) permanecen en español. La regla es: **código en inglés, UI en español**.
+
+**Por qué:** El código mezclaba español e inglés sin criterio — `construir_contexto` junto a `build_context`, `modulos` junto a `modules`. Un lector nuevo (o Claude Code) tenía que cambiar de idioma mentalmente a mitad de una función. El estándar único elimina esa fricción y hace el código internacionalmente legible.
+
+**Alcance del cambio aplicado (2026-06-29):** 50+ renombrados en 15 archivos. Ejemplos representativos:
+- `construir_contexto` → `build_context`
+- `lanzar_claude` → `launch_claude`
+- `analizar_archivo_profundo` → `analyze_file_deep`
+- `generar_resumen_caso` → `generate_case_summary`
+- `EXTENSIONES_NO_CODIGO` → `NON_CODE_EXTENSIONS`
+- `MAX_REINTENTOS` → `MAX_RETRIES`
+- `obtener_arbol` → `get_tree`
+
+**Lo que NO se renombró:** claves de JSON en disco (`investigado`, `hecho`, `tener_en_cuenta`, `descripcion`) porque cambiarlas rompería archivos `tickets.json` existentes; campos de modelos SQLModel (columnas de BD); nombres de comandos CLI (`sync`, `task`, `init` — son la interfaz pública).
+
+**Alternativas descartadas:**
+- Mantener español: incompatible con contribuciones externas y con el uso de Claude Code como asistente de desarrollo
+- Todo en español: contradice las convenciones de Python y el ecosistema open source
