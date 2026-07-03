@@ -1,16 +1,49 @@
 from __future__ import annotations
+import asyncio
 import os
 from pathlib import Path
 
+import pyfiglet
 from textual.app import App, ComposeResult
 from textual.screen import Screen, ModalScreen
-from textual.widgets import Static, Input, Label
+from textual.widgets import Static, Input, Label, DataTable
 from textual.containers import Container, Vertical, Horizontal
 from textual.binding import Binding
 from textual import work
 
+# ─── Brand constants ──────────────────────────────────────────────────────────
 
-# ─── Shared terminal utilities ────────────────────────────────────────────────
+_LOGO = pyfiglet.figlet_format("MAGNA", font="ansi_shadow").rstrip()
+
+_MENU = [
+    ("DOCUMENTATION", [
+        ("1", "init",     "Map project architecture"),
+        ("2", "project",  "Generate structural knowledge"),
+        ("3", "file",     "Document a folder in depth"),
+        ("4", "archive",  "Analyze a specific file"),
+    ]),
+    ("WORKFLOW", [
+        ("5", "task",     "Launch Claude with task context"),
+        ("6", "sync",     "Sync documentation post-task"),
+        ("7", "resume",   "Resume reopened ticket"),
+        ("8", "revision", "Resolve PR review criticals"),
+    ]),
+    ("EXPLORE", [
+        ("9", "claude",   "Launch Claude with full context"),
+        ("0", "status",   "View documented architecture"),
+    ]),
+]
+
+
+def _cmd_desc(command: str) -> str:
+    for _, items in _MENU:
+        for _, cmd, desc in items:
+            if cmd == command:
+                return desc
+    return ""
+
+
+# ─── Terminal utilities (run inside suspend) ──────────────────────────────────
 
 def _q_style():
     from questionary import Style
@@ -51,7 +84,6 @@ def _capture_clipboard() -> str | None:
 
 
 def _ask_image() -> str | None:
-    """Clipboard-first image prompt — runs inside suspend context."""
     import questionary
     from rich.console import Console
     console = Console()
@@ -74,6 +106,111 @@ def _ask_image() -> str | None:
     return manual.strip() if manual and manual.strip() else None
 
 
+def _run_resume() -> None:
+    """Retomar flow — runs entirely in terminal inside suspend context."""
+    import questionary
+    from rich.console import Console
+    from rich.panel import Panel as RichPanel
+    from aicli.services.tickets import load_tickets, format_history, save_active_ticket
+    from aicli.commands.task import _execute_task
+    from aicli.tui.theme import print_header
+
+    console = Console()
+    style = _q_style()
+    print_header(console, "ctx resume", "Resume reopened ticket")
+
+    tickets = load_tickets()
+    if tickets:
+        choices = [
+            questionary.Choice(f"  {tid}  ({len(d['rondas'])} ronda/s)", value=tid)
+            for tid, d in tickets.items()
+        ]
+        choices.append(questionary.Choice("  Ingresar ID manualmente...", value="__manual__"))
+        chosen = questionary.select("¿Qué ticket retomar?", choices=choices, style=style).ask()
+    else:
+        chosen = "__manual__"
+
+    if chosen == "__manual__":
+        chosen = questionary.text("  ID del ticket (ej: PROJ-1234)", style=style).ask()
+    if not chosen or not chosen.strip():
+        return
+
+    ticket_id = chosen.strip().upper()
+    history = format_history(ticket_id, tickets)
+    if history:
+        console.print()
+        console.print(RichPanel(
+            history,
+            title=f"[bold cyan]Historial {ticket_id}[/bold cyan]",
+            border_style="cyan",
+        ))
+
+    console.print()
+    reason = questionary.text("  Motivo de reapertura", style=style).ask()
+    if not reason or not reason.strip():
+        return
+
+    image = _ask_image()
+    file_path = questionary.text("  Archivo específico (Enter para omitir)", style=style).ask()
+
+    save_active_ticket(ticket_id, reason.strip())
+    clean_file = file_path.strip() if file_path and file_path.strip() else None
+    _execute_task(
+        f"[TICKET REABIERTO {ticket_id}] {reason.strip()}",
+        clean_file, image, ticket_history=history,
+    )
+
+
+def _dispatch(command: str, inputs: dict) -> None:
+    """Run a command in terminal mode. Always called inside suspend context."""
+    from rich.console import Console
+    from aicli.tui.theme import print_header, print_footer
+
+    console = Console()
+
+    if command != "resume":
+        print_header(console, f"ctx {command}", _cmd_desc(command))
+
+    if command == "init":
+        from aicli.commands.init import init
+        init()
+
+    elif command == "project":
+        from aicli.commands.proyecto import proyecto
+        proyecto()
+
+    elif command == "file":
+        from aicli.commands.file_cmd import file_cmd
+        file_cmd(inputs["folder"])
+
+    elif command == "archive":
+        from aicli.commands.archive import archive
+        archive(inputs["fp"])
+
+    elif command == "task":
+        image = _ask_image()
+        from aicli.commands.task import task
+        task(inputs["desc"], inputs.get("fp"), image)
+
+    elif command == "sync":
+        from aicli.commands.sync import sync
+        sync()
+
+    elif command == "resume":
+        _run_resume()
+
+    elif command == "revision":
+        from aicli.commands.revision import revision
+        revision()
+
+    elif command == "claude":
+        from aicli.commands.claude_cmd import claude
+        claude()
+
+    if command not in ("task", "claude", "revision", "resume", "sync"):
+        print_footer(console)
+
+
 # ─── Input Modal ──────────────────────────────────────────────────────────────
 
 class InputModal(ModalScreen[str | None]):
@@ -86,11 +223,16 @@ class InputModal(ModalScreen[str | None]):
         align: center middle;
     }
     #im-box {
-        background: #111111;
+        background: #0f0f0f;
         border: tall #00d7ff;
-        padding: 1 3;
-        width: 68;
+        padding: 2 4;
+        width: 70;
         height: auto;
+    }
+    #im-logo {
+        color: #00d7ff;
+        text-align: center;
+        margin-bottom: 2;
     }
     #im-prompt {
         color: #555555;
@@ -99,7 +241,7 @@ class InputModal(ModalScreen[str | None]):
     }
     Input {
         background: #0a0a0a;
-        border: tall #222222;
+        border: tall #1e1e1e;
         color: #c9d1d9;
         height: 3;
     }
@@ -107,7 +249,7 @@ class InputModal(ModalScreen[str | None]):
         border: tall #00d7ff;
     }
     #im-hint {
-        color: #1e1e1e;
+        color: #1a1a1a;
         text-align: right;
         height: 1;
         margin-top: 1;
@@ -121,6 +263,7 @@ class InputModal(ModalScreen[str | None]):
 
     def compose(self) -> ComposeResult:
         with Container(id="im-box"):
+            yield Static("M  A  G  N  A", id="im-logo")
             yield Label(self._prompt, id="im-prompt")
             yield Input(placeholder=self._placeholder)
             yield Label("↵ confirm   esc cancel", id="im-hint")
@@ -133,6 +276,203 @@ class InputModal(ModalScreen[str | None]):
 
     def action_cancel(self) -> None:
         self.dismiss(None)
+
+
+# ─── Command Transition Screen ────────────────────────────────────────────────
+
+class CommandScreen(ModalScreen[None]):
+    """Retro launch screen shown briefly before each command runs."""
+
+    DEFAULT_CSS = """
+    CommandScreen {
+        align: center middle;
+        background: #0a0a0a;
+    }
+    #cs-wrap {
+        width: auto;
+        height: auto;
+        align: center middle;
+    }
+    #cs-logo {
+        color: #00d7ff;
+        text-align: center;
+    }
+    #cs-divider {
+        color: #1a1a1a;
+        text-align: center;
+        height: 1;
+        margin-top: 1;
+    }
+    #cs-cmd {
+        color: #00d7ff;
+        text-style: bold;
+        text-align: center;
+        height: 1;
+        margin-top: 1;
+    }
+    #cs-desc {
+        color: #2a2a2a;
+        text-align: center;
+        height: 1;
+    }
+    #cs-dots {
+        color: #1e1e1e;
+        text-align: center;
+        height: 1;
+        margin-top: 2;
+    }
+    """
+
+    def __init__(self, command: str, description: str) -> None:
+        super().__init__()
+        self._command = command
+        self._description = description
+
+    def compose(self) -> ComposeResult:
+        with Container(id="cs-wrap"):
+            yield Static(_LOGO, markup=False, id="cs-logo")
+            yield Static("─" * 56, id="cs-divider")
+            yield Static(f"ctx {self._command}", id="cs-cmd")
+            yield Static(self._description, id="cs-desc")
+            yield Static("◆  ◆  ◆", id="cs-dots")
+
+    def on_mount(self) -> None:
+        self.set_timer(0.75, lambda: self.dismiss(None))
+
+
+# ─── Status Screen ────────────────────────────────────────────────────────────
+
+class StatusScreen(Screen):
+    """Native Textual view of documented architecture — no suspend needed."""
+
+    BINDINGS = [
+        Binding("escape", "go_back", "Back", show=True),
+        Binding("q",      "go_back", show=False),
+    ]
+
+    DEFAULT_CSS = """
+    StatusScreen {
+        background: #0a0a0a;
+    }
+    #st-logo {
+        color: #00d7ff;
+        text-align: center;
+        padding: 1 0 0 0;
+    }
+    #st-title {
+        color: #c9d1d9;
+        text-style: bold;
+        text-align: center;
+        height: 1;
+        margin-top: 1;
+    }
+    #st-proj {
+        color: #2a2a2a;
+        text-align: center;
+        height: 1;
+        margin-bottom: 1;
+    }
+    #st-rule {
+        color: #141414;
+        text-align: center;
+        height: 1;
+        margin-bottom: 1;
+    }
+    DataTable {
+        background: #0a0a0a;
+        border: none;
+        padding: 0 4;
+        height: auto;
+    }
+    DataTable > .datatable--header {
+        background: #0a0a0a;
+        color: #2a2a2a;
+        text-style: bold;
+    }
+    DataTable > .datatable--cursor {
+        background: #0d1a2a;
+        color: #00d7ff;
+    }
+    #st-summary {
+        color: #2a2a2a;
+        padding: 1 4 0 4;
+        height: 1;
+    }
+    #st-foot {
+        color: #1a1a1a;
+        text-align: right;
+        padding: 0 4 1 0;
+        height: 2;
+        content-align: right bottom;
+    }
+    """
+
+    def __init__(self, project_name: str, project_path: str) -> None:
+        super().__init__()
+        self._project_name = project_name
+        self._project_path = project_path
+
+    def compose(self) -> ComposeResult:
+        yield Static(_LOGO, markup=False, id="st-logo")
+        yield Static("ARCHITECTURE", id="st-title")
+        yield Static(self._project_name, id="st-proj")
+        yield Static("─" * 56, id="st-rule")
+        yield DataTable(id="st-table", show_cursor=True)
+        yield Static("", id="st-summary")
+        yield Static("esc back", id="st-foot")
+
+    def on_mount(self) -> None:
+        self._load()
+
+    def _load(self) -> None:
+        from datetime import datetime
+        from sqlmodel import Session, select as sql_select
+        from aicli.db import engine
+        from aicli.db.models import Project, Module
+
+        table = self.query_one(DataTable)
+        table.add_columns("Folder", "Modules", "Last documented")
+
+        with Session(engine) as session:
+            project = session.exec(
+                sql_select(Project).where(Project.path == self._project_path)
+            ).first()
+
+        if not project:
+            self.query_one("#st-summary", Static).update("No project registered in this directory.")
+            return
+
+        with Session(engine) as session:
+            modules = list(
+                session.exec(sql_select(Module).where(Module.project_id == project.id)).all()
+            )
+
+        if not modules:
+            self.query_one("#st-summary", Static).update("No modules documented yet — run ctx init.")
+            return
+
+        folders: dict[str, list] = {}
+        for m in modules:
+            parts = Path(m.file_path).parts
+            folder = parts[0] if len(parts) > 1 else "[root]"
+            folders.setdefault(folder, []).append(m)
+
+        def _last(mods: list) -> float:
+            return max((m.last_updated_at or 0.0) for m in mods)
+
+        for folder, mods in sorted(folders.items(), key=lambda x: _last(x[1]), reverse=True):
+            ts = _last(mods)
+            date = datetime.fromtimestamp(ts).strftime("%Y-%m-%d") if ts else "—"
+            table.add_row(f"{folder}/", str(len(mods)), date)
+
+        total_modules = len(modules)
+        total_folders = len(folders)
+        self.query_one("#st-summary", Static).update(
+            f"{total_modules} modules · {total_folders} folders"
+        )
+
+    def action_go_back(self) -> None:
+        self.app.pop_screen()
 
 
 # ─── Project Screen ───────────────────────────────────────────────────────────
@@ -148,17 +488,17 @@ class ProjectScreen(Screen):
         align: center middle;
     }
     #ps-wrap {
-        width: 72;
+        width: 76;
         height: auto;
-        padding: 2 3;
+        padding: 1 3;
+        align: center middle;
     }
     #ps-logo {
         color: #00d7ff;
-        text-style: bold;
         text-align: center;
-        height: 1;
+        margin-bottom: 1;
     }
-    #ps-sub {
+    #ps-tagline {
         color: #1a1a1a;
         text-align: center;
         height: 1;
@@ -195,10 +535,10 @@ class ProjectScreen(Screen):
 
     def compose(self) -> ComposeResult:
         with Container(id="ps-wrap"):
-            yield Static("M  A  G  N  A", id="ps-logo")
-            yield Static("AI Context Engine", id="ps-sub")
+            yield Static(_LOGO, markup=False, id="ps-logo")
+            yield Static("AI Context Engine", id="ps-tagline")
             yield Static("SELECT PROJECT", id="ps-hdr")
-            yield Static("─" * 62, id="ps-rule")
+            yield Static("─" * 64, id="ps-rule")
             for i, p in enumerate(self._projects):
                 key = str(i + 1) if i < 9 else "0"
                 yield Static(
@@ -238,26 +578,6 @@ class ProjectScreen(Screen):
 
 # ─── Main Screen ──────────────────────────────────────────────────────────────
 
-_MENU = [
-    ("DOCUMENTATION", [
-        ("1", "init",     "Map project architecture"),
-        ("2", "project",  "Generate structural knowledge"),
-        ("3", "file",     "Document a folder in depth"),
-        ("4", "archive",  "Analyze a specific file"),
-    ]),
-    ("WORKFLOW", [
-        ("5", "task",     "Launch Claude with task context"),
-        ("6", "sync",     "Sync documentation post-task"),
-        ("7", "resume",   "Resume reopened ticket"),
-        ("8", "revision", "Resolve PR review criticals"),
-    ]),
-    ("EXPLORE", [
-        ("9", "claude",   "Launch Claude with full context"),
-        ("0", "status",   "View documented architecture"),
-    ]),
-]
-
-
 class MainScreen(Screen):
 
     BINDINGS = [
@@ -281,10 +601,8 @@ class MainScreen(Screen):
     }
     #logo {
         color: #00d7ff;
-        text-style: bold;
         text-align: center;
-        padding: 2 0 0 0;
-        height: 2;
+        padding: 1 0 0 0;
     }
     #tagline {
         color: #1a1a1a;
@@ -353,7 +671,7 @@ class MainScreen(Screen):
         self._project_path = project_path
 
     def compose(self) -> ComposeResult:
-        yield Static("M  A  G  N  A", id="logo")
+        yield Static(_LOGO, markup=False, id="logo")
         yield Static("AI Context Engine", id="tagline")
 
         with Horizontal(id="proj-bar"):
@@ -392,25 +710,23 @@ class MainScreen(Screen):
 
     @work
     async def _worker_cmd(self, command: str) -> None:  # noqa: C901
-        if command == "init":
-            with self.app.suspend():
-                from aicli.commands.init import init
-                init()
+        inputs: dict = {}
 
-        elif command == "project":
-            with self.app.suspend():
-                from aicli.commands.proyecto import proyecto
-                proyecto()
+        # ── Status: native Textual, no suspend ───────────────────────────────
+        if command == "status":
+            await self.app.push_screen(
+                StatusScreen(self._project_name, self._project_path)
+            )
+            return
 
-        elif command == "file":
+        # ── Collect inputs for commands that need them ────────────────────────
+        if command == "file":
             folder = await self.app.push_screen_wait(
                 InputModal("Folder to document", "pagos  or  controllers/pagos")
             )
             if not folder:
                 return
-            with self.app.suspend():
-                from aicli.commands.file_cmd import file_cmd
-                file_cmd(folder)
+            inputs["folder"] = folder
 
         elif command == "archive":
             fp = await self.app.push_screen_wait(
@@ -418,9 +734,7 @@ class MainScreen(Screen):
             )
             if not fp:
                 return
-            with self.app.suspend():
-                from aicli.commands.archive import archive
-                archive(fp)
+            inputs["fp"] = fp
 
         elif command == "task":
             desc = await self.app.push_screen_wait(
@@ -434,93 +748,20 @@ class MainScreen(Screen):
             fp = await self.app.push_screen_wait(
                 InputModal("File path  (Enter to skip)", "pagos/PagosController.php")
             )
-            with self.app.suspend():
-                image = _ask_image()
-                from aicli.commands.task import task
-                task(desc, fp or None, image)
+            inputs["desc"] = desc
+            inputs["fp"] = fp or None
 
-        elif command == "sync":
-            with self.app.suspend():
-                from aicli.commands.sync import sync
-                sync()
+        # ── Transition screen ─────────────────────────────────────────────────
+        await self.app.push_screen_wait(
+            CommandScreen(command, _cmd_desc(command))
+        )
 
-        elif command == "resume":
-            with self.app.suspend():
-                _run_resume()
-
-        elif command == "revision":
-            with self.app.suspend():
-                from aicli.commands.revision import revision
-                revision()
-
-        elif command == "claude":
-            with self.app.suspend():
-                from aicli.commands.claude_cmd import claude
-                claude()
-
-        elif command == "status":
-            with self.app.suspend():
-                from aicli.commands.status import status
-                status()
+        # ── Execute in terminal ───────────────────────────────────────────────
+        with self.app.suspend():
+            _dispatch(command, inputs)
 
 
-def _run_resume() -> None:
-    """Retomar flow — runs entirely in terminal inside suspend context."""
-    import questionary
-    from rich.console import Console
-    from rich.panel import Panel as RichPanel
-    from aicli.services.tickets import load_tickets, format_history, save_active_ticket
-    from aicli.commands.task import _execute_task
-
-    console = Console()
-    style = _q_style()
-    tickets = load_tickets()
-
-    if tickets:
-        choices = [
-            questionary.Choice(f"  {tid}  ({len(d['rondas'])} ronda/s)", value=tid)
-            for tid, d in tickets.items()
-        ]
-        choices.append(questionary.Choice("  Ingresar ID manualmente...", value="__manual__"))
-        chosen = questionary.select("¿Qué ticket retomar?", choices=choices, style=style).ask()
-    else:
-        chosen = "__manual__"
-
-    if chosen == "__manual__":
-        chosen = questionary.text("  ID del ticket (ej: PROJ-1234)", style=style).ask()
-
-    if not chosen or not chosen.strip():
-        return
-
-    ticket_id = chosen.strip().upper()
-    history = format_history(ticket_id, tickets)
-    if history:
-        console.print()
-        console.print(RichPanel(
-            history,
-            title=f"[bold cyan]Historial {ticket_id}[/bold cyan]",
-            border_style="cyan",
-        ))
-
-    console.print()
-    reason = questionary.text("  Motivo de reapertura", style=style).ask()
-    if not reason or not reason.strip():
-        return
-
-    image = _ask_image()
-    file_path = questionary.text(
-        "  Archivo específico (Enter para omitir)", style=style
-    ).ask()
-
-    save_active_ticket(ticket_id, reason.strip())
-    clean_file = file_path.strip() if file_path and file_path.strip() else None
-    _execute_task(
-        f"[TICKET REABIERTO {ticket_id}] {reason.strip()}",
-        clean_file, image, ticket_history=history,
-    )
-
-
-# ─── Entry point ──────────────────────────────────────────────────────────────
+# ─── App entry point ──────────────────────────────────────────────────────────
 
 class MagnaApp(App):
     CSS = "Screen { background: #0a0a0a; }"
