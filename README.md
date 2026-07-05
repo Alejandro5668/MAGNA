@@ -1,5 +1,4 @@
 <div align="center">
-  <img src="assets/logo.png" width="120" alt="MAGNA logo" />
   <h1>MAGNA</h1>
   <p><em>Motor de contexto inteligente para Claude Code.</em></p>
   <p>
@@ -10,12 +9,6 @@
   </p>
   <p><strong>Arranca cada sesión de Claude Code en ~30 segundos con el contexto exacto del proyecto.</strong></p>
 </div>
-
----
-
-<p align="center">
-  <img src="assets/PORT2.png" alt="MAGNA CLI — pantalla de bienvenida" />
-</p>
 
 ---
 
@@ -108,10 +101,10 @@ Necesitás una [API key de Anthropic](https://console.anthropic.com) — `consol
 |----------|---------|-----|
 | Python | 3.11+ | Lenguaje base |
 | Typer | 0.26 | Estructura de comandos CLI |
-| Rich | 15 | Output visual en terminal |
+| Rich | 15 | Output visual — panels, tablas, markup |
+| Textual | 8.2.8 | TUI completa — dashboard, animaciones, paleta Noche Estrellada |
 | SQLModel + SQLite | 0.0.38 | Knowledge store local en `~/.mycontext/` |
 | Anthropic SDK | 0.107 | Claude API — análisis, documentación, extended thinking |
-| questionary | 2.1 | Menú interactivo con navegación por flechas |
 
 ## Arquitectura
 
@@ -129,17 +122,24 @@ MAGNA/
 │   │   ├── claude_cmd.py  # ctx claude   — lanza Claude Code con contexto completo
 │   │   └── status.py      # ctx status   — arquitectura documentada por carpeta
 │   ├── db/
-│   │   └── models.py      # Modelos Project y Module (SQLModel)
-│   └── services/
-│       ├── indexer.py     # Análisis e indexación con Claude API
-│       ├── builder.py     # Ensambla el session_context.md por sesión
-│       ├── caller.py      # Lanza Claude Code como subprocess
-│       └── tickets.py     # Historial de tickets reabiertos con purga automática
+│   │   ├── models.py      # Modelos Project, Module y Activity (SQLModel)
+│   │   └── migrations.py  # Migraciones de esquema SQLite
+│   ├── services/
+│   │   ├── indexer.py     # Análisis e indexación con Claude API
+│   │   ├── builder.py     # Ensambla el session_context.md por sesión
+│   │   ├── caller.py      # Lanza Claude Code como subprocess
+│   │   ├── activity.py    # Registro de actividad para el dashboard TUI
+│   │   └── tickets.py     # Historial de tickets reabiertos con purga automática
+│   └── tui/
+│       ├── app.py         # TUI Textual — MainScreen, ProjectScreen, modales, animaciones
+│       ├── theme.py       # Paleta Noche Estrellada + funciones de output Rich
+│       └── output_screen.py # CommandOutputScreen (ModalScreen) + TuiConsole
+├── tests/
+│   └── test_commands.py   # 23 smoke tests — imports, paleta, CLI, TUI, DB, servicios
 ├── knowledge/             # Decisiones técnicas, patrones y estado del proyecto
-├── assets/                # Logo e íconos
-├── main.py                # Entry point — menú interactivo principal
+├── main.py                # Entry point — lanza MagnaApp (Textual)
 ├── requirements.txt       # Dependencias de runtime
-└── requirements-build.txt # Dependencias de build (PyInstaller)
+└── ctx.spec               # Configuración PyInstaller para .exe
 ```
 
 ---

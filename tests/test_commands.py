@@ -163,11 +163,12 @@ def test_tui_imports():
     logo = _gradient_logo()
     assert isinstance(logo, Text)
     assert len(logo) > 0
-    # _animate_entry usa textual.geometry.Offset (no tuples planas)
+    # _animate_entry solo anima opacity (float) — offset no es animable en Textual 8.x
     import inspect
-    from textual.geometry import Offset
     src = inspect.getsource(ProjectScreen._animate_entry)
-    assert "Offset" in src, "_animate_entry debe usar Offset, no tuplas (AnimationError)"
+    assert "animate" in src, "_animate_entry debe usar animate()"
+    assert "opacity" in src, "_animate_entry debe animar opacity"
+    assert 'animate("offset"' not in src, "offset no es animable en Textual 8.x — usa solo opacity"
 
 check("tui: app.py — imports y constantes de paleta", test_tui_imports)
 
