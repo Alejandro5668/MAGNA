@@ -1,6 +1,6 @@
 # Estado del Proyecto
 
-Última actualización: 2026-07-04
+Última actualización: 2026-07-05
 
 ---
 
@@ -28,11 +28,19 @@ CLI completamente funcional y distribuida como `.exe`. Probada en proyectos real
 
 ---
 
-## Completado — TUI (Fase 16)
+## Completado — TUI (Fase 16 + mejoras visuales 2026-07-05)
 
-- [x] `aicli/tui/app.py` — TUI Textual completa: MainScreen, StatusScreen, ProjectScreen, OnboardingScreen, HelpScreen, ConfirmModal, CommandScreen (~1300 líneas)
-- [x] `aicli/tui/theme.py` — paleta Noche Estrellada Van Gogh (#FFB703, #5B8DEF, #242C45, #AAB4D4, #5E6A94)
-- [x] `aicli/tui/output_screen.py` — CommandOutputScreen + TuiConsole (Option B)
+- [x] `aicli/tui/app.py` — TUI Textual completa: MainScreen, StatusScreen, ProjectScreen, OnboardingScreen, HelpScreen, ConfirmModal, CommandScreen
+- [x] `aicli/tui/theme.py` — paleta Noche Estrellada Van Gogh + `magna_task_plan`
+- [x] `aicli/tui/output_screen.py` — CommandOutputScreen (ModalScreen) + TuiConsole (Option B)
+- [x] Fix bleeding Textual 8.x — ModalScreen[None] + Container 100%×100% en CommandOutputScreen y CommandScreen (DEC-052)
+- [x] Logo MAGNA gradiente azul→dorado (`_gradient_logo()`) en MainScreen y ProjectScreen (DEC-053)
+- [x] Hatch puntillismo en panel izquierdo (`hatch: "·" #5B8DEF 20%`) (DEC-053)
+- [x] Sparkline sinusoidal animada — `set_interval(0.25)` en MainScreen (DEC-053)
+- [x] `magna_task_plan` — card visual estructurada en `theme.py`, usada en `task.py` (DEC-054)
+- [x] Pregunta de imagen eliminada del flow TUI de task; `_gather_image_async` removida (DEC-055)
+- [x] Footer `CommandOutputScreen` simplificado → `#co-done` con colores visibles (DEC-055)
+- [x] Animaciones de entrada en `ProjectScreen`: fade-in logo, typing tagline, slide lista
 - [x] Vim motions: j/k navegar, g/G top/bottom, h/l colapsar/expandir
 - [x] HelpScreen modal (tecla `?`) con tabla de keybindings
 - [x] ConfirmModal e InputModal nativos — reemplaza questionary.confirm/text en TUI
@@ -40,6 +48,7 @@ CLI completamente funcional y distribuida como `.exe`. Probada en proyectos real
 - [x] `task._execute_task(suspend_fn)` — Claude launch desacoplado vía bridge
 - [x] `ctx.spec` — `collect_submodules('textual')` + `collect_data_files('textual')`
 - [x] Suite de smoke tests `tests/test_commands.py` — 23/23 pasados
+- [x] `.gitignore` — patrones Claude Code (`.agents/`, `skills-lock.json`, etc.)
 
 ---
 

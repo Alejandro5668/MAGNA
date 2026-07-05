@@ -163,6 +163,11 @@ def test_tui_imports():
     logo = _gradient_logo()
     assert isinstance(logo, Text)
     assert len(logo) > 0
+    # _animate_entry usa textual.geometry.Offset (no tuples planas)
+    import inspect
+    from textual.geometry import Offset
+    src = inspect.getsource(ProjectScreen._animate_entry)
+    assert "Offset" in src, "_animate_entry debe usar Offset, no tuplas (AnimationError)"
 
 check("tui: app.py — imports y constantes de paleta", test_tui_imports)
 

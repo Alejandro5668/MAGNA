@@ -1019,12 +1019,13 @@ class ProjectScreen(Screen):
         tagline.update(_FULL)
 
         # ── 3. Rest aparece: header + rule + lista sube + footer ─────────────
+        from textual.geometry import Offset
         await asyncio.sleep(0.1)
-        ps_list.styles.offset = (0, 4)
+        ps_list.styles.offset = Offset(0, 4)
         for w in (hdr, rule, foot):
             w.styles.animate("opacity", 1.0, duration=0.4, easing="in_out_cubic")
         ps_list.styles.animate("opacity", 1.0, duration=0.4, easing="in_out_cubic")
-        ps_list.styles.animate("offset", (0, 0), duration=0.4, easing="out_cubic")
+        ps_list.styles.animate("offset", Offset(0, 0), duration=0.4, easing="out_cubic")
 
     def on_list_view_selected(self, event: ListView.Selected) -> None:
         name = event.item.name or ""
