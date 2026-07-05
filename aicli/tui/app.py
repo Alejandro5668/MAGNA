@@ -702,9 +702,10 @@ class StatusScreen(Screen):
         height: 1;
     }}
     #st-foot {{
+        dock: bottom;
         color: {_MUTED};
         text-align: right;
-        padding: 0 2 1 2;
+        padding: 0 2 0 2;
         height: 2;
         border-top: solid {_BORDER};
     }}
@@ -742,12 +743,16 @@ class StatusScreen(Screen):
 
     def _load(self) -> None:
         from datetime import datetime
+        from rich.text import Text as RichText
         from sqlmodel import Session, select as sql_select
         from aicli.db import engine
         from aicli.db.models import Project, Module
 
         table = self.query_one(DataTable)
-        table.add_columns("Folder", "Modules", "Last documented")
+        # Columnas con color exacto de la paleta — ignora el CSS de Textual
+        table.add_column(RichText("Folder",          style=f"bold {_MUTED}"), width=32)
+        table.add_column(RichText("Modules",         style=f"bold {_MUTED}"), width=10)
+        table.add_column(RichText("Last documented", style=f"bold {_MUTED}"))
 
         with Session(engine) as session:
             project = session.exec(
@@ -779,10 +784,17 @@ class StatusScreen(Screen):
         for folder, mods in sorted(folders.items(), key=lambda x: _last(x[1]), reverse=True):
             ts = _last(mods)
             date = datetime.fromtimestamp(ts).strftime("%Y-%m-%d") if ts else "—"
-            table.add_row(f"{folder}/", str(len(mods)), date)
+            # Filas con color de la paleta directamente en el contenido
+            table.add_row(
+                RichText(f"{folder}/",    style=_SEC),
+                RichText(str(len(mods)), style=_MUTED),
+                RichText(date,           style=_MUTED),
+            )
 
+        total = len(modules)
+        nf    = len(folders)
         self.query_one("#st-summary", Static).update(
-            f"{len(modules)} modules · {len(folders)} folders"
+            f"[{_MUTED}]{total} modules · {nf} folders[/{_MUTED}]"
         )
 
     def action_go_back(self) -> None:
