@@ -15,6 +15,7 @@ from textual.widgets.option_list import Option
 from textual.containers import Container, Vertical, Horizontal
 from textual.binding import Binding
 from textual import work
+from textual.reactive import reactive
 
 # ─── Brand ────────────────────────────────────────────────────────────────────
 
@@ -919,6 +920,8 @@ class ProjectScreen(Screen):
 
     BINDINGS = [Binding("q", "app.quit", show=False)]
 
+    _cursor: reactive[int] = reactive(0, init=False)
+
     DEFAULT_CSS = f"""
     ProjectScreen {{
         background: transparent;
@@ -952,23 +955,9 @@ class ProjectScreen(Screen):
         margin: 0 0 1 0;
         opacity: 0;
     }}
-    ListView {{
+    #ps-list {{
         height: auto;
-        background: transparent;
-        border: none;
         opacity: 0;
-    }}
-    ListItem {{
-        background: transparent;
-        height: 1;
-        padding: 0 0;
-    }}
-    #ps-list ListItem.--highlight {{
-        background: {_SELECT};
-    }}
-    #ps-list ListItem.--highlight > Label {{
-        color: {_GLOW};
-        text-style: bold;
     }}
     #ps-foot {{
         color: {_MUTED};
@@ -983,39 +972,76 @@ class ProjectScreen(Screen):
         super().__init__()
         self._projects = projects
 
+    def _total(self) -> int:
+        return len(self._projects) + 1
+
+    def _render_list(self) -> Text:
+        t = Text()
+        for i, p in enumerate(self._projects):
+            key = str(i + 1) if i < 9 else "0"
+            if i == self._cursor:
+                t.append("▶ ", style=f"bold {_ACCENT}")
+                t.append(f"{key}   ", style=f"bold {_ACCENT}")
+                t.append(f"{p.name:<24}", style="bold #F1F3F9")
+                t.append(f"  {p.path}", style=f"bold {_SEC}")
+            else:
+                t.append(f"  {key}   {p.name:<24}  {p.path}", style=_MUTED)
+            t.append("\n")
+        new_idx = len(self._projects)
+        if new_idx == self._cursor:
+            t.append("▶ N   ", style=f"bold {_ACCENT}")
+            t.append("Register new project...", style="bold #F1F3F9")
+        else:
+            t.append("  N   Register new project...", style=_MUTED)
+        return t
+
     def compose(self) -> ComposeResult:
         with Container(id="ps-wrap"):
             yield Static(_gradient_logo(), id="ps-logo")
             yield Static("AI Context Engine", id="ps-tagline")
             yield Static("SELECT PROJECT", id="ps-hdr")
             yield Rule()
-
-            items: list[ListItem] = []
-            for i, p in enumerate(self._projects):
-                key = str(i + 1) if i < 9 else "0"
-                items.append(ListItem(
-                    Label(
-                        f"  [{_ACCENT}]{key}[/{_ACCENT}]   [#F1F3F9]{p.name:<24}[/#F1F3F9]"
-                        f"  [{_MUTED}]{p.path}[/{_MUTED}]",
-                        markup=True,
-                    ),
-                    name=f"proj_{i}",
-                ))
-            items.append(ListItem(
-                Label(f"  [{_MUTED}]N   Register new project...[/{_MUTED}]", markup=True),
-                name="new",
-            ))
-            yield ListView(*items, id="ps-list")
+            yield Static(self._render_list(), id="ps-list")
             yield Static(
                 f"[{_MUTED}]↑↓ navigate  ↵ select  n new  q quit[/{_MUTED}]",
                 id="ps-foot", markup=True,
             )
+
+    def watch__cursor(self, value: int) -> None:
+        self.query_one("#ps-list", Static).update(self._render_list())
 
     def on_mount(self) -> None:
         for sel in ("#ps-logo", "#ps-hdr", "#ps-list", "#ps-foot"):
             self.query_one(sel).styles.opacity = 0
         self.query_one(Rule).styles.opacity = 0
         self._animate_entry()
+
+    def on_key(self, event) -> None:
+        key = event.key
+        total = self._total()
+        if key in ("down", "j"):
+            self._cursor = (self._cursor + 1) % total
+        elif key in ("up", "k"):
+            self._cursor = (self._cursor - 1) % total
+        elif key == "enter":
+            self._select_current()
+        elif key == "n":
+            self._worker_new()
+        elif key.isdigit():
+            idx = (int(key) - 1) if key != "0" else 9
+            if 0 <= idx < len(self._projects):
+                p = self._projects[idx]
+                os.chdir(p.path)
+                self.app.switch_screen(MainScreen(p.name, p.path))
+
+    def _select_current(self) -> None:
+        new_idx = len(self._projects)
+        if self._cursor == new_idx:
+            self._worker_new()
+        elif 0 <= self._cursor < len(self._projects):
+            p = self._projects[self._cursor]
+            os.chdir(p.path)
+            self.app.switch_screen(MainScreen(p.name, p.path))
 
     @work
     async def _animate_entry(self) -> None:
@@ -1027,10 +1053,8 @@ class ProjectScreen(Screen):
         ps_list = self.query_one("#ps-list")
         foot    = self.query_one("#ps-foot")
 
-        # ── 1. Logo fade in ───────────────────────────────────────────────────
         logo.styles.animate("opacity", 1.0, duration=0.9, easing="in_out_cubic")
 
-        # ── 2. Tagline typing effect ──────────────────────────────────────────
         await asyncio.sleep(0.55)
         tagline.update("")
         _FULL = "AI Context Engine"
@@ -1040,32 +1064,9 @@ class ProjectScreen(Screen):
             await asyncio.sleep(0.055)
         tagline.update(_FULL)
 
-        # ── 3. Rest aparece: header + rule + lista + footer fade-in ──────────
         await asyncio.sleep(0.1)
         for w in (hdr, rule, ps_list, foot):
             w.styles.animate("opacity", 1.0, duration=0.4, easing="in_out_cubic")
-
-    def on_list_view_selected(self, event: ListView.Selected) -> None:
-        name = event.item.name or ""
-        if name == "new":
-            self._worker_new()
-        elif name.startswith("proj_"):
-            idx = int(name.split("_")[1])
-            if 0 <= idx < len(self._projects):
-                p = self._projects[idx]
-                os.chdir(p.path)
-                self.app.switch_screen(MainScreen(p.name, p.path))
-
-    def on_key(self, event) -> None:
-        key = event.key
-        if key == "n":
-            self._worker_new()
-        elif key.isdigit():
-            idx = (int(key) - 1) if key != "0" else 9
-            if 0 <= idx < len(self._projects):
-                p = self._projects[idx]
-                os.chdir(p.path)
-                self.app.switch_screen(MainScreen(p.name, p.path))
 
     @work
     async def _worker_new(self) -> None:
@@ -1224,7 +1225,7 @@ class MainScreen(Screen):
         background: transparent;
         border: none;
         height: auto;
-        max-height: 12;
+        max-height: 20;
         scrollbar-color: {_BORDER};
         scrollbar-color-hover: {_SECTION};
     }}
@@ -1271,7 +1272,6 @@ class MainScreen(Screen):
         super().__init__()
         self._project_name = project_name
         self._project_path = project_path
-        self._spark_phase: float = 0.0
 
     def compose(self) -> ComposeResult:
         yield Static(_gradient_logo(), id="logo")
@@ -1285,76 +1285,30 @@ class MainScreen(Screen):
                             id=f"ol-{section.lower()}",
                         )
             with TabbedContent(id="right-tabs"):
-                with TabPane("PROJECT", id="tab-project"):
-                    yield RichLog(markup=False, highlight=False, id="log-project")
-                with TabPane("SEMANA", id="tab-semana"):
-                    yield RichLog(markup=False, highlight=False, id="log-semana")
-                    yield Static("tareas · últimos 7 días", id="spark-label")
+                with TabPane("VELOCIDAD", id="tab-velocidad"):
+                    yield RichLog(markup=False, highlight=False, id="log-velocidad")
+                    yield Static("casos / día · últimos 7 días", id="spark-label", markup=True)
                     yield Sparkline([], summary_function=sum, id="spark")
-                with TabPane("ACTIVITY", id="tab-activity"):
-                    yield RichLog(markup=False, highlight=False, id="log-activity")
+                with TabPane("CALIDAD", id="tab-calidad"):
+                    yield RichLog(markup=False, highlight=False, id="log-calidad")
+                with TabPane("AHORA", id="tab-ahora"):
+                    yield RichLog(markup=False, highlight=False, id="log-ahora")
         yield Footer()
 
     def on_mount(self) -> None:
-        self._fill_project()
-        self._fill_semana()
-        self._fill_activity()
-        self.set_interval(0.25, self._animate_spark)
-
-    def _animate_spark(self) -> None:
-        import math
-        self._spark_phase += 0.15
-        p = self._spark_phase
-        data = [
-            abs(math.sin(p + i * 0.35)) * 3 + abs(math.sin(p * 1.3 + i * 0.6))
-            for i in range(50)
-        ]
-        try:
-            self.query_one("#spark", Sparkline).data = data
-        except Exception:
-            pass
+        self._fill_velocidad()
+        self._fill_calidad()
+        self._fill_ahora()
 
     # ── Tab loaders ───────────────────────────────────────────────────────────
 
-    def _fill_project(self) -> None:
-        from pathlib import Path as _P
-        from sqlmodel import Session, select as sql_select
-        from aicli.db import engine
-        from aicli.db.models import Project, Module
-
-        log = self.query_one("#log-project", RichLog)
-        log.clear()
-        log.write(Text(self._project_name, style="bold #F1F3F9"))
-
-        with Session(engine) as session:
-            project = session.exec(
-                sql_select(Project).where(Project.path == self._project_path)
-            ).first()
-            if project:
-                modules = list(
-                    session.exec(sql_select(Module).where(Module.project_id == project.id)).all()
-                )
-                folder_set = {
-                    (_P(m.file_path).parts[0] if len(_P(m.file_path).parts) > 1 else "[root]")
-                    for m in modules
-                }
-                log.write(Text.assemble(
-                    (f"{len(modules)} módulos", _SEC),
-                    ("  ·  ", _MID),
-                    (f"{len(folder_set)} carpetas", _SEC),
-                ))
-                if project.stack:
-                    log.write(Text(f"stack: {project.stack}", style=_MUTED))
-            else:
-                log.write(Text("Sin módulos documentados", style=_SEC))
-
-    def _fill_semana(self) -> None:
+    def _fill_velocidad(self) -> None:
         import time as _t
         from sqlmodel import Session, select as sql_select, col
         from aicli.db import engine
         from aicli.db.models import Activity
 
-        log = self.query_one("#log-semana", RichLog)
+        log = self.query_one("#log-velocidad", RichLog)
         log.clear()
 
         with Session(engine) as session:
@@ -1382,48 +1336,174 @@ class MainScreen(Screen):
                 durations.append((ns.timestamp - te.timestamp) / 60)
 
         if durations:
-            avg = sum(durations) / len(durations)
-            avg_s = f"{avg / 60:.1f}h" if avg >= 60 else f"{int(avg)}min"
-            log.write(Text.assemble(
-                (f"{len(durations)} casos resueltos", _SEC),
-                ("  ·  ", _MID),
-                (avg_s, _ACCENT),
-                (" promedio", _MUTED),
-            ))
-            if len(durations) > 1:
-                best  = f"{int(min(durations))}min" if min(durations) < 60 else f"{min(durations)/60:.1f}h"
-                worst = f"{int(max(durations))}min" if max(durations) < 60 else f"{max(durations)/60:.1f}h"
-                log.write(Text(f"mejor {best}  ·  más largo {worst}", style=_SECTION))
+            avg   = sum(durations) / len(durations)
+            best  = min(durations)
+            worst = max(durations)
+
+            def _fmt(m: float) -> str:
+                return f"{m / 60:.1f}h" if m >= 60 else f"{int(m)}min"
+
+            log.write(Text.assemble(("Tiempo promedio / caso   ", _MUTED), (_fmt(avg),   _ACCENT)))
+            log.write(Text.assemble(("Mejor caso esta semana   ", _MUTED), (_fmt(best),  _OK)))
+            log.write(Text.assemble(("Caso más largo           ", _MUTED), (_fmt(worst), _ERROR)))
+            log.write(Text(" "))
+
+            fast   = sum(1 for d in durations if d < 30)
+            normal = sum(1 for d in durations if 30 <= d <= 120)
+            slow   = sum(1 for d in durations if d > 120)
+            total  = len(durations)
+            MAX_B  = 8
+
+            def _bar(n: int) -> str:
+                filled = round(n / total * MAX_B) if total else 0
+                return "█" * filled + "░" * (MAX_B - filled)
+
+            log.write(Text(f"Distribución  {total} casos", style=f"bold {_SEC}"))
+            log.write(Text.assemble(("  Rápido  < 30min  ", _MUTED), (_bar(fast),   _OK),    (f"  {fast}", _SEC)))
+            log.write(Text.assemble(("  Normal  30–120m  ", _MUTED), (_bar(normal), _ACCENT), (f"  {normal}", _SEC)))
+            log.write(Text.assemble(("  Largo   > 2h     ", _MUTED), (_bar(slow),   _ERROR),  (f"  {slow}", _SEC)))
         else:
             log.write(Text("Sin datos — usá ctx task + ctx sync", style=_SEC))
 
         self.query_one("#spark", Sparkline).data = daily
 
-    def _fill_activity(self) -> None:
-        import time as _t
-        from sqlmodel import Session, select as sql_select, col
-        from aicli.db import engine
-        from aicli.db.models import Activity
+    def _fill_calidad(self) -> None:
+        import json
+        from pathlib import Path as _P
+        from collections import Counter
 
-        log = self.query_one("#log-activity", RichLog)
+        log = self.query_one("#log-calidad", RichLog)
         log.clear()
 
-        with Session(engine) as session:
-            recent = list(session.exec(
-                sql_select(Activity).order_by(col(Activity.timestamp).desc()).limit(8)
-            ).all())
+        tickets_path = _P.home() / ".mycontext" / "tickets.json"
+        if not tickets_path.exists():
+            log.write(Text("Sin historial — usá ctx sync para registrar casos", style=_SEC))
+            return
 
-        if recent:
-            for act in recent:
-                rel  = self._rel(act.timestamp)
-                desc_part = f"  {act.description[:28]}" if act.description else ""
-                log.write(Text.assemble(
-                    (f"ctx {act.command:<9}", _ACCENT),
-                    (desc_part, _SEC),
-                    (f"  {rel}", _MUTED),
-                ))
+        try:
+            raw: dict = json.loads(tickets_path.read_text(encoding="utf-8"))
+        except Exception:
+            log.write(Text("Error leyendo historial de tickets", style=_MUTED))
+            return
+
+        if not raw:
+            log.write(Text("Sin historial — usá ctx sync para registrar casos", style=_SEC))
+            return
+
+        total        = len(raw)
+        reabiertos   = sum(1 for d in raw.values() if len(d["rondas"]) > 1)
+        total_rondas = sum(len(d["rondas"]) for d in raw.values())
+        avg_rondas   = total_rondas / total if total else 0
+        reopen_pct   = reabiertos / total * 100 if total else 0
+
+        rate_color = _OK if reopen_pct < 15 else (_WARN if reopen_pct < 30 else _ERROR)
+        warn_sym   = " ⚠" if reopen_pct >= 15 else ""
+
+        log.write(Text.assemble(("Tickets resueltos    ", _MUTED), (str(total), _SEC)))
+        log.write(Text.assemble(("Reabiertos por QA    ", _MUTED), (f"{reabiertos}  ({reopen_pct:.0f}%){warn_sym}", rate_color)))
+        log.write(Text.assemble(("Promedio rondas      ", _MUTED), (f"{avg_rondas:.1f}", _SEC)))
+        log.write(Text(" "))
+
+        file_counts: Counter = Counter()
+        for data in raw.values():
+            if len(data["rondas"]) > 1:
+                for ronda in data["rondas"][1:]:
+                    for f in ronda.get("archivos_tocados", []):
+                        file_counts[f] += 1
+
+        if file_counts:
+            log.write(Text("Archivos más reabiertos", style=f"bold {_SEC}"))
+            for fpath, cnt in file_counts.most_common(3):
+                short = (fpath.split("/")[-1] if "/" in fpath else fpath)[:26]
+                log.write(Text.assemble(("  ", ""), (f"{short:<26}", _SEC), (f" ×{cnt}", _WARN)))
+            log.write(Text(" "))
+
+        motivos = [
+            r["motivo_reapertura"]
+            for d in raw.values()
+            for r in d["rondas"]
+            if r.get("motivo_reapertura")
+        ]
+        if motivos:
+            log.write(Text("Motivos frecuentes", style=f"bold {_SEC}"))
+            seen: list[str] = []
+            for m in reversed(motivos):
+                s = m[:42]
+                if s not in seen:
+                    seen.append(s)
+                if len(seen) >= 3:
+                    break
+            for m in seen:
+                log.write(Text(f"  · {m}", style=_MUTED))
+
+    def _fill_ahora(self) -> None:
+        from sqlmodel import Session, select as sql_select, col
+        from aicli.db import engine
+        from aicli.db.models import Activity, Project, Module
+        from aicli.services.tickets import read_active_ticket, load_tickets
+
+        log = self.query_one("#log-ahora", RichLog)
+        log.clear()
+
+        # ── Proyecto ───────────────────────────────────────────────────────────
+        with Session(engine) as session:
+            project = session.exec(
+                sql_select(Project).where(Project.path == self._project_path)
+            ).first()
+            mod_count = 0
+            stack = "?"
+            if project:
+                mod_count = len(list(session.exec(
+                    sql_select(Module).where(Module.project_id == project.id)
+                ).all()))
+                stack = project.stack or "?"
+
+        log.write(Text.assemble(
+            (f"{self._project_name:<22}", "bold #F1F3F9"),
+            (stack, _SECTION),
+            ("  ·  ", _MUTED),
+            (f"{mod_count} módulos", _MUTED),
+        ))
+        log.write(Text(" "))
+
+        # ── Ticket activo ──────────────────────────────────────────────────────
+        active = read_active_ticket()
+        if active:
+            tid      = active.get("ticket_id", "")
+            motivo   = active.get("motivo_reapertura", "")
+            tickets  = load_tickets()
+            n_rondas = len(tickets.get(tid, {}).get("rondas", [])) + 1
+            desc     = tickets.get(tid, {}).get("descripcion", "")
+            log.write(Text.assemble(
+                ("◆ ", _ACCENT),
+                (tid, f"bold {_ACCENT}"),
+                ("  ", ""),
+                (desc[:30] if desc else "", _SEC),
+            ))
+            log.write(Text.assemble(
+                ("  Ronda ", _MUTED), (str(n_rondas), _SEC),
+                ("  ·  ", _MUTED),   ((motivo[:30] if motivo else ""), _MUTED),
+            ))
         else:
-            log.write(Text("Sin actividad registrada", style=_SEC))
+            log.write(Text("Sin ticket activo", style=_MUTED))
+
+        log.write(Text(" "))
+
+        # ── Último sync ────────────────────────────────────────────────────────
+        with Session(engine) as session:
+            last_sync = session.exec(
+                sql_select(Activity)
+                .where(Activity.command == "sync")
+                .order_by(col(Activity.timestamp).desc())
+            ).first()
+
+        if last_sync:
+            log.write(Text.assemble(
+                ("Último sync  ", _MUTED),
+                (self._rel(last_sync.timestamp), _SEC),
+            ))
+        else:
+            log.write(Text("Sin syncs registrados", style=_MUTED))
 
     def _rel(self, ts: float) -> str:
         import time as _t

@@ -996,3 +996,89 @@ sigue siendo una feature válida para CLI scripted, no para el flujo interactivo
 **Alternativas descartadas:**
 - Mantener Footer con CSS override: la key badge de Textual Footer tiene su propio renderizado
   interno que no respeta colores de tema sin hacks de CSS complejos.
+
+---
+
+## DEC-056 — Estrategia de ramas: personal + main + feature/
+
+**Decisión:** El repositorio opera con tres tipos de ramas con roles distintos:
+- `personal` — rama congelada con el estado estable actual. Es el daily driver del desarrollador.
+  Nunca recibe merges automáticos desde `main`. Solo cambios manuales via cherry-pick cuando
+  algo de `main` está terminado y probado.
+- `main` — rama open source. Recibe todo el trabajo nuevo a través de feature branches.
+  Puede tener código experimental o incompleto. No se usa como herramienta de trabajo diario.
+- `feature/<nombre>` — ramas temporales de trabajo. Nacen desde `main`, mueren al mergear a `main`.
+
+**Regla del cherry-pick:** Cuando una mejora de `main` vale la pena en `personal`, se porta con
+`git cherry-pick <hash>` — solo ese commit, no un merge en bloque. Así `personal` nunca recibe
+código experimental involuntariamente.
+
+**Por qué:** MAGNA tiene dos usuarios simultáneos: el desarrollador que lo usa en producción diaria
+y el proyecto open source que está en construcción activa. Mezclar ambos en la misma rama garantiza
+que tarde o temprano un experimento rompe el flujo de trabajo. Las ramas separadas dan velocidad
+al open source sin arriesgar la herramienta de trabajo.
+
+**Alternativas descartadas:**
+- Una sola rama `main`: el código experimental bloquea el uso diario.
+- Tags para marcar versiones estables: más complejo de operar, requiere disciplina de versioning
+  que no aporta valor en esta etapa.
+
+---
+
+## DEC-057 — Transición a open source: arquitectura multi-stack dinámica
+
+**Decisión:** La transición de MAGNA a open source se hace en tres fases. El objetivo es soportar
+cualquier stack sin perder la precisión que lo hace útil. La precisión se logra con dos capas
+de conocimiento separadas:
+
+**Capa 1 — Stack profile (MAGNA lo infiere automáticamente):**
+Configuración técnica por lenguaje: encoding, extensiones, patrones a buscar, ignore extras.
+Se implementa como `StackProfile` dataclass en `aicli/services/`.
+Perfiles built-in: `php_vanilla`, `laravel`, `nextjs`, `python`, `generic`.
+El perfil PHP actual del proyecto de empresa se convierte en `php_vanilla` sin cambios.
+
+**Capa 2 — Company profile (Claude lo genera con el código real):**
+Convenciones específicas de la empresa: `$querys[]`, arquitectura multi-tenant, patrones de carpetas,
+acuerdos del equipo. Se genera en `ctx init` leyendo muestras del código real y se guarda en
+`role.md` y `PROYECTO.md`. Esta capa es lo que hace a MAGNA preciso para cada empresa
+independientemente del stack.
+
+**Separación conceptual clave:** Capa 1 es lo que hace a MAGNA genérico. Capa 2 es lo que lo
+hace preciso. El estado actual de MAGNA tiene ambas capas pero la Capa 1 está hardcodeada para PHP.
+El trabajo open source es separar las dos capas sin tocar la Capa 2 (que ya funciona bien).
+
+**Fases de implementación:**
+
+*OS-1 — Stack profiles como config explícita:*
+`StackProfile` dataclass con `encoding`, `hints`, `role_template`, `ignore_extras`.
+`ctx init` detecta el stack y selecciona el perfil. El usuario puede override con `--stack`.
+La lógica de detección existente (`detectar_stack()`) alimenta la selección de perfil.
+
+*OS-2 — `ctx init` genera role.md con el código real (DEC-036 Fase 3):*
+En lugar de `_ROL_DEFAULT` hardcodeado, Claude lee una muestra del código y genera un `role.md`
+específico para esa empresa. Para PHP vanilla: descubre `$querys[]`, multi-tenant, EasyUI.
+Para Laravel: descubre Eloquent, controladores, blade. Para Next.js: hooks, API routes, estado.
+Este `role.md` generado reemplaza al template estático solo en `main` — `personal` mantiene
+el `role.md` manual actual que ya está afinado.
+
+*OS-3 — `ctx profile` comando visible:*
+Muestra al usuario qué perfil detectó MAGNA y permite editar `role.md` desde la TUI.
+La transparencia que necesita una herramienta open source para que la comunidad confíe en ella.
+
+**Por qué esta arquitectura:** La tentación open source es generalizar tanto que la herramienta
+funciona para todos pero no es realmente buena para nadie. La Capa 2 (company profile generado
+con IA desde el código real) es la defensa contra eso: sin importar el stack, MAGNA aprende
+las convenciones específicas de esa empresa y las inyecta en cada sesión de Claude.
+
+**Timing:**
+- Ahora → crear rama `personal`, documentar, continuar usando MAGNA sin cambios.
+- Próxima sesión de open source → OS-1: `StackProfile` dataclass + perfiles built-in.
+- Cuando OS-1 esté estable → OS-2: role.md generado con IA.
+- Cuando haya 3+ usuarios externos → OS-3: `ctx profile` comando.
+
+**Alternativas descartadas:**
+- CLAUDE.md por proyecto en el repo del cliente: contamina repos externos.
+- Config YAML editable manualmente: el usuario promedio no quiere configurar nada; MAGNA
+  debe funcionar bien desde el primer `ctx init` sin configuración.
+- Soportar todos los stacks desde el inicio: sin usuarios reales de otros stacks, no se puede
+  validar si los perfiles funcionan. PHP vanilla primero, luego iterar con feedback real.

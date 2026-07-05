@@ -153,12 +153,16 @@ def test_tui_imports():
     logo = _gradient_logo()
     assert isinstance(logo, Text)
     assert len(logo) > 0
-    # _animate_entry solo anima opacity (float) — offset no es animable en Textual 8.x
+    # ProjectScreen usa Static + reactive cursor (sin ListView)
     import inspect
-    src = inspect.getsource(ProjectScreen._animate_entry)
-    assert "animate" in src, "_animate_entry debe usar animate()"
-    assert "opacity" in src, "_animate_entry debe animar opacity"
-    assert 'animate("offset"' not in src, "offset no es animable en Textual 8.x — usa solo opacity"
+    src_animate = inspect.getsource(ProjectScreen._animate_entry)
+    assert "animate" in src_animate, "_animate_entry debe usar animate()"
+    assert "opacity" in src_animate, "_animate_entry debe animar opacity"
+    assert 'animate("offset"' not in src_animate, "offset no es animable en Textual 8.x"
+    src_screen = inspect.getsource(ProjectScreen)
+    assert "ListView" not in src_screen, "ProjectScreen no debe usar ListView — usa Static + reactive"
+    assert "_cursor" in src_screen, "ProjectScreen debe tener reactive _cursor"
+    assert "_render_list" in src_screen, "ProjectScreen debe tener _render_list()"
 
 check("tui: app.py — imports y constantes de paleta", test_tui_imports)
 
