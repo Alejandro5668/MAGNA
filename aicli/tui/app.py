@@ -721,7 +721,7 @@ class StatusScreen(Screen):
         self._project_path = project_path
 
     def compose(self) -> ComposeResult:
-        yield Static(_LOGO, markup=False, id="st-logo")
+        yield Static(_gradient_logo(), id="st-logo")
         yield Static("ARCHITECTURE", id="st-title")
         yield Static(self._project_name, id="st-proj")
         yield Rule(line_style="heavy")
@@ -729,8 +729,7 @@ class StatusScreen(Screen):
             yield DataTable(id="st-table", show_cursor=True, cursor_type="row")
             yield Static("", id="st-summary")
         yield Static(
-            f"[{_MUTED}]──[/{_MUTED}]  [bold {_ACCENT}]esc[/bold {_ACCENT}]"
-            f"  [{_SEC}]volver[/{_SEC}]",
+            f"  [bold {_ACCENT}]esc[/bold {_ACCENT}] [{_SEC}]·[/{_SEC}] [{_SEC}]volver al dashboard[/{_SEC}]",
             id="st-foot", markup=True,
         )
 
