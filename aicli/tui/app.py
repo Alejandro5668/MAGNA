@@ -675,11 +675,15 @@ class StatusScreen(Screen):
         height: 1;
         margin-bottom: 1;
     }}
+    #st-body {{
+        height: 1fr;
+        overflow-y: auto;
+    }}
     #st-table {{
         background: transparent;
         border: none;
         padding: 0 4;
-        height: 1fr;
+        height: auto;
         color: {_SEC};
     }}
     #st-table .datatable--header {{
@@ -720,8 +724,9 @@ class StatusScreen(Screen):
         yield Static("ARCHITECTURE", id="st-title")
         yield Static(self._project_name, id="st-proj")
         yield Rule(line_style="heavy")
-        yield DataTable(id="st-table", show_cursor=True)
-        yield Static("", id="st-summary")
+        with Container(id="st-body"):
+            yield DataTable(id="st-table", show_cursor=True, cursor_type="row")
+            yield Static("", id="st-summary")
         yield Static(
             f"[{_MUTED}]──[/{_MUTED}]  [bold {_ACCENT}]esc[/bold {_ACCENT}]"
             f"  [{_SEC}]volver[/{_SEC}]",
@@ -729,6 +734,10 @@ class StatusScreen(Screen):
         )
 
     def on_mount(self) -> None:
+        # Aplicar colores de la paleta MAGNA directamente — más confiable
+        # que CSS cuando el DataTable component CSS tiene mayor especificidad
+        table = self.query_one("#st-table", DataTable)
+        table.styles.color = _SEC
         self._load()
 
     def _load(self) -> None:
