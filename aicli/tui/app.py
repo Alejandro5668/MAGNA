@@ -646,7 +646,7 @@ class CommandScreen(ModalScreen[None]):
 
 # ─── Status Screen ────────────────────────────────────────────────────────────
 
-class StatusScreen(Screen):
+class StatusScreen(ModalScreen):
 
     BINDINGS = [
         Binding("escape", "go_back", "Back"),
