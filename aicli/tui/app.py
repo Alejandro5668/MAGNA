@@ -655,7 +655,7 @@ class StatusScreen(Screen):
 
     DEFAULT_CSS = f"""
     StatusScreen {{
-        background: transparent;
+        background: #000000;
     }}
     #st-logo {{
         color: {_ACCENT};
