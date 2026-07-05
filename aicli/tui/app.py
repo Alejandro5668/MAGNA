@@ -675,41 +675,38 @@ class StatusScreen(Screen):
         height: 1;
         margin-bottom: 1;
     }}
-    DataTable {{
+    #st-table {{
         background: transparent;
         border: none;
         padding: 0 4;
-        height: auto;
+        height: 1fr;
+        color: {_SEC};
     }}
-    DataTable > .datatable--header {{
+    #st-table .datatable--header {{
         background: transparent;
         color: {_MUTED};
         text-style: bold;
     }}
-    DataTable > .datatable--cursor {{
+    #st-table .datatable--cursor {{
         background: {_SELECT};
         color: {_ACCENT};
+        text-style: bold;
     }}
     #st-summary {{
-        color: {_SEC};
-        padding: 1 4 0 4;
+        color: {_MUTED};
+        padding: 0 4 0 4;
         height: 1;
+    }}
+    #st-foot {{
+        color: {_MUTED};
+        text-align: right;
+        padding: 0 2 1 2;
+        height: 2;
+        border-top: solid {_BORDER};
     }}
     Rule {{
         color: {_BORDER};
         margin: 0;
-    }}
-    Footer {{
-        background: transparent;
-        border-top: solid {_BORDER};
-    }}
-    Footer > .footer--key {{
-        color: {_ACCENT};
-        background: transparent;
-        text-style: bold;
-    }}
-    Footer > .footer--description {{
-        color: {_MUTED};
     }}
     """
 
@@ -725,7 +722,11 @@ class StatusScreen(Screen):
         yield Rule(line_style="heavy")
         yield DataTable(id="st-table", show_cursor=True)
         yield Static("", id="st-summary")
-        yield Footer()
+        yield Static(
+            f"[{_MUTED}]──[/{_MUTED}]  [bold {_ACCENT}]esc[/bold {_ACCENT}]"
+            f"  [{_SEC}]volver[/{_SEC}]",
+            id="st-foot", markup=True,
+        )
 
     def on_mount(self) -> None:
         self._load()
