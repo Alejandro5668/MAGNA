@@ -118,16 +118,6 @@ def test_cmd_claude():
 check("cmd: claude — importa correctamente", test_cmd_claude)
 
 
-def test_cmd_revision():
-    from aicli.commands.revision import revision, _parse_review, _extract_files
-    assert callable(revision)
-    pr, tid, criticals = _parse_review("PR #42 [PROJ-123]\n🔴 Críticos\n- fix this")
-    assert pr == "42"
-    assert tid == "PROJ-123"
-
-check("cmd: revision — importa y parsea review", test_cmd_revision)
-
-
 def test_cmd_proyecto():
     from aicli.commands.proyecto import proyecto
     assert callable(proyecto)
@@ -249,7 +239,7 @@ def test_cli_help():
     result = runner.invoke(m.app, ["--help"])
     assert result.exit_code == 0
     output = result.output
-    for cmd in ("init", "archive", "task", "sync", "status", "claude", "scan", "revision", "file"):
+    for cmd in ("init", "archive", "task", "sync", "status", "claude", "scan", "file"):
         assert cmd in output, f"comando '{cmd}' no aparece en --help"
 
 check("cli: ctx --help muestra todos los comandos registrados", test_cli_help)

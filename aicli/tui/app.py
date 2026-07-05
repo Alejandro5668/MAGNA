@@ -65,16 +65,15 @@ _MENU = [
         ("3", "task",     "Claude task context"),
         ("4", "sync",     "Sync docs post-task"),
         ("5", "resume",   "Resume ticket"),
-        ("6", "revision", "Resolve PR criticals"),
     ]),
     ("EXPLORE", [
-        ("7", "claude",   "Claude full context"),
-        ("8", "status",   "View architecture"),
+        ("6", "claude",   "Claude full context"),
+        ("7", "status",   "View architecture"),
     ]),
 ]
 
 _HELP_ROWS = [
-    ("1 – 8",    "Ejecutar comando directamente"),
+    ("1 – 7",    "Ejecutar comando directamente"),
     ("j / ↓",    "Bajar en menú"),
     ("k / ↑",    "Subir en menú"),
     ("g",        "Saltar al primer ítem"),
@@ -298,11 +297,6 @@ def _dispatch_tui(command: str, inputs: dict, tui_console) -> None:
 
     elif command == "resume":
         _run_resume_tui(tui_console)
-
-    elif command == "revision":
-        import aicli.commands.revision as mod
-        with _inject(mod, tui_console):
-            mod.revision()
 
     elif command == "claude":
         import aicli.commands.claude_cmd as mod
@@ -1072,9 +1066,8 @@ class MainScreen(Screen):
         Binding("3", "cmd('task')",      show=False),
         Binding("4", "cmd('sync')",      show=False),
         Binding("5", "cmd('resume')",    show=False),
-        Binding("6", "cmd('revision')",  show=False),
-        Binding("7", "cmd('claude')",    show=False),
-        Binding("8", "cmd('status')",    show=False),
+        Binding("6", "cmd('claude')",    show=False),
+        Binding("7", "cmd('status')",    show=False),
         Binding("g", "jump_top",         show=False),
         Binding("G", "jump_bottom",      show=False),
         Binding("h", "collapse_section", show=False),
