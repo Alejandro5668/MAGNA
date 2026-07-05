@@ -302,6 +302,34 @@ def test_output_screen_integration():
 check("tui: CommandOutputScreen + TuiConsole integrados en _worker_cmd", test_output_screen_integration)
 
 
+def test_no_active_app_context_bug():
+    """
+    request_input/confirm no deben usar asyncio.run_coroutine_threadsafe directamente.
+    Ese método copia el contexto del thread (sin _active_app) y causa NoActiveAppError
+    al componer modales. El fix es _run_on_loop con call_soon_threadsafe(context=_ctx).
+    """
+    import inspect
+    from aicli.tui.output_screen import CommandOutputScreen
+    from aicli.tui import app as tui_app
+
+    src_screen = inspect.getsource(CommandOutputScreen)
+    # _run_on_loop debe existir y usar call_soon_threadsafe con context
+    assert "_run_on_loop" in src_screen, "CommandOutputScreen debe tener _run_on_loop"
+    assert "call_soon_threadsafe" in src_screen, "_run_on_loop debe usar call_soon_threadsafe"
+    assert "context=self._ctx" in src_screen, "_run_on_loop debe pasar context=self._ctx"
+    # request_input y request_confirm no deben llamar run_coroutine_threadsafe directamente
+    src_input   = inspect.getsource(CommandOutputScreen.request_input)
+    src_confirm = inspect.getsource(CommandOutputScreen.request_confirm)
+    assert "run_coroutine_threadsafe" not in src_input,   "request_input no debe usar run_coroutine_threadsafe"
+    assert "run_coroutine_threadsafe" not in src_confirm, "request_confirm no debe usar run_coroutine_threadsafe"
+    # _worker_cmd debe capturar el contexto antes del thread
+    src_worker = inspect.getsource(tui_app.MainScreen._worker_cmd)
+    assert "copy_context" in src_worker, "_worker_cmd debe capturar contextvars.copy_context() antes del thread"
+    assert "_ctx" in src_worker, "_worker_cmd debe asignar _ctx al out_screen"
+
+check("tui: contexto Textual propagado correctamente a modales desde thread", test_no_active_app_context_bug)
+
+
 # ─── Resultados ───────────────────────────────────────────────────────────────
 
 print()

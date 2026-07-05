@@ -73,6 +73,7 @@ class CommandOutputScreen(ModalScreen[None]):
         self._command = command
         self._description = description
         self._loop: asyncio.AbstractEventLoop | None = None
+        self._ctx = None  # contextvars.Context capturado en el event loop antes del thread
 
     def compose(self) -> ComposeResult:
         with Container(id="co-frame"):
@@ -117,10 +118,33 @@ class CommandOutputScreen(ModalScreen[None]):
         if self._loop is None:
             fn()
             return
-        future = asyncio.run_coroutine_threadsafe(
-            self._run_in_suspend(fn), self._loop
-        )
-        future.result()
+        self._run_on_loop(self._run_in_suspend(fn))
+
+    # ── Context-aware scheduler ───────────────────────────────────────────────
+
+    def _run_on_loop(self, coro):
+        """Schedule coro on the event loop in the app's ContextVar context and block.
+
+        run_coroutine_threadsafe copies the CALLING THREAD's context, which lacks
+        Textual's _active_app ContextVar. Passing _ctx explicitly fixes NoActiveAppError
+        when push_screen_wait composes a new modal screen.
+        """
+        import concurrent.futures
+        fut = concurrent.futures.Future()
+
+        def _run():
+            task = asyncio.ensure_future(coro)
+            def _on_done(t: asyncio.Task):
+                if t.cancelled():
+                    fut.cancel()
+                elif t.exception():
+                    fut.set_exception(t.exception())
+                else:
+                    fut.set_result(t.result())
+            task.add_done_callback(_on_done)
+
+        self._loop.call_soon_threadsafe(_run, context=self._ctx)
+        return fut.result()
 
     # ── Input bridge ──────────────────────────────────────────────────────────
 
@@ -132,9 +156,7 @@ class CommandOutputScreen(ModalScreen[None]):
         """Block caller thread until user responds to an InputModal."""
         if self._loop is None:
             return input(f"  {prompt}: ").strip() or None
-        return asyncio.run_coroutine_threadsafe(
-            self._push_input(prompt, placeholder), self._loop
-        ).result()
+        return self._run_on_loop(self._push_input(prompt, placeholder))
 
     async def _push_confirm(self, prompt: str, default: bool) -> bool:
         from aicli.tui.app import ConfirmModal
@@ -145,9 +167,7 @@ class CommandOutputScreen(ModalScreen[None]):
         if self._loop is None:
             resp = input(f"  {prompt} [{'Y/n' if default else 'y/N'}]: ").strip().lower()
             return resp not in ("n", "no") if default else resp in ("y", "si", "sí", "yes")
-        return asyncio.run_coroutine_threadsafe(
-            self._push_confirm(prompt, default), self._loop
-        ).result()
+        return self._run_on_loop(self._push_confirm(prompt, default))
 
     def action_go_back(self) -> None:
         self.dismiss(None)

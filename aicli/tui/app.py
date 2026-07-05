@@ -93,15 +93,14 @@ _HELP_ROWS = [
 def _ask_image_tui(console) -> str | None:
     """Igual que _gather_image_async pero síncrono para llamadas desde thread."""
     use_cb = console.request_confirm("¿Tenés una captura en el portapapeles?", default=False)
-    if use_cb:
-        captured = _capture_clipboard()
-        if captured:
-            console.print(f"[bold {_OK}]OK[/bold {_OK}] [{_SEC}]Guardada: {captured}[/{_SEC}]")
-            return captured
-        console.print(f"[{_WARN}]Sin imagen en el portapapeles.[/{_WARN}]")
+    if not use_cb:
         return None
-    manual = console.request_input("Ruta de imagen (Enter para omitir)")
-    return manual or None
+    captured = _capture_clipboard()
+    if captured:
+        console.print(f"[bold {_OK}]OK[/bold {_OK}] [{_SEC}]Guardada: {captured}[/{_SEC}]")
+        return captured
+    console.print(f"[{_WARN}]Sin imagen en el portapapeles.[/{_WARN}]")
+    return None
 
 
 def _cmd_desc(command: str) -> str:
@@ -175,16 +174,14 @@ def _ask_image() -> str | None:
         style=style,
     ).ask()
 
-    if use_cb:
-        captured = _capture_clipboard()
-        if captured:
-            console.print(f"  [bold {_OK}]OK[/bold {_OK}] [{_SEC}]Guardada: {captured}[/{_SEC}]")
-            return captured
-        console.print(f"  [{_WARN}]Sin imagen en el portapapeles.[/{_WARN}]")
+    if not use_cb:
         return None
-
-    manual = questionary.text("  Ruta de imagen (Enter para omitir)", style=style).ask()
-    return manual.strip() if manual and manual.strip() else None
+    captured = _capture_clipboard()
+    if captured:
+        console.print(f"  [bold {_OK}]OK[/bold {_OK}] [{_SEC}]Guardada: {captured}[/{_SEC}]")
+        return captured
+    console.print(f"  [{_WARN}]Sin imagen en el portapapeles.[/{_WARN}]")
+    return None
 
 
 def _run_resume() -> None:
@@ -1497,15 +1494,22 @@ class MainScreen(Screen):
             fp = await self.app.push_screen_wait(
                 InputModal("File path  (Enter to skip)", "pagos/PagosController.php")
             )
+            use_img = await self.app.push_screen_wait(
+                ConfirmModal("¿Tenés una captura en el portapapeles?", default=False)
+            )
+            image = _capture_clipboard() if use_img else None
             inputs["desc"] = desc
             inputs["fp"] = fp or None
+            inputs["image"] = image or None
 
         # ── Pantalla de transición ─────────────────────────────────────────────
         await self.app.push_screen_wait(CommandScreen(command, _cmd_desc(command)))
 
         # ── CommandOutputScreen — TUI sigue activa ─────────────────────────────
+        import contextvars
         out_screen = CommandOutputScreen(command, _cmd_desc(command))
         out_screen._loop = asyncio.get_running_loop()
+        out_screen._ctx  = contextvars.copy_context()  # preserva _active_app para modales en thread
         self.app.push_screen(out_screen)
 
         # Pequeño yield para que Textual monte la pantalla antes de arrancar
