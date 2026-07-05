@@ -913,6 +913,7 @@ class ProjectScreen(Screen):
     #ps-logo {{
         text-align: center;
         margin-bottom: 1;
+        opacity: 0;
     }}
     #ps-tagline {{
         color: {_SECTION};
@@ -925,15 +926,18 @@ class ProjectScreen(Screen):
         text-style: bold;
         height: 1;
         margin-top: 1;
+        opacity: 0;
     }}
     Rule {{
         color: {_BORDER};
         margin: 0 0 1 0;
+        opacity: 0;
     }}
     ListView {{
         height: auto;
         background: transparent;
         border: none;
+        opacity: 0;
     }}
     ListItem {{
         background: transparent;
@@ -952,6 +956,7 @@ class ProjectScreen(Screen):
         text-align: center;
         height: 1;
         margin-top: 2;
+        opacity: 0;
     }}
     """
 
@@ -986,6 +991,40 @@ class ProjectScreen(Screen):
                 f"[{_MUTED}]↑↓ navigate  ↵ select  n new  q quit[/{_MUTED}]",
                 id="ps-foot", markup=True,
             )
+
+    def on_mount(self) -> None:
+        self._animate_entry()
+
+    @work
+    async def _animate_entry(self) -> None:
+        import asyncio
+        logo    = self.query_one("#ps-logo")
+        tagline = self.query_one("#ps-tagline", Static)
+        hdr     = self.query_one("#ps-hdr")
+        rule    = self.query_one(Rule)
+        ps_list = self.query_one("#ps-list")
+        foot    = self.query_one("#ps-foot")
+
+        # ── 1. Logo fade in ───────────────────────────────────────────────────
+        logo.styles.animate("opacity", 1.0, duration=0.9, easing="in_out_cubic")
+
+        # ── 2. Tagline typing effect ──────────────────────────────────────────
+        await asyncio.sleep(0.55)
+        tagline.update("")
+        _FULL = "AI Context Engine"
+        for i in range(len(_FULL) + 1):
+            cursor = "▌" if i < len(_FULL) else ""
+            tagline.update(_FULL[:i] + cursor)
+            await asyncio.sleep(0.055)
+        tagline.update(_FULL)
+
+        # ── 3. Rest aparece: header + rule + lista sube + footer ─────────────
+        await asyncio.sleep(0.1)
+        ps_list.styles.offset = (0, 4)
+        for w in (hdr, rule, foot):
+            w.styles.animate("opacity", 1.0, duration=0.4, easing="in_out_cubic")
+        ps_list.styles.animate("opacity", 1.0, duration=0.4, easing="in_out_cubic")
+        ps_list.styles.animate("offset", (0, 0), duration=0.4, easing="out_cubic")
 
     def on_list_view_selected(self, event: ListView.Selected) -> None:
         name = event.item.name or ""
