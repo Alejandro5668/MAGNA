@@ -381,6 +381,9 @@ aplicar paleta Van Gogh, y redirigir el output de comandos al RichLog de Textual
 - [x] Footer `CommandOutputScreen` simplificado → `#co-done` con `esc` dorado visible
 - [x] DEC-052 a DEC-055 documentadas en `knowledge/decisions.md`
 - [x] `.gitignore` actualizado — patrones Claude Code (`.agents/`, `skills-lock.json`, etc.)
+- [x] Animaciones de entrada en `ProjectScreen`: fade-in logo, typing tagline, fade-in lista
+- [x] Fix `AnimationError`: offset → solo opacity (`textual.geometry.Offset` no es animable en Textual 8.x)
+- [x] README actualizado: questionary → Textual 8.2.8, assets borradas, arquitectura con `tui/` y `tests/`
 - [ ] Empaquetar `.exe` nuevo: `pyinstaller ctx.spec`
 - [ ] Verificar Option B end-to-end: task, sync, archive, revision en `.exe` compilado
 
@@ -421,3 +424,4 @@ aplicar paleta Van Gogh, y redirigir el output de comandos al RichLog de Textual
 | 2026-06-29 (2) | evidencias/ con portapapeles Windows, rename English identifiers (50+ en 15 archivos), DEC-049 y DEC-050 | Empaquetar .exe nuevo |
 | 2026-07-04 | TUI Textual completa (questionary eliminado), paleta Noche Estrellada Van Gogh, Option B CommandOutputScreen+TuiConsole, 23 smoke tests | Empaquetar .exe, verificar Option B en .exe compilado |
 | 2026-07-05 | Fix bleeding TUI (ModalScreen+Container 100%), gradiente logo, hatch puntillismo, Sparkline animada, magna_task_plan, DEC-052–055, .gitignore Claude Code, logo ProjectScreen con gradiente | Empaquetar .exe, verificar Option B en compilado |
+| 2026-07-05 (2) | Animaciones ProjectScreen (fade-in logo, typing tagline, fade-in lista), fix AnimationError + ScalarOffset, test anti-regresión offset, README actualizado | Empaquetar .exe, verificar Option B en compilado |

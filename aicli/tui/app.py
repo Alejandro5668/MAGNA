@@ -944,10 +944,10 @@ class ProjectScreen(Screen):
         height: 1;
         padding: 0 0;
     }}
-    ListItem.--highlight {{
+    #ps-list ListItem.--highlight {{
         background: {_SELECT};
     }}
-    ListItem.--highlight > Label {{
+    #ps-list ListItem.--highlight > Label {{
         color: {_GLOW};
         text-style: bold;
     }}
@@ -993,6 +993,9 @@ class ProjectScreen(Screen):
             )
 
     def on_mount(self) -> None:
+        for sel in ("#ps-logo", "#ps-hdr", "#ps-list", "#ps-foot"):
+            self.query_one(sel).styles.opacity = 0
+        self.query_one(Rule).styles.opacity = 0
         self._animate_entry()
 
     @work
