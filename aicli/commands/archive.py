@@ -8,6 +8,7 @@ from sqlmodel import Session, select
 from aicli.db import engine
 from aicli.db.models import Project, Module
 from aicli.services.indexer import analyze_file_deep, module_needs_update
+from aicli.tui.theme import magna_error, magna_status, ACCENT, SECTION
 
 app = typer.Typer()
 console = Console()
@@ -18,18 +19,20 @@ def archive(
     source: str = typer.Argument(..., help="Ruta del archivo (ej: pagos/PagosController.php)"),
 ):
     """Analiza y documenta un archivo individual en profundidad."""
+    from aicli.services.activity import log_activity
+    log_activity("archive", source)
     path = Path.cwd()
 
     with Session(engine) as session:
         project = session.exec(select(Project).where(Project.path == str(path))).first()
 
     if not project:
-        console.print("[bold red]Error:[/bold red] Este directorio no está registrado. Ejecutá [bold]ctx init[/bold] primero.")
+        magna_error(console, "Este directorio no está registrado. Ejecutá ctx init primero.")
         raise typer.Exit(code=1)
 
     source_file = path / source
     if not source_file.exists():
-        console.print(f"[bold red]Error:[/bold red] No se encontró [bold]{source}[/bold]")
+        magna_error(console, f"No se encontró {source}")
         raise typer.Exit(code=1)
 
     with Session(engine) as session:
@@ -39,13 +42,13 @@ def archive(
 
     if existing_module and not module_needs_update(source, path, existing_module):
         console.print(Panel(
-            f"[cyan][bold]{source}[/bold] ya está al día — sin cambios desde la última documentación.[/cyan]",
+            f"[{ACCENT}][bold]{source}[/bold] ya está al día — sin cambios desde la última documentación.[/{ACCENT}]",
             title="Sin cambios",
-            border_style="yellow"
+            border_style=ACCENT,
         ))
         return
 
-    with console.status(f"[bold cyan]Analizando {source}...[/bold cyan]", spinner="dots3", spinner_style="cyan"):
+    with magna_status(console, f"Analizando {source}..."):
         content_md, tokens = analyze_file_deep(path, source, project.name, project.stack or "desconocido")
 
     base = Path.home() / ".mycontext" / "projects" / str(project.id)
@@ -80,10 +83,10 @@ def archive(
 
     console.print(Panel(
         Group(
-            f"[bold cyan]✔ {source}[/bold cyan]",
-            f"[bold dim]Doc: {md_file}[/bold dim]",
-            f"[bold dim]Tokens: {tokens:,}[/bold dim]",
+            f"[bold #4ADE80]✔ {source}[/bold #4ADE80]",
+            f"[{SECTION}]Doc: {md_file}[/{SECTION}]",
+            f"[{SECTION}]Tokens: {tokens:,}[/{SECTION}]",
         ),
         title=title,
-        border_style="green"
+        border_style="#4ADE80",
     ))

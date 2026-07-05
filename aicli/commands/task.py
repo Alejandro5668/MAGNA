@@ -4,7 +4,6 @@ import os
 import anthropic
 from typing import Annotated, Optional
 from rich.console import Console
-from rich.panel import Panel
 from pathlib import Path
 from sqlmodel import Session, select
 from aicli.db import engine
@@ -12,6 +11,7 @@ from aicli.db.models import Project, Module
 from aicli.services.builder import build_context
 from aicli.services.caller import launch_claude
 from aicli.services.indexer import describe_image
+from aicli.tui.theme import magna_status, magna_ok, magna_warn, magna_error, magna_info, magna_panel, magna_task_plan, ACCENT, SECTION
 
 app = typer.Typer()
 console = Console()
@@ -99,27 +99,31 @@ def _execute_task(
     file: str | None = None,
     image: str | None = None,
     ticket_history: str | None = None,
+    suspend_fn=None,
 ) -> None:
     path = Path.cwd()
+
+    from aicli.services.activity import log_activity
+    log_activity("task", task_desc[:60] if task_desc else None)
 
     with Session(engine) as session:
         project = session.exec(select(Project).where(Project.path == str(path))).first()
 
     if not project:
-        console.print("[bold red]Error:[/bold red] Este directorio no está registrado. Ejecutá [bold]ctx init[/bold] primero.")
+        magna_error(console, "Este directorio no está registrado. Ejecutá ctx init primero.")
         return
 
     with Session(engine) as session:
         modules = list(session.exec(select(Module).where(Module.project_id == project.id)).all())
 
     if not modules:
-        console.print("[bold yellow]Aviso:[/bold yellow] No hay módulos documentados. Ejecutá [bold]ctx init[/bold] primero.")
+        magna_warn(console, "No hay módulos documentados. Ejecutá ctx init primero.")
         return
 
     if file:
-        console.print(f"[bold cyan]Archivo:[/bold cyan] [dim]{file}[/dim]")
+        magna_info(console, f"Archivo: {file}")
 
-    with console.status("Analizando tarea...", spinner="dots3", spinner_style="cyan"):
+    with magna_status(console, "Analizando tarea..."):
         relevant = _detect_relevant_modules(task_desc, modules, file)
 
     if not relevant:
@@ -130,28 +134,29 @@ def _execute_task(
         if file_module and file_module not in relevant:
             relevant = [file_module] + relevant
 
-    with console.status("Generando plan de implementación...", spinner="dots3", spinner_style="cyan"):
+    with magna_status(console, "Generando plan de implementación..."):
         brief = _generate_task_brief(task_desc, relevant, file)
 
-    names = ", ".join(m.name for m in relevant)
-    console.print(f"[bold cyan]Módulos seleccionados:[/bold cyan] [dim]{names}[/dim]")
-    console.print(Panel(brief, title="Plan de implementación", border_style="cyan"))
+    magna_task_plan(console, relevant, brief)
 
     image_description = None
     if image:
         image_path = Path(image)
         if not image_path.exists():
-            console.print(f"[bold yellow]⚠[/bold yellow] [dim]Imagen no encontrada: {image} — se omite[/dim]")
+            magna_warn(console, f"Imagen no encontrada: {image} — se omite")
         else:
-            with console.status("Analizando imagen...", spinner="dots3", spinner_style="cyan"):
+            with magna_status(console, "Analizando imagen..."):
                 try:
                     image_description, tokens_img = describe_image(image)
-                    console.print(f"  [bold green]✔[/bold green] [dim]Imagen analizada · {tokens_img:,} tokens[/dim]")
+                    magna_ok(console, f"Imagen analizada · {tokens_img:,} tokens")
                 except Exception as e:
-                    console.print(f"[bold yellow]⚠[/bold yellow] [dim]No se pudo analizar la imagen: {e}[/dim]")
+                    magna_warn(console, f"No se pudo analizar la imagen: {e}")
 
     context = build_context(relevant)
-    launch_claude(context, task_desc, brief, file, image_description, ticket_history)
+    if suspend_fn:
+        suspend_fn(lambda: launch_claude(context, task_desc, brief, file, image_description, ticket_history))
+    else:
+        launch_claude(context, task_desc, brief, file, image_description, ticket_history)
 
 
 @app.callback(invoke_without_command=True)

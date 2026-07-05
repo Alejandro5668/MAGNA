@@ -28,11 +28,10 @@
 
 > Actualizá esto al inicio de cada sesión. Máximo 3 tareas. Si tenés más de 3, el resto va al backlog.
 
-Fecha: 2026-06-14
+Fecha: 2026-07-04
 
-- [x] Verificar `ctx init --arquitectura` en proyecto PHP de empresa
-- [x] Verificar `ctx task --archivo` en proyecto PHP de empresa
-- [ ] Empaquetar `.exe` nuevo con cambios de hoy
+- [ ] Empaquetar `.exe` nuevo: `pyinstaller ctx.spec`
+- [ ] Verificar Option B end-to-end (task, sync, archive, revision) en `.exe`
 
 ---
 
@@ -345,6 +344,48 @@ el ciclo de revisión de PRs con críticos.
 
 ---
 
+## Fase 16 — TUI Textual, paleta Noche Estrellada y Option B *(2026-07-04)*
+
+**Objetivo:** Reemplazar el menú questionary por una TUI completa con Textual,
+aplicar paleta Van Gogh, y redirigir el output de comandos al RichLog de Textual.
+
+- [x] Reemplazo completo del menú questionary → Textual TUI (`aicli/tui/app.py`)
+- [x] Paleta Noche Estrellada (#FFB703, #5B8DEF, #242C45, #AAB4D4, #5E6A94) — Van Gogh
+- [x] Widgets nativos: Footer, Rule, TabbedContent + Sparkline (tabs PROJECT/SEMANA/ACTIVITY)
+- [x] Widgets nativos: OptionList + Collapsible (menú izquierdo navegable con j/k)
+- [x] Widgets nativos: RichLog en los 3 tabs del panel derecho (scrollable)
+- [x] HelpScreen modal (tecla `?`) con tabla completa de keybindings
+- [x] ConfirmModal nativo Yes/No — reemplaza `questionary.confirm` en contexto TUI
+- [x] Vim motions: j/k navegar, g/G saltar top/bottom, h/l colapsar/expandir sección
+- [x] Focus indicators: `:focus-within` en panel izquierdo y tabs (borde dorado activo)
+- [x] **Option B**: `CommandOutputScreen` — output de comandos en RichLog sin suspend
+- [x] **Option B**: `TuiConsole` — enruta `print`/`status` al RichLog vía `call_from_thread`
+- [x] `TuiConsole.request_input/confirm` — InputModal/ConfirmModal vía `run_coroutine_threadsafe`
+- [x] `TuiConsole.suspend_and_run` — suspend solo para lanzar Claude Code (subprocess)
+- [x] `sync._sync_impl(ask_fn, confirm_fn)` — questionary sustituible por callbacks TUI
+- [x] `task._execute_task(suspend_fn)` — Claude launch desacoplado vía bridge
+- [x] Fix: `asyncio.run()` conflict con questionary → `ThreadPoolExecutor` en `_worker_cmd`
+- [x] Fix: `CommandScreen.dismiss` desde `@work async`, no desde `set_timer` lambda
+- [x] Fix: background bleeding en `CommandOutputScreen` → `background: #000000`
+- [x] Fix: descripciones del menú no wrappean — `_DESC_MAX = 22` + acortadas
+- [x] Fix: `Separator` no existe en Textual 8.2.8 → eliminado
+- [x] `ctx.spec` — `collect_submodules('textual')` + `collect_data_files('textual')`
+- [x] Suite de smoke tests `tests/test_commands.py` — 23/23 pasados
+- [x] Fix bleeding: `CommandOutputScreen` → `ModalScreen[None]` + `Container(#co-frame) 100%×100%`
+- [x] Fix bleeding: `CommandScreen` → `Container(#cs-frame) 100%×100%` con `align: center middle`
+- [x] Logo MAGNA gradiente azul→dorado — `_gradient_logo()` aplicado en `MainScreen` y `ProjectScreen`
+- [x] Hatch puntillismo en panel izquierdo (`hatch: "·" #5B8DEF 20%`)
+- [x] Sparkline sinusoidal animada — `set_interval(0.25)` + `_spark_phase` en `MainScreen`
+- [x] `magna_task_plan` — card visual con módulos + plan línea a línea + subtitle modelo
+- [x] Pregunta de imagen eliminada del flow TUI de task — `_gather_image_async` removida
+- [x] Footer `CommandOutputScreen` simplificado → `#co-done` con `esc` dorado visible
+- [x] DEC-052 a DEC-055 documentadas en `knowledge/decisions.md`
+- [x] `.gitignore` actualizado — patrones Claude Code (`.agents/`, `skills-lock.json`, etc.)
+- [ ] Empaquetar `.exe` nuevo: `pyinstaller ctx.spec`
+- [ ] Verificar Option B end-to-end: task, sync, archive, revision en `.exe` compilado
+
+---
+
 ## Bloqueantes activos
 
 > Registrá acá cualquier cosa que te frenó. Con fecha y contexto breve.
@@ -378,3 +419,5 @@ el ciclo de revisión de PRs con críticos.
 | 2026-06-20 (2) | Rebrand MAGNA (ansi_shadow + animación), eliminación snapshot, README reescrito, PORT2.png commiteada, fix Rule import | Empaquetar .exe (cerrar instancia antes), verificar retomar y QA en PHP empresa |
 | 2026-06-29 | Fix scope de diff en sync, documentación incremental con diff+doc existente, case card UI, generar_resumen_caso, ctx revision para críticos de PR, QA agent removido, DEC-041–048 | Empaquetar .exe nuevo |
 | 2026-06-29 (2) | evidencias/ con portapapeles Windows, rename English identifiers (50+ en 15 archivos), DEC-049 y DEC-050 | Empaquetar .exe nuevo |
+| 2026-07-04 | TUI Textual completa (questionary eliminado), paleta Noche Estrellada Van Gogh, Option B CommandOutputScreen+TuiConsole, 23 smoke tests | Empaquetar .exe, verificar Option B en .exe compilado |
+| 2026-07-05 | Fix bleeding TUI (ModalScreen+Container 100%), gradiente logo, hatch puntillismo, Sparkline animada, magna_task_plan, DEC-052–055, .gitignore Claude Code, logo ProjectScreen con gradiente | Empaquetar .exe, verificar Option B en compilado |

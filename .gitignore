@@ -42,3 +42,11 @@ desktop.ini
 .coverage
 htmlcov/
 .pytest_cache/
+
+# Claude Code — archivos de trabajo del CLI (no del proyecto)
+.agents/
+.claude/skills/
+.claude/worktrees/
+skills-lock.json
+knowledge/skills-lock.json
+knowledge/.claude/

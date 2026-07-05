@@ -7,6 +7,7 @@ from rich.table import Table
 from sqlmodel import Session, select
 from aicli.db import engine
 from aicli.db.models import Project, Module
+from aicli.tui.theme import magna_warn, magna_info, ACCENT, SECTION, BORDER
 
 app = typer.Typer()
 console = Console()
@@ -21,7 +22,7 @@ def status():
         project = session.exec(select(Project).where(Project.path == str(path))).first()
 
     if not project:
-        console.print("[bold yellow]Aviso:[/bold yellow] Este directorio no está registrado. Ejecutá [bold]ctx init[/bold] primero.")
+        magna_warn(console, "Este directorio no está registrado. Ejecutá ctx init primero.")
         return
 
     with Session(engine) as session:
@@ -29,10 +30,10 @@ def status():
 
     if not modules:
         console.print(Panel(
-            "[yellow]Todavía no hay módulos documentados.[/yellow]\n\n"
-            "Ejecutá [bold cyan]ctx init[/bold cyan] para mapear la arquitectura del proyecto.",
+            f"[{SECTION}]Todavía no hay módulos documentados.[/{SECTION}]\n\n"
+            f"Ejecutá [bold {ACCENT}]ctx init[/bold {ACCENT}] para mapear la arquitectura del proyecto.",
             title="Sin documentación",
-            border_style="yellow",
+            border_style=ACCENT,
         ))
         return
 
@@ -47,10 +48,10 @@ def status():
 
     sorted_folders = sorted(folders.items(), key=lambda x: _last_updated(x[1]), reverse=True)
 
-    table = Table(style="cyan", show_header=True, header_style="bold cyan")
+    table = Table(style=ACCENT, show_header=True, header_style=f"bold {ACCENT}")
     table.add_column("Carpeta", style="bold", min_width=22)
-    table.add_column("Módulos", justify="right", style="dim")
-    table.add_column("Última doc", style="dim")
+    table.add_column("Módulos", justify="right", style=SECTION)
+    table.add_column("Última doc", style=SECTION)
 
     for folder, mods in sorted_folders:
         ts = _last_updated(mods)
@@ -60,9 +61,9 @@ def status():
     console.print()
     console.print(Panel(
         table,
-        title=f"[bold cyan]Arquitectura documentada — {project.name}[/bold cyan]",
-        border_style="cyan",
+        title=f"[bold {ACCENT}]Arquitectura documentada — {project.name}[/bold {ACCENT}]",
+        border_style=ACCENT,
     ))
-    console.print(f"  [dim]{len(modules)} módulos en {len(folders)} carpetas[/dim]")
+    magna_info(console, f"{len(modules)} módulos en {len(folders)} carpetas")
     console.print()
-    console.print("  [dim]¿No ves una carpeta? Ejecutá [bold cyan]ctx init[/bold cyan] para actualizar la arquitectura.[/dim]")
+    magna_info(console, f"¿No ves una carpeta? Ejecutá ctx init para actualizar la arquitectura.")

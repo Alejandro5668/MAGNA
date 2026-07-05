@@ -12,22 +12,16 @@ from aicli.db.models import Project, Module
 from aicli.services.builder import build_context
 from aicli.services.caller import launch_claude
 from aicli.services.tickets import load_tickets, format_history
+from aicli.tui.theme import magna_warn, magna_error, ACCENT, SECTION, Q_STYLE_ARGS
 
 app = typer.Typer()
 console = Console()
 
-_ESTILO = QStyle([
-    ("qmark",       "fg:cyan bold"),
-    ("question",    "fg:white bold"),
-    ("pointer",     "fg:cyan bold"),
-    ("highlighted", "fg:cyan bold"),
-    ("selected",    "fg:cyan"),
-    ("answer",      "fg:cyan bold"),
-])
+_ESTILO = QStyle(Q_STYLE_ARGS)
 
 
 def _read_review() -> str:
-    console.print("  [dim]Pegá la revisión del PR. Enter dos veces para continuar.[/dim]\n")
+    console.print(f"  [{SECTION}]Pegá la revisión del PR. Enter dos veces para continuar.[/{SECTION}]\n")
     lines = []
     empty_count = 0
     while True:
@@ -75,14 +69,14 @@ def revision():
         project = session.exec(select(Project).where(Project.path == str(path))).first()
 
     if not project:
-        console.print("[bold red]Error:[/bold red] Este directorio no está registrado. Ejecutá [bold]ctx init[/bold] primero.")
+        magna_error(console, "Este directorio no está registrado. Ejecutá ctx init primero.")
         return
 
     console.print()
     review_text = _read_review()
 
     if not review_text:
-        console.print("  [bold yellow]⚠[/bold yellow] [dim]No se recibió texto.[/dim]")
+        magna_warn(console, "No se recibió texto.")
         return
 
     pr_num, ticket_id, criticals = _parse_review(review_text)
@@ -91,10 +85,10 @@ def revision():
         console.print()
         console.print(Panel(
             Group(
-                "[bold green]✔ Sin problemas críticos[/bold green]",
-                "[dim]El PR puede mergear.[/dim]",
+                "[bold #4ADE80]✔ Sin problemas críticos[/bold #4ADE80]",
+                f"[{SECTION}]El PR puede mergear.[/{SECTION}]",
             ),
-            border_style="green",
+            border_style="#4ADE80",
             padding=(1, 2),
         ))
         return
@@ -105,9 +99,9 @@ def revision():
 
     console.print()
     console.print(Panel(
-        Text(criticals, style="dim"),
-        title=f"[bold red]🔴 {pr_label}{ticket_label}[/bold red]",
-        border_style="red",
+        Text(criticals, style=f"{SECTION}"),
+        title=f"[bold #F87171]🔴 {pr_label}{ticket_label}[/bold #F87171]",
+        border_style="#F87171",
         padding=(1, 2),
     ))
 

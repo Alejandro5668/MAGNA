@@ -35,7 +35,7 @@ app.add_typer(file_cmd.app,   name="file")
 app.add_typer(sync.app,       name="sync")
 app.add_typer(task.app,       name="task")
 app.add_typer(claude_cmd.app, name="claude")
-app.add_typer(proyecto.app,   name="proyecto")
+app.add_typer(proyecto.app,   name="scan")
 app.add_typer(revision.app,   name="revision")
 
 console = Console()

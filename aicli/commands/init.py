@@ -14,6 +14,7 @@ from aicli.services.indexer import (
     module_needs_update,
     NON_CODE_EXTENSIONS,
 )
+from aicli.tui.theme import magna_ok, magna_warn, magna_info, magna_status, ACCENT, SECTION
 
 app = typer.Typer()
 console = Console()
@@ -107,7 +108,7 @@ def detect_stack(path: Path) -> str:
 
 
 def _progreso_print(msg: str) -> None:
-    console.print(f"  [bold green]✔[/bold green] [dim]{msg}[/dim]")
+    magna_ok(console, msg)
 
 
 def _md_path(project_id: int, file_path: str) -> Path:
@@ -158,6 +159,8 @@ def _create_rol_if_missing() -> None:
 @app.callback(invoke_without_command=True)
 def init():
     """Registra el proyecto activo y genera su mapa arquitectural con IA."""
+    from aicli.services.activity import log_activity
+    log_activity("init")
     path = Path.cwd()
     name = path.name
     stack = detect_stack(path)
@@ -185,8 +188,8 @@ def init():
     tree = get_tree(path)
     n_code = len([f for f in tree if Path(f).suffix not in NON_CODE_EXTENSIONS])
 
-    console.print(f"\n[bold cyan]Mapeando arquitectura de {name}...[/bold cyan]")
-    console.print(f"  [dim]{n_code:,} archivos de código · {stack}[/dim]")
+    console.print(f"\n[bold {ACCENT}]Mapeando arquitectura de {name}...[/bold {ACCENT}]")
+    magna_info(console, f"{n_code:,} archivos de código · {stack}")
 
     raw_modules = document_architecture(path, name, stack, tree, on_progreso=_progreso_print)
     modules = [
@@ -198,24 +201,24 @@ def init():
 
     console.print(Panel(
         Group(
-            f"[bold cyan]✔ {name} — {len(modules)} módulos documentados[/bold cyan]",
-            f"[bold dim]Stack: {stack}[/bold dim]",
-            f"[bold dim]Ruta: {path}[/bold dim]",
+            f"[bold #4ADE80]✔ {name} — {len(modules)} módulos documentados[/bold #4ADE80]",
+            f"[{SECTION}]Stack: {stack}[/{SECTION}]",
+            f"[{SECTION}]Ruta: {path}[/{SECTION}]",
         ),
         title="ctx init",
-        border_style="green"
+        border_style="#4ADE80",
     ))
 
     console.print(Panel(
         Group(
-            "[bold]Ponytail[/bold] reduce el código que genera Claude entre 80–94%.",
-            "[dim]Ejecutá estos comandos en cualquier sesión de Claude Code:[/dim]",
+            f"[bold #F1F3F9]Ponytail[/bold #F1F3F9] reduce el código que genera Claude entre 80–94%.",
+            f"[{SECTION}]Ejecutá estos comandos en cualquier sesión de Claude Code:[/{SECTION}]",
             "",
-            "  [bold cyan]/plugin marketplace add DietrichGebert/ponytail[/bold cyan]",
-            "  [bold cyan]/plugin install ponytail@ponytail[/bold cyan]",
+            f"  [bold {ACCENT}]/plugin marketplace add DietrichGebert/ponytail[/bold {ACCENT}]",
+            f"  [bold {ACCENT}]/plugin install ponytail@ponytail[/bold {ACCENT}]",
         ),
-        title="[dim]Plus recomendado[/dim]",
-        border_style="dim",
+        title=f"[{SECTION}]Plus recomendado[/{SECTION}]",
+        border_style=SECTION,
     ))
 
 
@@ -226,14 +229,14 @@ def _update_project(project: Project, path: Path) -> None:
     updated = 0
     unchanged = 0
 
-    console.print(f"\n[bold cyan]Verificando módulos de {project.name}...[/bold cyan]")
+    console.print(f"\n[bold {ACCENT}]Verificando módulos de {project.name}...[/bold {ACCENT}]")
     for module in modules_db:
         if module_needs_update(module.file_path, path, module):
             source_file = path / module.file_path
             try:
                 source = source_file.read_text(encoding="latin-1")
             except FileNotFoundError:
-                console.print(f"  [bold yellow]⚠[/bold yellow] [dim]{module.file_path} — no encontrado, se omite[/dim]")
+                magna_warn(console, f"{module.file_path} — no encontrado, se omite")
                 continue
 
             content_md, tokens = generate_module_content(module.name, module.file_path, source)
@@ -248,17 +251,17 @@ def _update_project(project: Project, path: Path) -> None:
                 session.add(m)
                 session.commit()
 
-            console.print(f"  [bold green]✔[/bold green] [dim]{module.file_path} — actualizado · {tokens:,} tokens[/dim]")
+            magna_ok(console, f"{module.file_path} — actualizado · {tokens:,} tokens")
             updated += 1
         else:
-            console.print(f"  [dim]✔ {module.file_path} — sin cambios[/dim]")
+            magna_info(console, f"✔ {module.file_path} — sin cambios")
             unchanged += 1
 
     console.print(Panel(
         Group(
-            f"[bold cyan]{project.name} — contexto al día[/bold cyan]",
-            f"[bold dim]Actualizados: {updated}  |  Sin cambios: {unchanged}[/bold dim]",
+            f"[bold {ACCENT}]{project.name} — contexto al día[/bold {ACCENT}]",
+            f"[{SECTION}]Actualizados: {updated}  |  Sin cambios: {unchanged}[/{SECTION}]",
         ),
         title="ctx init",
-        border_style="cyan"
+        border_style=ACCENT,
     ))

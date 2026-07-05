@@ -1,16 +1,23 @@
 # -*- mode: python ; coding: utf-8 -*-
-from PyInstaller.utils.hooks import collect_data_files
+from PyInstaller.utils.hooks import collect_data_files, collect_submodules
 
 datas = []
 datas += collect_data_files('pyfiglet')
+datas += collect_data_files('textual')
 
+hiddenimports = collect_submodules('textual')
+hiddenimports += [
+    'textual.widgets._collapsible',
+    'textual.widgets._option_list',
+    'textual.widgets._rich_log',
+]
 
 a = Analysis(
     ['main.py'],
     pathex=[],
     binaries=[],
     datas=datas,
-    hiddenimports=[],
+    hiddenimports=hiddenimports,
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
@@ -27,7 +34,7 @@ exe = EXE(
     a.datas,
     [],
     name='ctx',
-    icon='assets/ctx.ico',
+    icon=None,
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
