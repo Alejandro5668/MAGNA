@@ -8,6 +8,7 @@ from sqlmodel import Session, select
 from aicli.db import engine
 from aicli.db.models import Project, Module
 from aicli.services.indexer import document_zone, NON_CODE_EXTENSIONS
+from aicli.tui.theme import magna_ok, magna_warn, magna_error, magna_info, magna_status, ACCENT, SECTION
 
 app = typer.Typer()
 console = Console()
@@ -59,15 +60,16 @@ def file_cmd(
         project = session.exec(select(Project).where(Project.path == str(path))).first()
 
     if not project:
-        console.print("[bold red]Error:[/bold red] Este directorio no está registrado. Ejecutá [bold]ctx init[/bold] primero.")
+        magna_error(console, "Este directorio no está registrado. Ejecutá ctx init primero.")
         return
 
     zone_path = path / folder
     if not zone_path.is_dir():
         if zone_path.is_file() or Path(folder).suffix:
-            console.print(
-                f"[bold yellow]Aviso:[/bold yellow] [bold]{folder}[/bold] es un archivo, no una carpeta.\n"
-                f"  Para documentar un archivo individual seleccioná [bold cyan]ctx archive[/bold cyan]."
+            magna_warn(
+                console,
+                f"{folder} es un archivo, no una carpeta. "
+                f"Para documentar un archivo individual usá ctx archive."
             )
             return
         matches = sorted(
@@ -75,10 +77,7 @@ def file_cmd(
             key=lambda d: len(d.parts)
         )
         if not matches:
-            console.print(
-                f"[bold yellow]Aviso:[/bold yellow] No se encontró la carpeta [bold]{folder}[/bold].\n"
-                f"  Verificá el nombre e intentá de nuevo."
-            )
+            magna_warn(console, f"No se encontró la carpeta {folder}. Verificá el nombre e intentá de nuevo.")
             return
         zone_path = matches[0]
 
@@ -87,32 +86,33 @@ def file_cmd(
         if f.is_file() and f.suffix not in NON_CODE_EXTENSIONS
     ])
 
-    console.print(f"\n[bold cyan]Documentando zona '{folder}' en {project.name}...[/bold cyan]")
-    console.print(f"  [dim]{n_files:,} archivos de código en esta zona[/dim]")
+    console.print(f"\n[bold {ACCENT}]Documentando zona '{folder}' en {project.name}...[/bold {ACCENT}]")
+    magna_info(console, f"{n_files:,} archivos de código en esta zona")
 
     def on_progreso(msg: str) -> None:
-        console.print(f"  [bold green]✔[/bold green] [dim]{msg}[/dim]")
+        magna_ok(console, msg)
 
     try:
-        modules = document_zone(
-            path, zone_path, project.stack or "desconocido", on_progreso=on_progreso
-        )
+        with magna_status(console, f"Analizando zona '{folder}'..."):
+            modules = document_zone(
+                path, zone_path, project.stack or "desconocido", on_progreso=on_progreso
+            )
     except Exception as e:
-        console.print(f"[bold red]Error:[/bold red] No se pudo documentar la zona — {e}")
-        console.print("  [dim]Intentá con una zona más pequeña o usá ctx archive para archivos individuales.[/dim]")
+        magna_error(console, f"No se pudo documentar la zona — {e}")
+        magna_info(console, "Intentá con una zona más pequeña o usá ctx archive para archivos individuales.")
         return
 
     if not modules:
-        console.print("[bold yellow]Aviso:[/bold yellow] No se identificaron componentes en esta zona.")
+        magna_warn(console, "No se identificaron componentes en esta zona.")
         return
 
     _save_zone_modules(modules, project)
 
     console.print(Panel(
         Group(
-            f"[bold cyan]✔ {folder} — {len(modules)} componentes documentados[/bold cyan]",
-            f"[bold dim]Proyecto: {project.name}[/bold dim]",
+            f"[bold #4ADE80]✔ {folder} — {len(modules)} componentes documentados[/bold #4ADE80]",
+            f"[{SECTION}]Proyecto: {project.name}[/{SECTION}]",
         ),
         title="ctx file",
-        border_style="green"
+        border_style="#4ADE80",
     ))

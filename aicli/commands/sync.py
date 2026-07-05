@@ -15,44 +15,41 @@ from aicli.db import engine
 from aicli.db.models import Project, Module
 from aicli.services.indexer import analyze_file_deep, generate_case_summary, NON_CODE_EXTENSIONS
 from aicli.services.tickets import load_tickets, save_round, format_history, read_active_ticket, clear_active_ticket
+from aicli.tui.theme import (
+    magna_ok, magna_warn, magna_error, magna_info, magna_status, magna_panel,
+    ACCENT, SECTION, BORDER, Q_STYLE_ARGS,
+)
 
 app = typer.Typer()
 console = Console()
+
+_ESTILO = QStyle(Q_STYLE_ARGS)
 
 
 def _show_case_card(ticket_id: str, round_num: int, files: set[str], case_memory: dict) -> None:
     files_txt = "\n".join(f"  · {a}" for a in sorted(files))
 
     body = Group(
-        Text.from_markup(f"[dim]{files_txt}[/dim]"),
-        Rule(style="dim"),
+        Text.from_markup(f"[{SECTION}]{files_txt}[/{SECTION}]"),
+        Rule(style=BORDER),
         Text(""),
-        Text.from_markup("[bold]  Investigado[/bold]"),
-        Text.from_markup(f"[dim]  {case_memory['investigado']}[/dim]"),
+        Text.from_markup("[bold #F1F3F9]  Investigado[/bold #F1F3F9]"),
+        Text.from_markup(f"[{SECTION}]  {case_memory['investigado']}[/{SECTION}]"),
         Text(""),
-        Text.from_markup("[bold green]  Hecho[/bold green]"),
-        Text.from_markup(f"[dim]  {case_memory['hecho']}[/dim]"),
+        Text.from_markup(f"[bold #4ADE80]  Hecho[/bold #4ADE80]"),
+        Text.from_markup(f"[{SECTION}]  {case_memory['hecho']}[/{SECTION}]"),
         Text(""),
-        Text.from_markup("[bold yellow]  Tener en cuenta[/bold yellow]"),
-        Text.from_markup(f"[dim]  {case_memory['tener_en_cuenta']}[/dim]"),
+        Text.from_markup(f"[bold #FBBF24]  Tener en cuenta[/bold #FBBF24]"),
+        Text.from_markup(f"[{SECTION}]  {case_memory['tener_en_cuenta']}[/{SECTION}]"),
         Text(""),
     )
 
     console.print(Panel(
         body,
-        title=f"[bold cyan] {ticket_id} [/bold cyan][dim]· Ronda {round_num}[/dim]",
-        border_style="cyan",
+        title=f"[bold {ACCENT}] {ticket_id} [/bold {ACCENT}][{SECTION}]· Ronda {round_num}[/{SECTION}]",
+        border_style=ACCENT,
         padding=(1, 2),
     ))
-
-_ESTILO = QStyle([
-    ("qmark",       "fg:cyan bold"),
-    ("question",    "fg:white bold"),
-    ("pointer",     "fg:cyan bold"),
-    ("highlighted", "fg:cyan bold"),
-    ("selected",    "fg:cyan"),
-    ("answer",      "fg:cyan bold"),
-])
 
 
 def _read_session_task() -> str:
@@ -131,33 +128,39 @@ def _check_php_syntax(path: Path, files: set[str]) -> list[str]:
 @app.callback(invoke_without_command=True)
 def sync():
     """Detecta archivos cambiados con git y actualiza su documentación."""
+    _sync_impl()
+
+
+def _sync_impl(ask_fn=None, confirm_fn=None):
+    """Lógica real de sync. ask_fn/confirm_fn permiten sustituir questionary desde la TUI."""
+    from aicli.services.activity import log_activity
+    log_activity("sync")
     path = Path.cwd()
 
     with Session(engine) as session:
         project = session.exec(select(Project).where(Project.path == str(path))).first()
 
     if not project:
-        console.print("[bold red]Error:[/bold red] Este directorio no está registrado. Ejecutá [bold]ctx init[/bold] primero.")
+        magna_error(console, "Este directorio no está registrado. Ejecutá ctx init primero.")
         raise typer.Exit(code=1)
 
-    with console.status("Detectando archivos cambiados...", spinner="dots3", spinner_style="cyan"):
+    with magna_status(console, "Detectando archivos cambiados..."):
         changed = _changed_files(path)
 
     existing_files = {f for f in changed if (path / f).exists()}
 
     if not existing_files:
-        console.print("[bold yellow]Sin cambios detectados.[/bold yellow] No hay archivos modificados en git.")
+        magna_warn(console, "Sin cambios detectados. No hay archivos modificados en git.")
         return
 
-    console.print(f"\n[bold cyan]{len(existing_files)} archivos cambiados detectados[/bold cyan]")
+    console.print(f"\n[bold {ACCENT}]{len(existing_files)} archivos cambiados detectados[/bold {ACCENT}]")
 
-    # Verificación de sintaxis PHP (gratis, sin tokens)
     syntax_errors = _check_php_syntax(path, existing_files)
     if syntax_errors:
         console.print()
         for e in syntax_errors:
-            console.print(f"  [bold red]✘[/bold red] [dim]{e}[/dim]")
-        console.print("\n  [bold red]Errores de sintaxis PHP. Corregí antes de continuar.[/bold red]")
+            magna_error(console, e)
+        console.print(f"\n  [bold #F87171]Errores de sintaxis PHP. Corregí antes de continuar.[/bold #F87171]")
         return
 
     with Session(engine) as session:
@@ -170,7 +173,7 @@ def sync():
     base = Path.home() / ".mycontext" / "projects" / str(project.id)
 
     for file_path in sorted(existing_files):
-        console.print(f"  [dim]Documentando {file_path}...[/dim]")
+        magna_info(console, f"Documentando {file_path}...")
 
         md_file = base / Path(file_path).with_suffix(".md")
         existing_doc = md_file.read_text(encoding="utf-8") if md_file.exists() else ""
@@ -183,7 +186,7 @@ def sync():
                 existing_doc=existing_doc,
             )
         except Exception as e:
-            console.print(f"  [bold yellow]⚠[/bold yellow] [dim]{file_path} — falló: {e}[/dim]")
+            magna_warn(console, f"{file_path} — falló: {e}")
             continue
 
         md_file.parent.mkdir(parents=True, exist_ok=True)
@@ -214,14 +217,17 @@ def sync():
                 session.commit()
                 new_count += 1
 
-        console.print(f"  [bold green]✔[/bold green] [dim]{file_path} · {tokens:,} tokens[/dim]")
+        magna_ok(console, f"{file_path} · {tokens:,} tokens")
 
     # Captura de decisión técnica post-tarea
     console.print()
-    decision = questionary.text(
-        "  ¿Hubo alguna decisión técnica importante? (Enter para omitir)",
-        style=_ESTILO
-    ).ask()
+    if ask_fn:
+        decision = ask_fn("¿Hubo alguna decisión técnica importante? (Enter para omitir)")
+    else:
+        decision = questionary.text(
+            "  ¿Hubo alguna decisión técnica importante? (Enter para omitir)",
+            style=_ESTILO,
+        ).ask()
 
     if decision and decision.strip():
         decisions_path = Path.home() / ".mycontext" / "projects" / str(project.id) / "decisions.md"
@@ -231,7 +237,7 @@ def sync():
             decisions_path.write_text(entry + decisions_path.read_text(encoding="utf-8"), encoding="utf-8")
         else:
             decisions_path.write_text(f"# Decisiones técnicas del proyecto\n\n{entry}", encoding="utf-8")
-        console.print(f"  [bold green]✔[/bold green] [dim]Decisión guardada en {decisions_path}[/dim]")
+        magna_ok(console, f"Decisión guardada en {decisions_path}")
 
     # Generar resumen del caso (Jira + memoria) en una sola llamada
     original_task = _read_session_task()
@@ -251,43 +257,49 @@ def sync():
                 previous_history = format_history(prev_tid, load_tickets()) or ""
 
         console.print()
-        with console.status("Generando resumen del caso...", spinner="dots3", spinner_style="cyan"):
+        with magna_status(console, "Generando resumen del caso..."):
             try:
                 jira_msg, case_memory, tokens_res = generate_case_summary(
                     original_task, full_diff, list(existing_files), previous_history
                 )
             except Exception as e:
-                console.print(f"  [bold yellow]⚠[/bold yellow] [dim]No se pudo generar el resumen: {e}[/dim]")
+                magna_warn(console, f"No se pudo generar el resumen: {e}")
 
         if jira_msg:
             console.print(Panel(
                 jira_msg,
-                title="[bold cyan]Mensaje de Jira[/bold cyan]",
-                border_style="cyan",
+                title=f"[bold {ACCENT}]Mensaje de Jira[/bold {ACCENT}]",
+                border_style=ACCENT,
                 padding=(1, 2),
             ))
-            console.print(f"  [dim]{tokens_res:,} tokens · copiá el texto del panel[/dim]")
+            magna_info(console, f"{tokens_res:,} tokens · copiá el texto del panel")
     else:
         console.print()
-        console.print("  [bold yellow]⚠[/bold yellow] [dim]Sin tarea de sesión — ejecutá ctx task antes de sync para generar el resumen.[/dim]")
+        magna_warn(console, "Sin tarea de sesión — ejecutá ctx task antes de sync para generar el resumen.")
 
     console.print()
     console.print(Panel(
         Group(
-            "[bold cyan]✔ Sync completado[/bold cyan]",
-            f"[bold dim]Actualizados: {updated}  |  Nuevos: {new_count}[/bold dim]",
+            f"[bold #4ADE80]✔ Sync completado[/bold #4ADE80]",
+            f"[{SECTION}]Actualizados: {updated}  |  Nuevos: {new_count}[/{SECTION}]",
         ),
         title="ctx sync",
-        border_style="green",
+        border_style="#4ADE80",
     ))
 
     # Guardar caso en historial
     console.print()
-    ticket_id_raw = questionary.text(
-        "  ¿Número de ticket Jira? (Enter para omitir)",
-        default=ticket_prefill,
-        style=_ESTILO,
-    ).ask()
+    if ask_fn:
+        ticket_id_raw = ask_fn(
+            f"¿Número de ticket Jira? (Enter para omitir)",
+            ticket_prefill,
+        )
+    else:
+        ticket_id_raw = questionary.text(
+            "  ¿Número de ticket Jira? (Enter para omitir)",
+            default=ticket_prefill,
+            style=_ESTILO,
+        ).ask()
 
     if ticket_id_raw and ticket_id_raw.strip():
         ticket_id = ticket_id_raw.strip().upper()
@@ -299,21 +311,27 @@ def sync():
             _show_case_card(ticket_id, round_num, existing_files, case_memory)
 
             console.print()
-            addition = questionary.text(
-                "  ¿Algo más para 'Tener en cuenta'? (Enter para aceptar)",
-                style=_ESTILO,
-            ).ask()
+            if ask_fn:
+                addition = ask_fn("¿Algo más para 'Tener en cuenta'? (Enter para aceptar)")
+            else:
+                addition = questionary.text(
+                    "  ¿Algo más para 'Tener en cuenta'? (Enter para aceptar)",
+                    style=_ESTILO,
+                ).ask()
             if addition and addition.strip():
                 case_memory["tener_en_cuenta"] += " " + addition.strip()
                 console.print()
                 _show_case_card(ticket_id, round_num, existing_files, case_memory)
 
         console.print()
-        save = questionary.confirm(
-            "  ¿Guardar este caso?",
-            default=True,
-            style=_ESTILO,
-        ).ask()
+        if confirm_fn:
+            save = confirm_fn("¿Guardar este caso?", True)
+        else:
+            save = questionary.confirm(
+                "  ¿Guardar este caso?",
+                default=True,
+                style=_ESTILO,
+            ).ask()
 
         if save:
             if ticket_id in current_tickets:
@@ -330,10 +348,5 @@ def sync():
                 memoria=case_memory,
             )
             clear_active_ticket()
-            console.print(f"  [bold green]✔[/bold green] [dim]Ronda {round_num} guardada para {ticket_id}[/dim]")
+            magna_ok(console, f"Ronda {round_num} guardada para {ticket_id}")
 
-    console.print(
-        "\n  [bold cyan]💡[/bold cyan]  Ejecutá "
-        "[bold cyan]/ponytail-review[/bold cyan] en Claude Code "
-        "para revisar el código generado."
-    )

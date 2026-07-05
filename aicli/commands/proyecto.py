@@ -1,33 +1,35 @@
 import typer
-from rich.console import Console, Group
-from rich.panel import Panel
 from pathlib import Path
 from sqlmodel import Session, select
 from aicli.db import engine
 from aicli.db.models import Project, Module
 from aicli.services.indexer import get_tree, generate_project_md
+from aicli.tui.theme import print_header, print_footer, magna_status, magna_ok, magna_info, magna_error, magna_panel
+from rich.console import Console
 
 app = typer.Typer()
 console = Console()
 
 
 @app.callback(invoke_without_command=True)
-def proyecto():
+def proyecto():  # registered as "scan" in main.py
     """Genera PROYECTO.md con conocimiento estructural del proyecto activo."""
+    from aicli.services.activity import log_activity
+    log_activity("scan")
     path = Path.cwd()
 
     with Session(engine) as session:
         p = session.exec(select(Project).where(Project.path == str(path))).first()
 
     if not p:
-        console.print("[bold red]Error:[/bold red] Este directorio no está registrado. Ejecutá [bold]ctx init[/bold] primero.")
+        magna_error(console, "Directorio no registrado. Ejecutá ctx init primero.")
         raise typer.Exit(code=1)
 
     with Session(engine) as session:
         modules_db = list(session.exec(select(Module).where(Module.project_id == p.id)).all())
 
     if not modules_db:
-        console.print("[bold yellow]Aviso:[/bold yellow] No hay módulos documentados. Ejecutá [bold]ctx init[/bold] primero.")
+        magna_error(console, "Sin módulos documentados. Ejecutá ctx init primero.")
         raise typer.Exit(code=1)
 
     modules = [
@@ -37,13 +39,13 @@ def proyecto():
 
     dest = Path.home() / ".mycontext" / "projects" / str(p.id) / "PROYECTO.md"
 
-    console.print(f"\n[bold cyan]Generando PROYECTO.md para {p.name}...[/bold cyan]")
-    console.print(f"  [dim]{len(modules)} módulos documentados como base[/dim]")
+    print_header(console, "ctx scan", "Detectando patrones del proyecto")
+    magna_info(console, f"{len(modules)} módulos documentados como base")
 
     def on_progreso(msg: str) -> None:
-        console.print(f"  [bold green]✔[/bold green] [dim]{msg}[/dim]")
+        magna_ok(console, msg)
 
-    with console.status("Analizando proyecto y generando conocimiento estructural...", spinner="dots3", spinner_style="cyan"):
+    with magna_status(console, "Analizando estructura y generando conocimiento..."):
         tree = get_tree(path)
         content, tokens = generate_project_md(
             path, p.name, p.stack or "desconocido", tree, modules, on_progreso=on_progreso
@@ -52,14 +54,6 @@ def proyecto():
     dest.parent.mkdir(parents=True, exist_ok=True)
     dest.write_text(content, encoding="utf-8")
 
-    console.print(Panel(
-        Group(
-            f"[bold cyan]✔ PROYECTO.md generado para {p.name}[/bold cyan]",
-            f"[bold dim]Tokens: {tokens:,}[/bold dim]",
-            "",
-            "[dim]Las secciones marcadas como 'pendiente' podés enriquecerlas con tu conocimiento del proyecto.[/dim]",
-            f"[dim]Ubicación: {dest}[/dim]",
-        ),
-        title="ctx proyecto",
-        border_style="green"
-    ))
+    magna_ok(console, f"PROYECTO.md generado  ·  {tokens:,} tokens")
+    magna_info(console, f"Ubicación: {dest}")
+    print_footer(console)

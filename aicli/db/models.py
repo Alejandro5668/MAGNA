@@ -1,4 +1,17 @@
+import time as _time
 from sqlmodel import SQLModel, Field
+
+
+class Meta(SQLModel, table=True):
+    id: int | None = Field(default=None, primary_key=True)
+    schema_version: int = Field(default=0)
+
+
+class Activity(SQLModel, table=True):
+    id: int | None = Field(default=None, primary_key=True)
+    command: str
+    description: str | None = Field(default=None)
+    timestamp: float = Field(default_factory=_time.time)
 
 
 class Project(SQLModel, table=True):

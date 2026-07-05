@@ -1,132 +1,158 @@
 # Estado del Proyecto
 
-Última actualización: 2026-06-14
+Última actualización: 2026-07-05
 
 ---
 
 ## Resumen ejecutivo
 
 CLI completamente funcional y distribuida como `.exe`. Probada en proyectos reales
-(PHP puro con ~11.000 archivos, Next.js). El foco actual es validación en campo y
-refinamiento de calidad de documentación generada.
+(PHP puro ~11.000 archivos, Next.js). Menú questionary reemplazado por TUI Textual completa
+(Fase 16). Pendiente: empaquetar `.exe` nuevo y verificar Option B en compilado.
 
 ---
 
 ## Completado — Infraestructura base
 
 - [x] Entorno virtual, repositorio Git, dependencias instaladas
-- [x] Estructura de carpetas (`aicli/commands/`, `db/`, `services/`)
+- [x] Estructura de carpetas (`aicli/commands/`, `db/`, `services/`, `tui/`)
 - [x] `CLAUDE.md`, `knowledge/`, `.claude/commands/start.md`
 - [x] `aicli/db/models.py` — modelos `Project` y `Module` con SQLModel
-- [x] `aicli/db/__init__.py` — SQLite en `~/.mycontext/ctx.db` (migrado desde MySQL)
-- [x] Sistema de logs en `~/.mycontext/aicli.log`
-- [x] API key flow en primera ejecución (questionary)
-- [x] Selector de proyecto con menú interactivo (pyfiglet + questionary)
+- [x] `aicli/db/__init__.py` — SQLite en `~/.mycontext/ctx_bd.db`
+- [x] `aicli/db/migrations.py` — migraciones de esquema
+- [x] Sistema de logs en `~/.mycontext/aicli_log.log`
+- [x] API key flow en primera ejecución
+- [x] Selector de proyecto con menú interactivo
 - [x] Loop de menú — vuelve al menú después de cada comando
 - [x] `.exe` generado con PyInstaller (`ctx.spec`)
+
+---
+
+## Completado — TUI (Fase 16 + mejoras visuales 2026-07-05)
+
+- [x] `aicli/tui/app.py` — TUI Textual completa: MainScreen, StatusScreen, ProjectScreen, OnboardingScreen, HelpScreen, ConfirmModal, CommandScreen
+- [x] `aicli/tui/theme.py` — paleta Noche Estrellada Van Gogh + `magna_task_plan`
+- [x] `aicli/tui/output_screen.py` — CommandOutputScreen (ModalScreen) + TuiConsole (Option B)
+- [x] Fix bleeding Textual 8.x — ModalScreen[None] + Container 100%×100% en CommandOutputScreen y CommandScreen (DEC-052)
+- [x] Logo MAGNA gradiente azul→dorado (`_gradient_logo()`) en MainScreen y ProjectScreen (DEC-053)
+- [x] Hatch puntillismo en panel izquierdo (`hatch: "·" #5B8DEF 20%`) (DEC-053)
+- [x] Sparkline sinusoidal animada — `set_interval(0.25)` en MainScreen (DEC-053)
+- [x] `magna_task_plan` — card visual estructurada en `theme.py`, usada en `task.py` (DEC-054)
+- [x] Pregunta de imagen eliminada del flow TUI de task; `_gather_image_async` removida (DEC-055)
+- [x] Footer `CommandOutputScreen` simplificado → `#co-done` con colores visibles (DEC-055)
+- [x] Animaciones de entrada en `ProjectScreen`: fade-in logo, typing tagline, slide lista
+- [x] Vim motions: j/k navegar, g/G top/bottom, h/l colapsar/expandir
+- [x] HelpScreen modal (tecla `?`) con tabla de keybindings
+- [x] ConfirmModal e InputModal nativos — reemplaza questionary.confirm/text en TUI
+- [x] `sync._sync_impl(ask_fn, confirm_fn)` — callbacks sustituibles desde TUI
+- [x] `task._execute_task(suspend_fn)` — Claude launch desacoplado vía bridge
+- [x] `ctx.spec` — `collect_submodules('textual')` + `collect_data_files('textual')`
+- [x] Suite de smoke tests `tests/test_commands.py` — 23/23 pasados
+- [x] `.gitignore` — patrones Claude Code (`.agents/`, `skills-lock.json`, etc.)
 
 ---
 
 ## Completado — Comandos CLI
 
 ### `ctx init`
-- [x] Detecta stack automáticamente (Python, Laravel, Next.js, PHP, Go, Rust, etc.)
-- [x] Modo normal: una sola llamada Claude que identifica Y documenta módulos (DEC-010)
-- [x] Modo `--zona <carpeta>`: documenta solo esa subcarpeta
-- [x] Modo `--reciente N`: documenta archivos modificados en los últimos N días (git log)
-- [x] Modo `--arquitectura`: lee código real de carpetas de nivel 1, identifica módulos reales
-- [x] Proyecto grande (>500 archivos): muestra guía interactiva con questionary
+- [x] Detecta stack automáticamente (Python, Laravel, Next.js, PHP puro, Go, Rust, etc.)
+- [x] Corre `documentar_arquitectura()` directo — sin flags, sin guía interactiva (DEC-024)
 - [x] Proyecto existente: actualización incremental con señal de frescura (`last_updated_at`)
-- [x] Progreso en vivo: muestra cada módulo conforme se documenta con tokens usados
-- [x] Documentación almacenada espejando estructura del proyecto (`modulo/archivo.md`)
-- [x] Agente orquestador por zonas para proyectos >80 archivos de código (DEC paralela)
-- [x] `analizar_y_documentar` con `_reparar_json` como safety net para JSON inválido
+- [x] Upsert por `(project_id, file_path)` — no genera duplicados (DEC-027)
+- [x] `rol.md` global creado en `~/.mycontext/rol.md` al primer init (DEC-026)
 
 ### `ctx task`
 - [x] Extended thinking para detección de módulos relevantes (DEC-015)
-- [x] Genera task brief técnico antes de lanzar Claude Code (DEC-016)
-- [x] Acepta `--archivo modulo/archivo.php` para anclar el contexto al archivo exacto
-- [x] Si se pasa `--archivo`, ese módulo siempre se incluye sin importar el filtrado
-- [x] Muestra panel con módulos seleccionados y plan antes de abrir Claude Code
-- [x] Menú pregunta tanto descripción como ruta del archivo
+- [x] Task brief técnico antes de lanzar Claude Code (DEC-016)
+- [x] `--archivo modulo/archivo.php` ancla el contexto al archivo exacto (DEC-017)
+- [x] `--imagen <ruta>` visión Claude API via base64 (DEC-032)
+- [x] Captura de portapapeles Windows en `~/.mycontext/evidencias/` (DEC-049)
 
-### `ctx module add`
-- [x] Acepta solo la ruta `modulo/archivo.php` (nombre derivado del stem)
-- [x] Almacena documentación en `~/.mycontext/projects/<id>/modulo/archivo.md`
-- [x] Detecta si el módulo ya existe y lo actualiza si cambió
+### `ctx file`
+- [x] Documenta zona en profundidad: 1000 chars × 5 archivos, sección SQL explícita (DEC-021)
+- [x] Reemplaza `ctx init --zona`
+
+### `ctx archive`
+- [x] Lee hasta 8000 chars del archivo real
+- [x] Documentación profunda: funciones, queries SQL, dependencias, patrones (DEC-022, DEC-042)
+- [x] Reemplaza `ctx module add`
+
+### `ctx sync`
+- [x] `git diff HEAD` + `--cached`; HEAD~1 solo como fallback (DEC-041)
+- [x] Re-documenta archivos cambiados con diff + doc existente (DEC-042)
+- [x] Documenta archivos nuevos automáticamente
+- [x] `php -l` en archivos PHP cambiados (DEC-048)
+- [x] Case card UI: Investigado / Hecho / Tener en cuenta (DEC-043, DEC-044)
+- [x] Captura ticket Jira, guarda ronda con memoria estructurada (DEC-045)
+
+### `ctx proyecto`
+- [x] Genera `PROYECTO.md` con Claude a partir de árbol + módulos + muestra de código (DEC-025)
+- [x] Almacenado en `~/.mycontext/projects/<id>/PROYECTO.md` — fuera de repos (DEC-029)
+- [x] `builder.py` lo inyecta automáticamente en cada sesión
+
+### `ctx retomar`
+- [x] Lista tickets activos de los últimos 7 días
+- [x] Muestra historial de rondas anteriores (DEC-046)
+- [x] Pide motivo de reapertura + imagen + archivo, inyecta historial en sesión
+- [x] `ticket_activo.json` como puente con `ctx sync` (DEC-037)
+
+### `ctx revision`
+- [x] Parsea sección 🔴 de revisión de PR pegada en terminal (DEC-047)
+- [x] Extrae archivos afectados, carga historial del ticket, lanza Claude con contexto completo
 
 ### `ctx claude`
 - [x] Carga contexto completo de todos los módulos del proyecto
 - [x] Lanza Claude Code con `session_context.md`
 
-### `ctx snapshot`
-- [x] Copia `~/.mycontext/projects/<id>/` a `~/.mycontext/snapshots/<id>/<timestamp>/`
-
 ### `ctx status`
-- [x] Muestra tabla de módulos documentados con nombre, descripción y archivo
+- [x] Módulos agrupados por carpeta nivel 1, solo proyecto actual, fecha de última doc (DEC-038)
 
 ---
 
 ## Completado — Servicios
 
 ### `indexer.py`
-- [x] `_cargar_ignorar()`: lee `.gitignore` + mínimo universal (DEC-014)
-- [x] `EXTENSIONES_NO_CODIGO`: blocklist en vez de allowlist (DEC-013)
-- [x] `_ordenar_por_relevancia()`: raíz primero, más pequeños primero
-- [x] `analizar_y_documentar()`: análisis + documentación en una sola llamada
-- [x] `_indexar_secuencial()`: fallback si JSON falla después de reparación
-- [x] `documentar_arquitectura()`: lee código real de cada carpeta nivel 1 (DEC-012)
-- [x] `indexar_proyecto_orquestado()`: agente por zona con paralelismo (ThreadPoolExecutor)
-- [x] `obtener_arbol_zona()`: escanea subcarpeta específica
-- [x] `obtener_archivos_recientes()`: usa git log para archivos activos
-- [x] `MAX_ARBOL_ENTRADAS = 300`: previene prompts masivos en proyectos grandes
-- [x] `ESPERA_INICIAL = 60`, `MAX_REINTENTOS = 4`: backoff robusto para rate limit
-
-### `zone_detector.py`
-- [x] `detectar_zonas()`: Claude detecta zonas dinámicamente según estructura real
-- [x] Sin listas hardcodeadas de carpetas — funciona para cualquier stack
+- [x] Blocklist `NON_CODE_EXTENSIONS` en vez de allowlist (DEC-013)
+- [x] `.gitignore` como fuente de verdad para patrones de ignorado (DEC-014)
+- [x] `documentar_arquitectura()`: top 15 carpetas por densidad, max_tokens 8000 (DEC-020)
+- [x] `analyze_file_deep()`: 8000 chars, actualización incremental con diff (DEC-042)
+- [x] `generate_case_summary()`: JSON único con Jira + memoria del caso (DEC-043)
+- [x] `describe_image()`: visión Claude API via base64 (DEC-032)
+- [x] Encoding `latin-1` para lectura de archivos PHP (DEC-028)
+- [x] PHP detection sin `composer.json` via `path.glob("*.php")` en raíz (DEC-031)
 
 ### `builder.py`
-- [x] `construir_contexto()`: lee `.md` de módulos relevantes y arma el contexto
+- [x] `build_context()`: lee `.md` de módulos relevantes y arma el contexto
+- [x] Inyecta `rol.md`, `PROYECTO.md`, módulos, brief, archivo, tarea (DEC-029)
 
 ### `caller.py`
-- [x] `lanzar_claude()`: escribe `session_context.md` con Contexto → Plan → Archivo → Tarea
-- [x] Búsqueda automática de `claude.cmd` en rutas conocidas de Windows (APPDATA/npm/)
-- [x] Diagnóstico interactivo si Claude no se encuentra: found-but-PATH vs not-installed
-- [x] Opción de reintentar sin re-correr la tarea
+- [x] `launch_claude()`: escribe `session_context.md`, lanza Claude Code
+- [x] Búsqueda automática de `claude.cmd` en rutas conocidas de Windows (DEC-019)
+- [x] Inyecta historial de ticket cuando viene de `ctx retomar`
 
-### `ctx retomar` (desde menú)
-- [x] Lista tickets activos de los últimos 7 días
-- [x] Muestra historial de rondas anteriores antes de arrancar
-- [x] Pide motivo de reapertura (comentario de QA), imagen opcional, archivo opcional
-- [x] Inyecta historial en `session_context.md` entre contexto y plan
-- [x] Guarda `ticket_activo.json` para que `ctx sync` capture el motivo al cerrar
+### `aicli/services/tickets.py`
+- [x] Historial de tickets en `~/.mycontext/tickets.json`
+- [x] Purga automática de entradas con >7 días sin actividad
+- [x] `guardar_ronda()` con campo `memoria` estructurada (DEC-045)
+- [x] `format_history()` compatible con rondas viejas sin campo `memoria`
 
-### `ctx sync` — captura de ticket
-- [x] Pregunta número de ticket Jira al final del flujo
-- [x] Pre-rellena con el ticket activo si viene de `ctx retomar`
-- [x] Guarda ronda con archivos tocados + mensaje Jira + motivo de reapertura
-- [x] Purga automática de tickets sin actividad en 7 días (`tickets.json`)
+### `aicli/services/activity.py`
+- [x] Registro de actividad para el tab ACTIVITY de la TUI
 
 ---
 
 ## Pendiente — Validación en campo
 
-- [ ] Verificar `ctx init --arquitectura` en proyecto PHP de 11.000 archivos
-- [ ] Verificar `ctx task --archivo modulo/archivo.php` en proyecto PHP
-- [ ] Verificar que los módulos se almacenan en estructura `modulo/archivo.md` correctamente
-- [ ] Empaquetar `.exe` nuevo con todos los cambios de la sesión 2026-06-14
-- [ ] Verificar que `caller.py` encuentra `claude.cmd` en la PC del trabajo
+- [ ] Empaquetar `.exe` nuevo: `pyinstaller ctx.spec`
+- [ ] Verificar Option B end-to-end (task, sync, archive, revision) en `.exe` compilado
+- [ ] Verificar `ctx init` en proyecto PHP de empresa con TUI activa
+- [ ] Verificar `ctx retomar` con ticket real en proyecto PHP
 
 ---
 
-## Pendiente — Mejoras identificadas
+## Decisiones resueltas
 
-- [ ] `_guardar_modulos` no verifica duplicados — si se corre `ctx init --zona X` dos veces,
-  se crean módulos duplicados en la BD para el mismo `file_path`
-- [ ] `ctx status` muestra módulos de TODOS los proyectos, no solo el del directorio actual
-- [ ] El stack "desconocido" en PHP puro hace que el agente orquestador tenga menos contexto;
-  considerar heurística adicional para detectar PHP sin `composer.json`
+Ver `knowledge/decisions.md` — DEC-001 a DEC-051.
 
 ---
 
@@ -139,23 +165,3 @@ refinamiento de calidad de documentación generada.
 3. Frontend Next.js — Portal de documentación por módulos
 4. Chatbot IA con RAG sobre la documentación generada
 5. Sistema de roles: admin, desarrollador, consulta
-
----
-
-## Decisiones resueltas
-
-- BD: SQLite en `~/.mycontext/ctx.db` (DEC-001)
-- Estructura docs: `~/.mycontext/projects/<id>/modulo/archivo.md` (DEC-009)
-- Stack detection: heurísticas de archivos en `init.py`
-- Señal de frescura: `last_updated_at` float Unix timestamp (DEC-007)
-- Filtrado de archivos: blocklist `EXTENSIONES_NO_CODIGO` + `.gitignore` (DEC-013, DEC-014)
-- Módulos funcionales vs archivos individuales: `analizar_y_documentar` decide (DEC-010)
-- Extended thinking para `ctx task`: `budget_tokens=2000` (DEC-015)
-- Frontend Fase 2: Next.js + chatbot RAG (DEC-008)
-- Pattern consistente: `modulo/archivo.php` en toda la CLI (DEC-009)
-
-## Decisiones pendientes
-
-- Estrategia para duplicados en `_guardar_modulos`: upsert vs insert siempre
-- Estrategia de búsqueda para chatbot RAG: keywords simples vs embeddings vectoriales
-- Detección de PHP puro sin `composer.json` para mejorar contexto del agente

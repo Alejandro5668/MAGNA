@@ -877,3 +877,122 @@ El diagnóstico elimina la fricción de arranque para usuarios nuevos.
 **Alternativas descartadas:**
 - Mantener español: incompatible con contribuciones externas y con el uso de Claude Code como asistente de desarrollo
 - Todo en español: contradice las convenciones de Python y el ecosistema open source
+
+---
+
+## DEC-051 — Reemplazo de menú questionary por TUI Textual completa
+
+**Decisión:** El menú interactivo con pyfiglet + questionary fue reemplazado por una TUI
+completa construida en Textual. El punto de entrada pasa de un loop `questionary.select()`
+a `MagnaApp().run()`. Los comandos que antes salían al terminal (suspendían la TUI) ahora
+se ejecutan dentro de `CommandOutputScreen` vía `TuiConsole`.
+
+**Por qué:** questionary no tiene acceso a widgets nativos de terminal (RichLog, OptionList,
+Sparkline, TabbedContent). El menú era una lista de texto sin feedback visual sobre el
+estado del contexto (módulos documentados, actividad reciente). Con Textual, el dashboard
+muestra arquitectura en tiempo real, la paleta Noche Estrellada Van Gogh da identidad visual,
+y el output de comandos aparece en el mismo panel sin salir a la terminal cruda.
+
+**Arquitectura TUI (Option B — sin suspend):**
+- `CommandOutputScreen` (ModalScreen): pantalla que muestra output de comandos en RichLog
+- `TuiConsole`: drop-in de Rich Console — enruta `print`/`status` al RichLog vía `call_from_thread`
+- `TuiConsole.request_input/confirm`: modales bloqueantes vía `run_coroutine_threadsafe`
+- `TuiConsole.suspend_and_run`: `app.suspend()` solo para lanzar Claude Code (subprocess interactivo)
+- `sync._sync_impl(ask_fn, confirm_fn)`: callbacks inyectables → questionary o TUI indistintamente
+- `task._execute_task(suspend_fn)`: bridge desacoplado del mecanismo de lanzamiento
+
+**Paleta Noche Estrellada (Van Gogh):**
+`ACCENT=#FFB703`, `SECTION=#5B8DEF`, `BORDER=#242C45`, `SEC=#AAB4D4`, `MUTED=#5E6A94`
+
+**Fix de concurrencia:** `@work async _worker_cmd` corría comandos directamente en el
+event loop de Textual, colisionando con `asyncio.run()` interno de questionary. Solución:
+`ThreadPoolExecutor` — el comando corre en un thread separado, la TUI sigue respondiendo.
+
+**Alternativas descartadas:**
+- Suspend completo para cada comando: Claude Code necesita suspend (terminal interactivo),
+  pero comandos como sync/task que solo leen input y escriben output no lo necesitan.
+  Suspend hace que la TUI "desaparezca" y vuelva durante el comando — experiencia rota.
+- Subprocess por comando: agrega latencia de proceso, pierde el estado de la TUI entre comandos.
+
+---
+
+## DEC-052 — CommandOutputScreen como ModalScreen con Container 100%×100%
+
+**Decisión:** `CommandOutputScreen` usa `ModalScreen[None]` (no `Screen`). Todos los
+widgets del compose están envueltos en `Container(id="co-frame")` con `width: 100%;
+height: 100%; background: #000000`. Lo mismo para `CommandScreen`: un `Container(id="cs-frame")`
+con `width: 100%; height: 100%` envuelve el contenido centrado.
+
+**Por qué:** En Textual 8.x, el `background` CSS en un `Screen` o `ModalScreen` no garantiza
+pintar todas las celdas del terminal. Las celdas donde no hay widgets concretos pueden mostrar
+el screen de abajo. Un widget `Container` con `width/height: 100%` sí se renderiza como widget
+concreto y pinta todas sus celdas. Con `ModalScreen`, el stack de screens se compone
+correctamente — el modal cubre todo el terminal sin que `MainScreen` se cuele por los bordes.
+
+**Alternativas descartadas:**
+- `background: #000000` solo en el CSS del screen: no es suficiente en Textual 8.x, el bug
+  persistió aun con color opaco correcto.
+- Screen regular (no Modal) con background: el Screen mostraba contenido del MainScreen
+  en las áreas no cubiertas por widgets.
+
+---
+
+## DEC-053 — Enriquecimiento visual Noche Estrellada: gradiente, hatch y Sparkline animada
+
+**Decisión:** Tres mejoras visuales al dashboard principal:
+1. **Logo MAGNA gradiente** — `_gradient_logo()` interpola línea a línea de azul (#5B8DEF)
+   a dorado (#FFB703). Devuelve un `rich.text.Text` con colores inline; el CSS de `#logo`
+   no necesita `color`.
+2. **Hatch puntillismo** — `#left` usa `hatch: "·" #5B8DEF 20%` en lugar de
+   `background: transparent`. Los puntos azules tenues simulan la textura de pincelada.
+3. **Sparkline sinusoidal animada** — `set_interval(0.25, _animate_spark)` actualiza la
+   Sparkline con una doble onda sinusoidal desplazada. `_spark_phase` se incrementa en cada tick.
+   El cielo parece ondular como en la pintura de Van Gogh.
+
+**Por qué:** El terminal no puede hacer curvas ni gradientes de pantalla completa, pero sí
+puede evocar la atmósfera de la pintura: misma paleta, textura donde hay caracteres (hatch),
+y movimiento suave donde el terminal lo permite (Sparkline animada). La combinación de tres
+efectos da profundidad visual sin depender de gráficos.
+
+**Alternativas descartadas:**
+- Gradiente horizontal (carácter a carácter): demasiado caro computacionalmente para el logo
+  completo; el gradiente vertical (línea a línea) da el mismo efecto con una fracción del costo.
+- Sparkline con datos reales estáticos: la data de 7 días tiene poca variación visual;
+  la onda animada aprovecha mejor el widget y evoca el tema visual de la CLI.
+
+---
+
+## DEC-054 — magna_task_plan: card visual estructurada para el plan de implementación
+
+**Decisión:** `magna_task_plan(console, modules, brief)` en `theme.py` reemplaza a
+`magna_panel(console, "Plan de implementación", brief)` en `task.py`. La nueva función
+genera un `Panel` con: línea de módulos en azul (#5B8DEF), separador, y cada línea del
+plan prefijada con `◆` dorado. Subtitle muestra el modelo y extended thinking.
+
+**Por qué:** El `magna_panel` genérico muestra el brief como texto plano sin estructura
+visual. Con `magna_task_plan`, el panel comunica qué módulos están afectados, qué pasos
+seguir, y con qué modelo se generó — en una sola vista antes de que Claude Code arranque.
+
+**Alternativas descartadas:**
+- Tabla Rich: rigidez de columnas; el brief es texto libre de 4-8 líneas que no encaja bien.
+
+---
+
+## DEC-055 — Imagen eliminada del flow TUI de ctx task; Footer simplificado en CommandOutputScreen
+
+**Decisión A — imagen en TUI:** El flow de `_worker_cmd` para "task" ya no pregunta por imagen
+(eliminados `_gather_image_async` y los dos InputModal adicionales). La feature `--imagen`
+sigue disponible por CLI directa. `_gather_image_async` fue removida como dead code.
+
+**Por qué:** La pregunta de portapapeles + ruta manual interrumpía el flow de dos pasos
+(descripción + archivo) con dos modales extra que el 95% de las veces se saltean. La imagen
+sigue siendo una feature válida para CLI scripted, no para el flujo interactivo TUI.
+
+**Decisión B — Footer de CommandOutputScreen:** El widget `Footer` fue removido del
+`CommandOutputScreen`. El hint de navegación se muestra en `#co-done` Static con:
+`── [esc dorado] [volver en SEC]`. El `Footer` mostraba "Back" en inglés con key invisible
+(`#5E6A94` sobre negro); el Static directo da control total sobre el markup.
+
+**Alternativas descartadas:**
+- Mantener Footer con CSS override: la key badge de Textual Footer tiene su propio renderizado
+  interno que no respeta colores de tema sin hacks de CSS complejos.
