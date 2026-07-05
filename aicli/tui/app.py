@@ -657,6 +657,12 @@ class StatusScreen(ModalScreen):
     StatusScreen {{
         background: #000000;
     }}
+    #st-frame {{
+        width: 100%;
+        height: 100%;
+        background: #000000;
+        layout: vertical;
+    }}
     #st-logo {{
         color: {_ACCENT};
         text-align: center;
@@ -721,17 +727,18 @@ class StatusScreen(ModalScreen):
         self._project_path = project_path
 
     def compose(self) -> ComposeResult:
-        yield Static(_gradient_logo(), id="st-logo")
-        yield Static("ARCHITECTURE", id="st-title")
-        yield Static(self._project_name, id="st-proj")
-        yield Rule(line_style="heavy")
-        with Container(id="st-body"):
-            yield DataTable(id="st-table", show_cursor=True, cursor_type="row")
-            yield Static("", id="st-summary")
-        yield Static(
-            f"  [bold {_ACCENT}]esc[/bold {_ACCENT}] [{_SEC}]·[/{_SEC}] [{_SEC}]volver al dashboard[/{_SEC}]",
-            id="st-foot", markup=True,
-        )
+        with Container(id="st-frame"):
+            yield Static(_gradient_logo(), id="st-logo")
+            yield Static("ARCHITECTURE", id="st-title")
+            yield Static(self._project_name, id="st-proj")
+            yield Rule(line_style="heavy")
+            with Container(id="st-body"):
+                yield DataTable(id="st-table", show_cursor=True, cursor_type="row")
+                yield Static("", id="st-summary")
+            yield Static(
+                f"  [bold {_ACCENT}]esc[/bold {_ACCENT}] [{_SEC}]·[/{_SEC}] [{_SEC}]volver al dashboard[/{_SEC}]",
+                id="st-foot", markup=True,
+            )
 
     def on_mount(self) -> None:
         # Aplicar colores de la paleta MAGNA directamente — más confiable
