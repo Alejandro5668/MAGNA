@@ -14,6 +14,7 @@ from sqlmodel import Session, select
 from aicli.db import engine
 from aicli.db.models import Project, Module
 from aicli.services.indexer import analyze_file_deep, generate_case_summary, NON_CODE_EXTENSIONS
+from aicli.services.stack_profile import get_profile
 from aicli.services.tickets import load_tickets, save_round, format_history, read_active_ticket, clear_active_ticket
 from aicli.tui.theme import (
     magna_ok, magna_warn, magna_error, magna_info, magna_status, magna_panel,
@@ -184,6 +185,7 @@ def _sync_impl(ask_fn=None, confirm_fn=None):
                 path, file_path, project.name, project.stack or "desconocido",
                 diff=file_diff,
                 existing_doc=existing_doc,
+                encoding=get_profile(project.stack or "desconocido").encoding,
             )
         except Exception as e:
             magna_warn(console, f"{file_path} — falló: {e}")

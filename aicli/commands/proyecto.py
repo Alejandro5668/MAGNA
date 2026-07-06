@@ -4,6 +4,7 @@ from sqlmodel import Session, select
 from aicli.db import engine
 from aicli.db.models import Project, Module
 from aicli.services.indexer import get_tree, generate_project_md
+from aicli.services.stack_profile import get_profile
 from aicli.tui.theme import print_header, print_footer, magna_status, magna_ok, magna_info, magna_error, magna_panel
 from rich.console import Console
 
@@ -48,7 +49,9 @@ def proyecto():  # registered as "scan" in main.py
     with magna_status(console, "Analizando estructura y generando conocimiento..."):
         tree = get_tree(path)
         content, tokens = generate_project_md(
-            path, p.name, p.stack or "desconocido", tree, modules, on_progreso=on_progreso
+            path, p.name, p.stack or "desconocido", tree, modules,
+            on_progreso=on_progreso,
+            encoding=get_profile(p.stack or "desconocido").encoding,
         )
 
     dest.parent.mkdir(parents=True, exist_ok=True)

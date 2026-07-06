@@ -79,7 +79,7 @@ def get_tree(path: Path) -> list[str]:
     return sorted(files)
 
 
-def read_key_files(path: Path, tree: list[str]) -> str:
+def read_key_files(path: Path, tree: list[str], encoding: str = "utf-8") -> str:
     candidates = [r for r in tree if Path(r).suffix not in NON_CODE_EXTENSIONS]
     sorted_files = _sort_by_relevance(candidates, path)
 
@@ -91,7 +91,7 @@ def read_key_files(path: Path, tree: list[str]) -> str:
         depth = len(Path(relative_path).parts)
         limit = MAX_CHARS_ROOT_FILE if depth == 1 else MAX_CHARS_NORMAL_FILE
         try:
-            text = (path / relative_path).read_text(encoding="latin-1")[:limit]
+            text = (path / relative_path).read_text(encoding=encoding)[:limit]
             fragment = f"### {relative_path}\n{text}"
             total_chars += len(fragment)
             fragments.append(fragment)
@@ -304,6 +304,7 @@ def analyze_file_deep(
     stack: str,
     diff: str = "",
     existing_doc: str = "",
+    encoding: str = "utf-8",
 ) -> tuple[str, int]:
     """
     Genera o actualiza documentación de un archivo individual.
@@ -311,7 +312,7 @@ def analyze_file_deep(
     """
     source_file = path / file_path
     try:
-        content = source_file.read_text(encoding="latin-1")[:8000]
+        content = source_file.read_text(encoding=encoding)[:8000]
     except FileNotFoundError:
         content = ""
 
@@ -384,7 +385,8 @@ Solo el markdown, sin texto adicional antes ni después."""
 
 def document_zone(
     path: Path, zone_path: Path, stack: str,
-    on_progreso: Callable[[str], None] | None = None
+    on_progreso: Callable[[str], None] | None = None,
+    encoding: str = "utf-8",
 ) -> list[dict]:
     """
     Documenta en profundidad una zona/carpeta específica.
@@ -414,7 +416,7 @@ def document_zone(
     samples = []
     for af in sorted_files[:5]:
         try:
-            content = af.read_text(encoding="latin-1")[:1000]
+            content = af.read_text(encoding=encoding)[:1000]
             samples.append(f"### {af.relative_to(path)}\n{content}")
         except Exception:
             continue
@@ -525,12 +527,12 @@ def get_recent_files(path: Path, days: int) -> list[str]:
         return []
 
 
-def _read_pattern_sample(path: Path, tree: list[str], pattern: str, max_chars: int) -> str:
+def _read_pattern_sample(path: Path, tree: list[str], pattern: str, max_chars: int, encoding: str = "utf-8") -> str:
     """Lee el primer archivo del árbol que contenga el patrón en su ruta."""
     for file_path in tree:
         if pattern in file_path and Path(file_path).suffix not in NON_CODE_EXTENSIONS:
             try:
-                content = (path / file_path).read_text(encoding="latin-1")[:max_chars]
+                content = (path / file_path).read_text(encoding=encoding)[:max_chars]
                 return f"### {file_path}\n{content}"
             except Exception:
                 continue
@@ -540,7 +542,8 @@ def _read_pattern_sample(path: Path, tree: list[str], pattern: str, max_chars: i
 def generate_project_md(
     path: Path, name: str, stack: str, tree: list[str],
     modules: list[dict],
-    on_progreso: Callable[[str], None] | None = None
+    on_progreso: Callable[[str], None] | None = None,
+    encoding: str = "utf-8",
 ) -> tuple[str, int]:
     """
     Genera PROYECTO.md con conocimiento estructural inferido del código.
@@ -554,8 +557,8 @@ def generate_project_md(
         for m in modules[:30]
     ])
 
-    querys_sample = _read_pattern_sample(path, tree, "_querys", 2000)
-    conf_sample = _read_pattern_sample(path, tree, "conf/", 1000)
+    querys_sample = _read_pattern_sample(path, tree, "_querys", 2000, encoding=encoding)
+    conf_sample = _read_pattern_sample(path, tree, "conf/", 1000, encoding=encoding)
 
     pendiente = "> pendiente — enriquecé esta sección con tu conocimiento del proyecto"
 
@@ -658,7 +661,9 @@ Filtros siempre presentes (multi-tenant, activo, etc.):
 
 def document_architecture(
     path: Path, name: str, stack: str, tree: list[str],
-    on_progreso: Callable[[str], None] | None = None
+    on_progreso: Callable[[str], None] | None = None,
+    encoding: str = "latin-1",
+    hints: str = "",
 ) -> list[dict]:
     """
     Detecta los módulos reales del proyecto leyendo código de cada carpeta de nivel 1.
@@ -690,7 +695,7 @@ def document_architecture(
         samples = []
         for af in direct_files[:2]:
             try:
-                content = af.read_text(encoding="latin-1")[:500]
+                content = af.read_text(encoding=encoding)[:500]
                 samples.append(f"### {af.relative_to(path)}\n{content}")
             except Exception:
                 continue
@@ -705,7 +710,7 @@ def document_architecture(
     if not candidates:
         root = [f for f in tree if len(Path(f).parts) == 1]
         candidates = [{"carpeta": "raiz", "n_archivos": len(root),
-                       "archivos": root[:6], "muestra": leer_archivos_clave(path, root)}]
+                       "archivos": root[:6], "muestra": read_key_files(path, root, encoding=encoding)}]
 
     # Limitar a 15 candidatos para mantener el output dentro de 8000 tokens
     # En proyectos grandes (>15 carpetas) se priorizan las que tienen más archivos
@@ -722,13 +727,11 @@ def document_architecture(
         for c in top_candidates
     ])
 
+    stack_hints = f"\n{hints}\n" if hints else ""
     prompt = f"""Analizá este proyecto y documentá sus módulos de negocio reales.
 
 Proyecto: {name}  |  Stack: {stack}
-
-El proyecto sigue el patrón modulo/archivo.php — cada carpeta de nivel 1 puede ser
-un módulo del sistema o una carpeta de infraestructura (config, assets, libs, etc).
-
+{stack_hints}
 Carpetas con archivos de código directamente adentro (las {len(top_candidates)} con más archivos):
 {summary}
 
