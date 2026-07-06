@@ -1,5 +1,6 @@
 <div align="center">
   <h1>MAGNA</h1>
+  <img src="assets/icon.png" alt="MAGNA logo" width="120" />
   <p><em>Motor de contexto inteligente para Claude Code.</em></p>
   <p>
     <img src="https://img.shields.io/badge/python-3.11+-3776AB?logo=python&logoColor=white" alt="Python 3.11+" />
