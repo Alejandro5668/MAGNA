@@ -8,6 +8,7 @@ from sqlmodel import Session, select
 from aicli.db import engine
 from aicli.db.models import Project, Module
 from aicli.services.indexer import analyze_file_deep, module_needs_update
+from aicli.services.stack_profile import get_profile
 from aicli.tui.theme import magna_error, magna_status, ACCENT, SECTION
 
 app = typer.Typer()
@@ -49,7 +50,10 @@ def archive(
         return
 
     with magna_status(console, f"Analizando {source}..."):
-        content_md, tokens = analyze_file_deep(path, source, project.name, project.stack or "desconocido")
+        content_md, tokens = analyze_file_deep(
+            path, source, project.name, project.stack or "desconocido",
+            encoding=get_profile(project.stack or "desconocido").encoding,
+        )
 
     base = Path.home() / ".mycontext" / "projects" / str(project.id)
     md_file = base / Path(source).with_suffix(".md")

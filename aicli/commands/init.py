@@ -14,47 +14,11 @@ from aicli.services.indexer import (
     module_needs_update,
     NON_CODE_EXTENSIONS,
 )
-from aicli.tui.theme import magna_ok, magna_warn, magna_info, magna_status, ACCENT, SECTION
+from aicli.services.stack_profile import get_profile
+from aicli.tui.theme import magna_ok, magna_warn, magna_info, ACCENT, SECTION
 
 app = typer.Typer()
 console = Console()
-
-_ROL_DEFAULT = """# Instrucciones — Claude Code + AICLI
-
-## Contexto de sesión
-AICLI ha cargado documentación del proyecto en este archivo de contexto.
-Si un módulo no aparece en el contexto, leé el archivo real antes de hacer suposiciones.
-
-## Idioma
-Respondé siempre en **español**. Código, variables y comentarios: en el idioma que ya usa el proyecto.
-
-## Estilo de respuesta
-- Una oración de qué vas a hacer antes del primer tool call.
-- Actualizaciones breves cuando encuentres algo relevante o cambies de dirección.
-- Al final: 1-2 oraciones — qué cambió y qué sigue.
-- Referenciá código como `archivo.php:línea`.
-
-## Rol técnico
-Actuá como desarrollador senior con 10+ años en PHP, MySQL y JavaScript:
-- Identificá el patrón del código antes de proponer cambios.
-- Seguí el estilo existente del archivo — no introduzcas convenciones nuevas.
-- Explicá la causa raíz antes de proponer el fix de un bug.
-- No agregues features ni abstracciones más allá de lo pedido.
-- Editá archivos existentes antes de crear nuevos.
-
-## SQL — verificación obligatoria
-**Nunca asumas nombres de tablas o campos.**
-Antes de cualquier query:
-1. Leé `*_querys.php` del módulo → tablas reales en los FROM/JOIN de `$querys[]`.
-2. Usá los alias exactos del SELECT de ese archivo.
-3. Considerá el impacto multi-tenant: todo filtro por empresa/sesión.
-4. Incluí un SELECT de verificación antes de cualquier UPDATE/DELETE en producción.
-
-## Confirmación obligatoria antes de:
-- Queries UPDATE/DELETE/DROP sobre datos de producción.
-- Borrar archivos, ramas o contenido irreversible.
-- Push a repositorios remotos o acciones visibles para otros.
-"""
 
 
 def detect_stack(path: Path) -> str:
@@ -150,10 +114,10 @@ def _save_modules(modules: list[dict], project: Project) -> None:
         session.commit()
 
 
-def _create_rol_if_missing() -> None:
+def _create_rol_if_missing(role_template: str) -> None:
     rol_path = Path.home() / ".mycontext" / "rol.md"
     if not rol_path.exists():
-        rol_path.write_text(_ROL_DEFAULT, encoding="utf-8")
+        rol_path.write_text(role_template, encoding="utf-8")
 
 
 @app.callback(invoke_without_command=True)
@@ -164,14 +128,15 @@ def init():
     path = Path.cwd()
     name = path.name
     stack = detect_stack(path)
+    profile = get_profile(stack)
 
-    _create_rol_if_missing()
+    _create_rol_if_missing(profile.role_template)
 
     with Session(engine) as session:
         existing_project = session.exec(select(Project).where(Project.path == str(path))).first()
 
     if existing_project:
-        _update_project(existing_project, path)
+        _update_project(existing_project, path, profile.encoding)
         return
 
     project = Project(
@@ -191,7 +156,12 @@ def init():
     console.print(f"\n[bold {ACCENT}]Mapeando arquitectura de {name}...[/bold {ACCENT}]")
     magna_info(console, f"{n_code:,} archivos de código · {stack}")
 
-    raw_modules = document_architecture(path, name, stack, tree, on_progreso=_progreso_print)
+    raw_modules = document_architecture(
+        path, name, stack, tree,
+        on_progreso=_progreso_print,
+        encoding=profile.encoding,
+        hints=profile.hints,
+    )
     modules = [
         {**m, "content_md": m.pop("documentation", ""), "last_updated_at": time.time()}
         for m in raw_modules
@@ -222,7 +192,7 @@ def init():
     ))
 
 
-def _update_project(project: Project, path: Path) -> None:
+def _update_project(project: Project, path: Path, encoding: str = "utf-8") -> None:
     with Session(engine) as session:
         modules_db = list(session.exec(select(Module).where(Module.project_id == project.id)).all())
 
@@ -234,7 +204,7 @@ def _update_project(project: Project, path: Path) -> None:
         if module_needs_update(module.file_path, path, module):
             source_file = path / module.file_path
             try:
-                source = source_file.read_text(encoding="latin-1")
+                source = source_file.read_text(encoding=encoding)
             except FileNotFoundError:
                 magna_warn(console, f"{module.file_path} — no encontrado, se omite")
                 continue

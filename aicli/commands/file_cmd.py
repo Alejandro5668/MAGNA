@@ -8,6 +8,7 @@ from sqlmodel import Session, select
 from aicli.db import engine
 from aicli.db.models import Project, Module
 from aicli.services.indexer import document_zone, NON_CODE_EXTENSIONS
+from aicli.services.stack_profile import get_profile
 from aicli.tui.theme import magna_ok, magna_warn, magna_error, magna_info, magna_status, ACCENT, SECTION
 
 app = typer.Typer()
@@ -95,7 +96,9 @@ def file_cmd(
     try:
         with magna_status(console, f"Analizando zona '{folder}'..."):
             modules = document_zone(
-                path, zone_path, project.stack or "desconocido", on_progreso=on_progreso
+                path, zone_path, project.stack or "desconocido",
+                on_progreso=on_progreso,
+                encoding=get_profile(project.stack or "desconocido").encoding,
             )
     except Exception as e:
         magna_error(console, f"No se pudo documentar la zona — {e}")
