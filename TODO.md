@@ -275,7 +275,7 @@ código muerto que acumuló la refactorización anterior.
 - [x] `generar_proyecto_md()` — nueva función en indexer.py que genera PROYECTO.md estructurado con secciones pendiente para lo que no puede inferir (DEC-025)
 - [x] Eliminación del orquestador y `zone_detector.py` — código muerto tras la refactorización; 6 funciones + 1 archivo borrados (DEC-030)
 - [x] `prompt_proyecto.md` — prompt para extraer conocimiento del proyecto en otro Claude
-- [x] `PROYECTO.md` de empresa Kawak — generado con el prompt y disponible en raíz de AICLI
+- [x] `PROYECTO.md` de empresa cliente — generado con el prompt y disponible en raíz de MAGNA
 - [x] Decisiones DEC-020 a DEC-031 documentadas en `knowledge/decisions.md`
 - [x] `ctx task --imagen` — visión Claude API via base64, descripción inyectada en session_context.md (DEC-032)
 - [x] Mensaje de Jira: ASCII puro, emojis 🌱🛠️, máx 6 líneas (DEC-033)
@@ -415,7 +415,7 @@ aplicar paleta Van Gogh, y redirigir el output de comandos al RichLog de Textual
 | 2026-06-11 | Sesión de planificación: DEC-007 señal de frescura, DEC-008 frontend Next.js, corrección DEC-001 SQLite, prompt para Lovable creado en design/lovable_prompt.md, progress.md reorganizado por fases | Implementar migración MySQL→SQLite en db/__init__.py, luego señal de frescura en models.py e indexer.py |
 | 2026-06-13 | Migración SQLite completa, señal de frescura, todos los comandos CLI implementados (task, claude, snapshot), menú interactivo con pyfiglet+questionary, API key flow, selector de proyecto, sistema de logs, rate limit handling, soporte multi-stack | Verificar ctx task y ctx claude end-to-end en otro PC, empaquetar como .exe |
 | 2026-06-14 | Optimización completa: ctx init con 3 modos nuevos (--zona/--reciente/--arquitectura), ctx task con extended thinking + brief + --archivo, ctx module add simplificado a ruta, docs en estructura modulo/archivo.md, diagnóstico Claude en Windows, documentar_arquitectura con código real, depuración de código, decisiones DEC-009 a DEC-019 | Verificar todo en proyecto PHP de empresa (11.000 archivos), empaquetar .exe nuevo |
-| 2026-06-14 (2) | Reorganización completa de comandos (ctx file/archive/sync/proyecto), rol.md global PHP-específico, PROYECTO.md automático con IA, fix encoding latin-1, fix duplicados _guardar_modulos, eliminación orquestador muerto, DEC-020 a DEC-031, PROYECTO.md Kawak generado | Verificar nuevos comandos en PHP empresa, empaquetar .exe |
+| 2026-06-14 (2) | Reorganización completa de comandos (ctx file/archive/sync/proyecto), rol.md global PHP-específico, PROYECTO.md automático con IA, fix encoding latin-1, fix duplicados _guardar_modulos, eliminación orquestador muerto, DEC-020 a DEC-031, PROYECTO.md cliente generado | Verificar nuevos comandos en PHP empresa, empaquetar .exe |
 | 2026-06-14 (3) | Documentadas DEC-032 a DEC-035 (imagen/Jira/return-vs-exit/nombres de archivos); corrección a DEC-031 (glob no rglob) | Verificar comandos nuevos en PHP empresa, empaquetar .exe nuevo |
 | 2026-06-15 | Integración Ponytail (tip en sync + panel en init), limpieza por audit (6 fixes), images→assets, README profesional, DEC-036 multi-stack | Verificar comandos en PHP empresa, empaquetar .exe |
 | 2026-06-20 | ctx retomar (historial de tickets reabiertos), QA agent en sync, ctx status reescrito por carpeta, fix encoding builder/caller | Empaquetar .exe, verificar retomar y QA con ticket real en PHP empresa |
