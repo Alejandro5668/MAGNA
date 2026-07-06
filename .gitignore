@@ -43,6 +43,10 @@ desktop.ini
 htmlcov/
 .pytest_cache/
 
+# Archivos de trabajo personal (no van al repo público)
+TODO.md
+knowledge/progress.md
+
 # Claude Code — archivos de trabajo del CLI (no del proyecto)
 .agents/
 .claude/skills/

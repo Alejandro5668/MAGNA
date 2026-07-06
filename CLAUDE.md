@@ -1,89 +1,98 @@
-# AICLI — Motor de Contexto Inteligente para Claude Code
+# MAGNA — Motor de Contexto Inteligente para Claude Code
 
 ## Qué es este proyecto
 
-CLI personal en Python que actúa como capa de contexto entre el desarrollador y Claude Code.
+CLI en Python que actúa como capa de contexto entre el desarrollador y Claude Code.
 Elimina el tiempo perdido re-explicando arquitectura, stack y convenciones en cada sesión nueva.
-
-## El problema que resuelve
-
-Cada sesión de Claude Code empieza desde cero. AICLI conoce cada proyecto activo, su
-estructura modular, esquemas SQL, convenciones del equipo y decisiones técnicas acumuladas.
-Entrega a Claude exactamente el contexto que necesita para la tarea actual, ni más ni menos.
+El knowledge store vive en `~/.mycontext/` — completamente fuera de cualquier repositorio de cliente.
 
 ## Stack tecnológico
 
 | Librería | Versión | Rol |
 |----------|---------|-----|
-| Python | 3.11 | Lenguaje base |
-| Typer | 0.26 | Estructura de comandos CLI (type hints, --help automático) |
-| Rich | 15 | Output visual en terminal (paneles, tablas, colores, spinners) |
-| SQLModel | pendiente | ORM sobre SQLite (SQLAlchemy + Pydantic combinados) |
-| Anthropic SDK | pendiente | Llamadas a Claude API |
-| httpx | pendiente | HTTP client (integraciones futuras) |
-| python-dotenv | pendiente | Manejo seguro de ANTHROPIC_API_KEY |
-
-## Arquitectura — 3 capas
-
-```
-┌──────────────────────────────────────────────┐
-│  1. INDEXADOR                                │
-│     Escanea el proyecto activo               │
-│     Detecta: stack, estructura, dependencias │
-├──────────────────────────────────────────────┤
-│  2. KNOWLEDGE STORE                          │
-│     SQLite en ~/.mycontext/                  │
-│     Módulos atómicos por proyecto            │
-│     Reutilización de patrones entre proyectos│
-├──────────────────────────────────────────────┤
-│  3. OUTPUT LAYER                             │
-│     Genera CLAUDE.md optimizado por sesión   │
-│     Ensambla contexto dinámico según tarea   │
-└──────────────────────────────────────────────┘
-```
+| Python | 3.11+ | Lenguaje base |
+| Typer | 0.26 | Estructura de comandos CLI |
+| Rich | 15 | Output visual — paneles, tablas, markup |
+| Textual | 8.2.8 | TUI completa — dashboard, animaciones, paleta Noche Estrellada |
+| SQLModel + SQLite | 0.0.38 | Knowledge store local en `~/.mycontext/` |
+| Anthropic SDK | 0.107 | Claude API — análisis, documentación, extended thinking |
+| python-dotenv | instalado | Manejo seguro de ANTHROPIC_API_KEY |
 
 ## Comandos CLI
 
 | Comando | Descripción |
 |---------|-------------|
-| `ctx init` | Escanea proyecto activo, detecta stack, genera CLAUDE.md inicial |
-| `ctx claude` | Inyecta contexto completo y lanza Claude Code como subprocess |
-| `ctx task <texto>` | Detecta módulos afectados con IA, lanza Claude con contexto específico |
-| `ctx module add` | Documenta un módulo nuevo del proyecto con ayuda de IA |
-| `ctx status` | Panel Rich: estado del contexto, módulos documentados, tokens estimados |
-| `ctx snapshot` | Guarda estado actual del contexto antes de grandes cambios |
-
-`ctx task` reemplaza la integración con Jira en las fases iniciales. El desarrollador
-describe la tarea en texto libre y AICLI detecta los módulos relevantes.
+| `ctx init` | Escanea proyecto activo, detecta stack, documenta arquitectura con IA |
+| `ctx file <carpeta>` | Documenta en profundidad una zona específica del proyecto |
+| `ctx archive <ruta>` | Analiza y documenta un archivo individual en detalle |
+| `ctx task "texto"` | Detecta módulos relevantes con extended thinking, genera plan técnico, lanza Claude |
+| `ctx sync` | Detecta cambios con git, actualiza docs, genera memoria del caso + mensaje Jira |
+| `ctx proyecto` | Genera PROYECTO.md con conocimiento estructural inferido del código |
+| `ctx retomar` | Retoma ticket reabierto por QA con historial de rondas anteriores |
+| `ctx claude` | Lanza Claude Code con el contexto completo del proyecto |
+| `ctx profile` | Muestra perfil de stack activo y gestiona rol.md |
+| `ctx status` | Arquitectura documentada del proyecto agrupada por carpeta |
 
 ## Estructura del proyecto
 
 ```
-AICLI/
+MAGNA/
 ├── aicli/
-│   ├── __init__.py          # Versión del paquete
-│   ├── commands/            # Un archivo por comando CLI
-│   │   └── __init__.py
-│   ├── db/                  # Modelos SQLModel + conexión SQLite
-│   │   └── __init__.py
-│   └── services/            # Lógica de negocio (indexer, builder, caller)
-│       └── __init__.py
-├── knowledge/               # Documentación del proyecto para sesiones Claude
-│   ├── decisions.md         # Decisiones técnicas y su justificación
-│   ├── patterns.md          # Patrones de código establecidos en este proyecto
-│   └── progress.md          # Estado actual: qué está hecho y qué sigue
+│   ├── commands/
+│   │   ├── init.py        # ctx init     — mapea arquitectura del proyecto
+│   │   ├── file_cmd.py    # ctx file     — documenta una zona en profundidad
+│   │   ├── archive.py     # ctx archive  — analiza un archivo individual
+│   │   ├── sync.py        # ctx sync     — sincroniza docs post-tarea
+│   │   ├── proyecto.py    # ctx proyecto — genera PROYECTO.md
+│   │   ├── task.py        # ctx task     — extended thinking + brief técnico
+│   │   ├── claude_cmd.py  # ctx claude   — lanza Claude Code con contexto completo
+│   │   ├── profile.py     # ctx profile  — perfil de stack + gestión de rol.md
+│   │   └── status.py      # ctx status   — arquitectura documentada por carpeta
+│   ├── db/
+│   │   ├── models.py      # Modelos Project, Module, Activity (SQLModel)
+│   │   └── migrations.py  # Migraciones de esquema SQLite
+│   ├── services/
+│   │   ├── indexer.py     # Análisis e indexación con Claude API
+│   │   ├── stack_profile.py # StackProfile dataclass — perfiles por stack
+│   │   ├── builder.py     # Ensambla session_context.md por sesión
+│   │   ├── caller.py      # Lanza Claude Code como subprocess
+│   │   ├── activity.py    # Registro de actividad para el dashboard TUI
+│   │   └── tickets.py     # Historial de tickets con purga automática
+│   └── tui/
+│       ├── app.py         # TUI Textual — MainScreen, ProjectScreen, modales
+│       ├── theme.py       # Paleta Noche Estrellada + funciones de output Rich
+│       └── output_screen.py # CommandOutputScreen + TuiConsole (Option B)
+├── tests/
+│   └── test_commands.py   # 23 smoke tests
+├── prompts/               # Documentación de los prompts usados en indexer.py
+├── knowledge/             # Decisiones técnicas y patrones del proyecto
+│   ├── decisions.md       # DEC-001 a DEC-060 — decisiones con justificación
+│   ├── patterns.md        # Patrones de código establecidos
+│   └── commands.md        # Comandos disponibles y cuándo usarlos
 ├── .claude/
 │   └── commands/
-│       └── start.md         # Comando /project:start
-├── main.py                  # Entry point — app Typer registra todos los comandos
-├── requirements.txt         # Dependencias del proyecto
-└── CLAUDE.md                # Este archivo
+│       └── start.md       # Comando /project:start
+├── main.py                # Entry point — lanza MagnaApp (Textual)
+├── requirements.txt       # Dependencias de runtime
+└── ctx.spec               # Configuración PyInstaller para .exe
 ```
 
 ## Almacenamiento
 
-Todo el conocimiento vive en `~/.mycontext/` — completamente fuera de cualquier repositorio
-de cliente. La base de datos SQLite de AICLI nunca contamina repos externos.
+```
+~/.mycontext/
+├── ctx_bd.db              # Base de datos SQLite — proyectos y módulos
+├── aicli_log.log          # Logs de operaciones
+├── rol.md                 # Rol de senior developer inyectado en cada sesión
+├── .env                   # ANTHROPIC_API_KEY (nunca se commitea)
+├── evidencias/            # Capturas de pantalla temporales (purga 7 días)
+├── tickets.json           # Historial de tickets reabiertos (purga 7 días)
+└── projects/
+    └── <id>/
+        ├── PROYECTO.md    # Conocimiento estructural del proyecto
+        └── modulo/
+            └── archivo.md # Documentación de cada módulo
+```
 
 ## Filosofía de desarrollo
 
@@ -106,10 +115,10 @@ de cliente. La base de datos SQLite de AICLI nunca contamina repos externos.
 - Nombres de variables y funciones en `snake_case`
 - Nombres de clases en `PascalCase`
 - Constantes en `UPPER_SNAKE_CASE`
-- Strings en español cuando son mensajes para el usuario, inglés para código
+- Mensajes para el usuario en español, código en inglés
 - Type hints en todas las funciones públicas
 
 ## Para empezar una sesión de trabajo
 
-Ejecuta `/project:start` para obtener el resumen del estado actual, los gaps de
+Ejecutá `/project:start` para obtener el resumen del estado actual, los gaps de
 documentación identificados y el siguiente paso concreto recomendado.
