@@ -58,6 +58,7 @@ El knowledge store vive en `~/.mycontext/` — completamente fuera de cualquier 
 | `ctx retomar` | Retoma un ticket reabierto por QA con historial de rondas anteriores |
 | `ctx sync` | Detecta cambios con git, actualiza documentación y genera memoria del caso + mensaje Jira |
 | `ctx claude` | Lanza Claude Code con el contexto completo del proyecto |
+| `ctx profile` | Muestra el perfil de stack detectado y gestiona rol.md (regenerar con IA o editar) |
 | `ctx status` | Muestra la arquitectura documentada del proyecto agrupada por carpeta |
 
 ## Contexto que recibe Claude
@@ -117,6 +118,7 @@ MAGNA/
 │   │   ├── proyecto.py    # ctx proyecto — genera PROYECTO.md
 │   │   ├── task.py        # ctx task     — extended thinking + brief técnico
 │   │   ├── claude_cmd.py  # ctx claude   — lanza Claude Code con contexto completo
+│   │   ├── profile.py     # ctx profile  — perfil de stack activo + gestión de rol.md
 │   │   └── status.py      # ctx status   — arquitectura documentada por carpeta
 │   ├── db/
 │   │   ├── models.py      # Modelos Project, Module y Activity (SQLModel)

@@ -1082,3 +1082,61 @@ las convenciones específicas de esa empresa y las inyecta en cada sesión de Cl
   debe funcionar bien desde el primer `ctx init` sin configuración.
 - Soportar todos los stacks desde el inicio: sin usuarios reales de otros stacks, no se puede
   validar si los perfiles funcionan. PHP vanilla primero, luego iterar con feedback real.
+
+---
+
+## DEC-058 — StackProfile dataclass: perfiles de stack como configuración explícita
+
+**Decisión:** Implementar `StackProfile` dataclass en `aicli/services/stack_profile.py` con campos
+`name`, `encoding`, `hints` y `role_template`. Cada stack tiene un perfil built-in; una alias table
+resuelve variantes del nombre (`"laravel"`, `"php-laravel"`, etc.) al mismo perfil.
+
+**Por qué:** El encoding, los hints de documentación y el template de rol son valores que dependen
+del stack — no de la empresa. Encapsularlos en un objeto tipado elimina el hardcoding PHP que
+existía en `init.py`, `indexer.py` y los comandos de sincronización, sin agregar configuración
+manual para el usuario.
+
+**Perfiles built-in:** `php` (latin-1, hints SQL/procedural), `laravel`, `nextjs`, `python`,
+`generic` (todos utf-8). El perfil `php` es el PHP vanilla actual convertido a config explícita.
+
+**Alternativas descartadas:**
+- YAML/TOML por proyecto: requiere que el usuario configure algo antes de usar MAGNA.
+- Detección por extensiones en runtime: dispersa la lógica de stack en múltiples lugares.
+
+---
+
+## DEC-059 — generate_role_md: rol.md generado con IA desde el código real
+
+**Decisión:** `generate_role_md()` en `indexer.py` reemplaza `_ROL_DEFAULT` hardcodeado.
+Lee hasta 3000 chars de archivos clave del proyecto y llama a Claude para generar un `rol.md`
+específico para esa empresa. Si la llamada falla, usa el `role_template` del `StackProfile`
+como fallback sin interrumpir el flujo.
+
+**Por qué:** Un template PHP hardcodeado es inútil para proyectos Laravel, Next.js o Python.
+Al generar `rol.md` desde el código real, Claude aprende las convenciones específicas de la
+empresa (patrones de queries, arquitectura, acuerdos del equipo) en lugar de recibir un rol
+genérico. El fallback garantiza que `ctx init` nunca falle por un error de API en este paso.
+
+**Alcance:** Solo afecta a `main` (open source). La rama `personal` mantiene el `rol.md`
+manual ya afinado para PHP vanilla — nunca se sobreescribe.
+
+**Alternativas descartadas:**
+- Template por stack sin IA: más genérico que el actual, no aprende las convenciones reales.
+- Siempre generar con IA sin fallback: rompe `ctx init` en entornos sin API key válida.
+
+---
+
+## DEC-060 — ctx profile: transparencia del perfil detectado para usuarios externos
+
+**Decisión:** Nuevo comando `ctx profile` en `aicli/commands/profile.py` que muestra el
+perfil de stack activo (nombre, encoding, hints) y un preview de `rol.md`. Flags:
+`--regenerar` llama a `generate_role_md` y sobreescribe `rol.md`; `--editar` abre el archivo
+en `$EDITOR` o con `os.startfile` en Windows.
+
+**Por qué:** Un usuario externo que instala MAGNA necesita entender qué perfil detectó la
+herramienta y por qué se comporta como se comporta. Sin este comando, la detección automática
+es una caja negra. `--regenerar` permite refrescar el rol si el proyecto evoluciona.
+
+**Alternativas descartadas:**
+- Mostrar esta info en `ctx status`: mezcla dos responsabilidades distintas.
+- Solo `--editar` sin `--regenerar`: obliga al usuario a saber qué escribir en rol.md.
