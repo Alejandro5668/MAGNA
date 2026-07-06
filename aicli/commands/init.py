@@ -11,6 +11,7 @@ from aicli.services.indexer import (
     get_tree,
     document_architecture,
     generate_module_content,
+    generate_role_md,
     module_needs_update,
     NON_CODE_EXTENSIONS,
 )
@@ -114,10 +115,14 @@ def _save_modules(modules: list[dict], project: Project) -> None:
         session.commit()
 
 
-def _create_rol_if_missing(role_template: str) -> None:
+def _create_rol_if_missing(
+    role_template: str, path: Path, name: str, stack: str,
+    tree: list[str], encoding: str,
+) -> None:
     rol_path = Path.home() / ".mycontext" / "rol.md"
     if not rol_path.exists():
-        rol_path.write_text(role_template, encoding="utf-8")
+        content = generate_role_md(path, name, stack, tree, fallback=role_template, encoding=encoding)
+        rol_path.write_text(content, encoding="utf-8")
 
 
 @app.callback(invoke_without_command=True)
@@ -129,8 +134,6 @@ def init():
     name = path.name
     stack = detect_stack(path)
     profile = get_profile(stack)
-
-    _create_rol_if_missing(profile.role_template)
 
     with Session(engine) as session:
         existing_project = session.exec(select(Project).where(Project.path == str(path))).first()
@@ -151,6 +154,7 @@ def init():
         session.refresh(project)
 
     tree = get_tree(path)
+    _create_rol_if_missing(profile.role_template, path, name, stack, tree, profile.encoding)
     n_code = len([f for f in tree if Path(f).suffix not in NON_CODE_EXTENSIONS])
 
     console.print(f"\n[bold {ACCENT}]Mapeando arquitectura de {name}...[/bold {ACCENT}]")

@@ -776,3 +776,39 @@ Valores válidos para category: backend, frontend, infraestructura, negocio."""
     except Exception as e:
         logging.error("document_architecture falló para '%s': %s", name, e, exc_info=True)
         raise
+
+
+def generate_role_md(
+    path: Path, name: str, stack: str, tree: list[str],
+    fallback: str, encoding: str = "utf-8",
+) -> str:
+    """
+    Genera rol.md personalizado leyendo código real del proyecto.
+    Si Claude falla, devuelve el fallback (template estático del perfil).
+    Solo se llama cuando rol.md no existe todavía.
+    """
+    sample = read_key_files(path, tree, encoding=encoding)[:3000]
+
+    prompt = f"""Generá un archivo rol.md para Claude Code basado en el código real de este proyecto.
+
+Proyecto: {name}  |  Stack: {stack}
+
+Muestra de código real:
+{sample}
+
+El archivo rol.md le dice a Claude cómo comportarse en este proyecto específico. Debe incluir:
+1. **Contexto de sesión** — qué cargó AICLI y cuándo leer archivos reales
+2. **Idioma** — español para respuestas, respetar el idioma del código existente
+3. **Estilo de respuesta** — breve, con referencia a archivo:línea
+4. **Rol técnico** — stack real detectado, convenciones observadas en el código, qué NO hacer
+5. **Confirmación obligatoria** — operaciones destructivas o visibles para otros
+
+Basate en el código real para inferir convenciones (nombres, patrones, estructura).
+Solo el markdown, sin texto adicional antes ni después."""
+
+    try:
+        text, _ = _call_claude(prompt, context=f"generate_role:{name}", max_tokens=1500)
+        return text.strip()
+    except Exception as e:
+        logging.warning("generate_role_md falló para '%s', usando fallback: %s", name, e)
+        return fallback
