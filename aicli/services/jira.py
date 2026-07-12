@@ -171,3 +171,61 @@ def download_image_attachments(attachments: list) -> list[str]:
         except Exception as e:
             logging.warning("jira.download_image %s — %s", att.get("filename"), e)
     return paths
+
+
+_EXCEL_MIME = {
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "application/vnd.ms-excel",
+}
+
+
+def download_excel_attachments(attachments: list) -> list[str]:
+    """Descarga adjuntos Excel al directorio de evidencias. Retorna rutas locales."""
+    import httpx
+    folder = Path.home() / ".mycontext" / "evidencias"
+    paths = []
+    for att in attachments:
+        if att.get("mimeType", "") not in _EXCEL_MIME:
+            continue
+        try:
+            resp = httpx.get(att["content"], headers=_headers(), timeout=30, follow_redirects=True)
+            if resp.status_code == 200:
+                dest = folder / att.get("filename", "jira_attachment.xlsx")
+                dest.write_bytes(resp.content)
+                paths.append(str(dest))
+        except Exception as e:
+            logging.warning("jira.download_excel %s — %s", att.get("filename"), e)
+    return paths
+
+
+_EXCEL_MAX_ROWS = 200
+
+
+def excel_to_text(path: str) -> str:
+    """Convierte un archivo .xlsx a texto markdown con tablas por hoja."""
+    import openpyxl
+    try:
+        wb = openpyxl.load_workbook(path, read_only=True, data_only=True)
+        sections = []
+        for sheet_name in wb.sheetnames:
+            ws = wb[sheet_name]
+            rows = []
+            truncated = False
+            for row in ws.iter_rows(values_only=True):
+                if any(cell is not None for cell in row):
+                    rows.append([str(c) if c is not None else "" for c in row])
+                    if len(rows) >= _EXCEL_MAX_ROWS + 1:
+                        truncated = True
+                        break
+            if not rows:
+                continue
+            header = "| " + " | ".join(rows[0]) + " |"
+            separator = "| " + " | ".join(["---"] * len(rows[0])) + " |"
+            body = "\n".join("| " + " | ".join(r) + " |" for r in rows[1:])
+            note = f"\n\n*(truncado en {_EXCEL_MAX_ROWS} filas)*" if truncated else ""
+            sections.append(f"### Hoja: {sheet_name}\n\n{header}\n{separator}\n{body}{note}")
+        wb.close()
+        return "\n\n".join(sections) if sections else "(sin datos)"
+    except Exception as e:
+        logging.warning("jira.excel_to_text %s — %s", path, e)
+        return f"(no se pudo leer: {e})"

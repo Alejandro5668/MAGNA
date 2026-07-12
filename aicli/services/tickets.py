@@ -1,11 +1,16 @@
 import json
+import os
 import time
 from pathlib import Path
 from datetime import datetime
 
 _TICKETS_PATH = Path.home() / ".mycontext" / "tickets.json"
-_ACTIVO_PATH = Path.home() / ".mycontext" / "ticket_activo.json"
 _SEGUNDOS_EXPIRACION = 7 * 86400
+
+
+def _active_path() -> Path:
+    # ponytail: PID per process so parallel MAGNA instances don't clobber each other
+    return Path.home() / ".mycontext" / f"ticket_activo_{os.getpid()}.json"
 
 
 def _load_raw() -> dict:
@@ -95,21 +100,23 @@ def format_history(ticket_id: str, tickets: dict) -> str | None:
 
 def save_active_ticket(ticket_id: str, motivo_reapertura: str) -> None:
     """Persiste el ticket y motivo de reapertura para que ctx sync los capture al cerrar."""
-    _ACTIVO_PATH.write_text(
+    _active_path().write_text(
         json.dumps({"ticket_id": ticket_id, "motivo_reapertura": motivo_reapertura}, ensure_ascii=False),
         encoding="utf-8",
     )
 
 
 def read_active_ticket() -> dict | None:
-    if not _ACTIVO_PATH.exists():
+    path = _active_path()
+    if not path.exists():
         return None
     try:
-        return json.loads(_ACTIVO_PATH.read_text(encoding="utf-8"))
+        return json.loads(path.read_text(encoding="utf-8"))
     except Exception:
         return None
 
 
 def clear_active_ticket() -> None:
-    if _ACTIVO_PATH.exists():
-        _ACTIVO_PATH.unlink()
+    path = _active_path()
+    if path.exists():
+        path.unlink()

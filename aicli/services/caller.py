@@ -125,6 +125,7 @@ def launch_claude(
     ticket_id: str | None = None,
     jira_data: dict | None = None,
     jira_images: list | None = None,
+    jira_excel: list | None = None,
 ) -> None:
     from datetime import datetime
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -148,13 +149,19 @@ def launch_claude(
             jira_sec += "\n## Evidencia adjunta (analizada)\n"
             for name, desc in jira_images:
                 jira_sec += f"\n**{name}:**\n{desc}\n"
-        non_img = [
+        if jira_excel:
+            jira_sec += "\n## Archivos Excel adjuntos\n"
+            for name, content in jira_excel:
+                jira_sec += f"\n**{name}:**\n{content}\n"
+        non_other = [
             a for a in (jira_data.get("attachments") or [])
             if not a.get("mimeType", "").startswith("image/")
+            and "spreadsheet" not in a.get("mimeType", "")
+            and "ms-excel" not in a.get("mimeType", "")
         ]
-        if non_img:
+        if non_other:
             jira_sec += "\n## Otros adjuntos\n"
-            for att in non_img:
+            for att in non_other:
                 jira_sec += f"- {att.get('filename', '')} ({att.get('mimeType', '')})\n"
         content += f"\n\n---\n\n{jira_sec}"
     if brief:
