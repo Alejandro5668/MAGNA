@@ -160,10 +160,12 @@ def _execute_task(
 
     # ── Adjuntos de Jira ───────────────────────────────────────────────────────
     jira_images: list[tuple[str, str]] = []
+    jira_excel: list[tuple[str, str]] = []
     if jira_data and jira_data.get("attachments"):
-        from aicli.services.jira import download_image_attachments
+        from aicli.services.jira import download_image_attachments, download_excel_attachments, excel_to_text, _EXCEL_MIME
         with magna_status(console, "Descargando adjuntos de Jira..."):
             local_paths = download_image_attachments(jira_data["attachments"])
+            excel_paths = download_excel_attachments(jira_data["attachments"])
         if local_paths:
             magna_ok(console, f"{len(local_paths)} imagen(es) descargada(s) de Jira")
         for img_path in local_paths:
@@ -176,23 +178,33 @@ def _execute_task(
                 except Exception as e:
                     magna_warn(console, f"No se pudo analizar {name}: {e}")
 
-        non_image = [
+        if excel_paths:
+            magna_ok(console, f"{len(excel_paths)} Excel descargado(s) de Jira")
+        for xls_path in excel_paths:
+            name = Path(xls_path).name
+            with magna_status(console, f"Leyendo {name}..."):
+                content = excel_to_text(xls_path)
+                jira_excel.append((name, content))
+                magna_ok(console, f"{name} convertido a texto")
+
+        non_other = [
             a for a in jira_data["attachments"]
             if not a.get("mimeType", "").startswith("image/")
+            and a.get("mimeType", "") not in _EXCEL_MIME
         ]
-        if non_image:
-            magna_info(console, f"{len(non_image)} adjunto(s) no-imagen incluido(s) como metadata")
+        if non_other:
+            magna_info(console, f"{len(non_other)} adjunto(s) no-imagen incluido(s) como metadata")
 
     context = build_context(relevant)
     if suspend_fn:
         suspend_fn(lambda: launch_claude(
             context, task_desc, brief, file, image_description,
-            ticket_history, ticket_id, jira_data, jira_images,
+            ticket_history, ticket_id, jira_data, jira_images, jira_excel,
         ))
     else:
         launch_claude(
             context, task_desc, brief, file, image_description,
-            ticket_history, ticket_id, jira_data, jira_images,
+            ticket_history, ticket_id, jira_data, jira_images, jira_excel,
         )
 
 
