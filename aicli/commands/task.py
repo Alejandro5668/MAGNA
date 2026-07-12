@@ -100,6 +100,7 @@ def _execute_task(
     image: str | None = None,
     ticket_history: str | None = None,
     ticket_id: str | None = None,
+    jira_data: dict | None = None,
     suspend_fn=None,
 ) -> None:
     path = Path.cwd()
@@ -157,11 +158,42 @@ def _execute_task(
                 except Exception as e:
                     magna_warn(console, f"No se pudo analizar la imagen: {e}")
 
+    # ── Adjuntos de Jira ───────────────────────────────────────────────────────
+    jira_images: list[tuple[str, str]] = []
+    if jira_data and jira_data.get("attachments"):
+        from aicli.services.jira import download_image_attachments
+        with magna_status(console, "Descargando adjuntos de Jira..."):
+            local_paths = download_image_attachments(jira_data["attachments"])
+        if local_paths:
+            magna_ok(console, f"{len(local_paths)} imagen(es) descargada(s) de Jira")
+        for img_path in local_paths:
+            name = Path(img_path).name
+            with magna_status(console, f"Analizando {name}..."):
+                try:
+                    desc, tokens_j = describe_image(img_path)
+                    jira_images.append((name, desc))
+                    magna_ok(console, f"{name} · {tokens_j:,} tokens")
+                except Exception as e:
+                    magna_warn(console, f"No se pudo analizar {name}: {e}")
+
+        non_image = [
+            a for a in jira_data["attachments"]
+            if not a.get("mimeType", "").startswith("image/")
+        ]
+        if non_image:
+            magna_info(console, f"{len(non_image)} adjunto(s) no-imagen incluido(s) como metadata")
+
     context = build_context(relevant)
     if suspend_fn:
-        suspend_fn(lambda: launch_claude(context, task_desc, brief, file, image_description, ticket_history, ticket_id))
+        suspend_fn(lambda: launch_claude(
+            context, task_desc, brief, file, image_description,
+            ticket_history, ticket_id, jira_data, jira_images,
+        ))
     else:
-        launch_claude(context, task_desc, brief, file, image_description, ticket_history, ticket_id)
+        launch_claude(
+            context, task_desc, brief, file, image_description,
+            ticket_history, ticket_id, jira_data, jira_images,
+        )
 
 
 @app.callback(invoke_without_command=True)

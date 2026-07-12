@@ -123,6 +123,8 @@ def launch_claude(
     image_description: str | None = None,
     ticket_history: str | None = None,
     ticket_id: str | None = None,
+    jira_data: dict | None = None,
+    jira_images: list | None = None,
 ) -> None:
     from datetime import datetime
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -130,6 +132,31 @@ def launch_claude(
     content = f"# Contexto del proyecto cargado por AICLI\n\n{context}"
     if ticket_history:
         content += f"\n\n---\n\n# Historial del ticket\n\n{ticket_history}"
+    if jira_data:
+        jira_sec = f"# Ticket {jira_data['id']} — información de Jira\n\n"
+        jira_sec += f"**Resumen:** {jira_data['summary']}\n"
+        if jira_data.get("status"):
+            jira_sec += f"**Estado:** {jira_data['status']}"
+        if jira_data.get("priority"):
+            jira_sec += f"  |  **Prioridad:** {jira_data['priority']}"
+        if jira_data.get("reporter"):
+            jira_sec += f"  |  **Reportado por:** {jira_data['reporter']}"
+        jira_sec += "\n"
+        if jira_data.get("description"):
+            jira_sec += f"\n## Descripción\n{jira_data['description']}\n"
+        if jira_images:
+            jira_sec += "\n## Evidencia adjunta (analizada)\n"
+            for name, desc in jira_images:
+                jira_sec += f"\n**{name}:**\n{desc}\n"
+        non_img = [
+            a for a in (jira_data.get("attachments") or [])
+            if not a.get("mimeType", "").startswith("image/")
+        ]
+        if non_img:
+            jira_sec += "\n## Otros adjuntos\n"
+            for att in non_img:
+                jira_sec += f"- {att.get('filename', '')} ({att.get('mimeType', '')})\n"
+        content += f"\n\n---\n\n{jira_sec}"
     if brief:
         content += f"\n\n---\n\n# Plan de implementación\n\n{brief}"
     if image_description:
