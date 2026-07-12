@@ -283,6 +283,7 @@ def _dispatch_tui(command: str, inputs: dict, tui_console) -> None:
                 inputs.get("fp"),
                 inputs.get("image"),
                 ticket_id=inputs.get("ticket_id"),
+                jira_data=inputs.get("jira_data"),
                 suspend_fn=tui_console.suspend_and_run,
             )
 
@@ -543,6 +544,11 @@ class TextAreaModal(ModalScreen[str | None]):
         height: 1;
         margin-bottom: 1;
     }}
+    #tam-subtitle {{
+        color: {_SECTION};
+        height: 1;
+        margin-bottom: 1;
+    }}
     TextArea {{
         background: #000000;
         border: tall {_BORDER};
@@ -562,14 +568,18 @@ class TextAreaModal(ModalScreen[str | None]):
     {_MODAL_CSS}
     """
 
-    def __init__(self, prompt: str) -> None:
+    def __init__(self, prompt: str, initial_text: str = "", subtitle: str = "") -> None:
         super().__init__()
         self._prompt = prompt
+        self._initial_text = initial_text
+        self._subtitle = subtitle
 
     def compose(self) -> ComposeResult:
         with Container(id="tam-box"):
             yield Static("━━━  MAGNA  ━━━", id="tam-header")
             yield Label(self._prompt, id="tam-prompt")
+            if self._subtitle:
+                yield Label(self._subtitle, id="tam-subtitle", markup=True)
             yield TextArea(show_line_numbers=False)
             yield Label(
                 f"[{_MUTED}][ctrl+↵] confirmar  [esc] cancelar[/{_MUTED}]",
@@ -577,7 +587,10 @@ class TextAreaModal(ModalScreen[str | None]):
             )
 
     def on_mount(self) -> None:
-        self.query_one(TextArea).focus()
+        ta = self.query_one(TextArea)
+        ta.focus()
+        if self._initial_text:
+            ta.load_text(self._initial_text)
 
     def action_submit(self) -> None:
         text = self.query_one(TextArea).text.strip()
@@ -1608,6 +1621,62 @@ class MainScreen(Screen):
         else:
             log.write(Text("Sin syncs registrados", style=_MUTED))
 
+        # ── Jira radar (se carga async en segundo plano) ──────────────────────
+        import os as _os
+        if _os.getenv("JIRA_URL"):
+            self._fill_jira_radar()
+
+    @work
+    async def _fill_jira_radar(self) -> None:
+        import asyncio as _aio
+        from aicli.services.jira import fetch_my_issues
+
+        radar = await _aio.get_running_loop().run_in_executor(None, fetch_my_issues)
+
+        try:
+            log = self.query_one("#log-ahora", RichLog)
+        except Exception:
+            return
+
+        _HIGH = {"High", "Highest", "Critical", "Alta", "Crítica"}
+
+        def _short(s: str, n: int = 38) -> str:
+            return s[:n - 1] + "…" if len(s) > n else s
+
+        def _write_items(items: list) -> None:
+            for item in items[:4]:
+                hi = item["priority"] in _HIGH
+                log.write(Text.assemble(
+                    ("  ", ""),
+                    (f"{item['id']:<12}", _ACCENT),
+                    ("▲  " if hi else "·  ", _WARN if hi else _MUTED),
+                    (_short(item["summary"]), _SEC),
+                ))
+
+        en_curso   = radar.get("en_curso", [])
+        alta       = radar.get("alta_prioridad", [])
+        reabiertos = radar.get("reabiertos", [])
+
+        if not (en_curso or alta or reabiertos):
+            return
+
+        log.write(Text(" "))
+        log.write(Text.assemble(("─" * 28, _BORDER)))
+        log.write(Text.assemble(("JIRA  ", f"bold {_SECTION}"), ("radar de trabajo", _MUTED)))
+        log.write(Text(" "))
+
+        if en_curso:
+            log.write(Text("EN CURSO", style=f"bold {_OK}"))
+            _write_items(en_curso)
+            log.write(Text(" "))
+        if alta:
+            log.write(Text("PENDIENTE · ALTA PRIORIDAD", style=f"bold {_WARN}"))
+            _write_items(alta)
+            log.write(Text(" "))
+        if reabiertos:
+            log.write(Text("REABIERTOS", style=f"bold {_ERROR}"))
+            _write_items(reabiertos)
+
     def _rel(self, ts: float) -> str:
         import time as _t
         delta = _t.time() - ts
@@ -1698,10 +1767,37 @@ class MainScreen(Screen):
 
         elif command == "task":
             ticket_id = await self.app.push_screen_wait(
-                InputModal("Ticket ID  (Enter para omitir)", "PROJ-1234")
+                InputModal("Ticket ID  (Enter para omitir)", "SOL-1234")
             )
+
+            # ── Jira fetch automático ──────────────────────────────────────────
+            jira_data = None
+            initial_desc = ""
+            jira_subtitle = ""
+            if ticket_id:
+                from aicli.services.jira import is_configured, fetch_issue
+                if is_configured():
+                    import asyncio as _aio
+                    loop = _aio.get_running_loop()
+                    jira_data = await loop.run_in_executor(
+                        None, fetch_issue, ticket_id.upper().strip()
+                    )
+                    if jira_data:
+                        initial_desc = jira_data.get("description", "")
+                        s = jira_data["summary"]
+                        short = s[:52] + ("…" if len(s) > 52 else "")
+                        jira_subtitle = (
+                            f"[bold {_SECTION}]{jira_data['id']}[/bold {_SECTION}]"
+                            f"[{_MUTED}]  ·  {short}  [/{_MUTED}]"
+                            f"[{_OK}][Jira ✓][/{_OK}]"
+                        )
+
             desc = await self.app.push_screen_wait(
-                TextAreaModal("Task description  (paste freely — ctrl+↵ to confirm)")
+                TextAreaModal(
+                    "Task description  (ctrl+↵ to confirm)",
+                    initial_text=initial_desc,
+                    subtitle=jira_subtitle,
+                )
             )
             if not desc:
                 return
@@ -1713,6 +1809,7 @@ class MainScreen(Screen):
             )
             image = _capture_clipboard() if use_img else None
             inputs["ticket_id"] = ticket_id.upper().strip() if ticket_id else None
+            inputs["jira_data"] = jira_data
             inputs["desc"] = desc
             inputs["fp"] = fp or None
             inputs["image"] = image or None
