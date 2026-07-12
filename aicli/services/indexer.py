@@ -230,13 +230,14 @@ Cambios aplicados (git diff):
 Genera un JSON con exactamente estas claves, sin texto adicional antes ni despues:
 
 {{
-  "jira": "mensaje para pegar en Jira. Formato: '🌱 Causa Raiz: [origen tecnico, archivo:linea o tabla:campo]\\n🛠️ Solucion Aplicada: [cambios concretos, maximo 4 puntos]'. SOLO ASCII puro sin tildes. Maximo 6 lineas totales.",
+  "jira": "mensaje tecnico para pegar en Jira. Formato: '🌱 Causa Raiz: [origen tecnico, archivo:linea o tabla:campo]\\n🛠️ Solucion Aplicada: [cambios concretos, maximo 4 puntos]'. SOLO ASCII puro sin tildes. Maximo 6 lineas totales.",
+  "pasos_qa": "pasos numerados para que una persona de QA sin conocimientos tecnicos reproduzca el caso SOLO desde la UI del sistema, sin tocar base de datos ni codigo. Maximo 5 pasos. Cada paso: accion concreta en pantalla. Ejemplo: '1. Ir a Ventas > Facturas. 2. Buscar el cliente afectado. 3. Verificar que el monto aparezca correcto.' Lenguaje simple, claro, sin jerga tecnica.",
   "investigado": "que causa genero el problema — especifico con archivo/funcion/tabla si aplica — maximo 2 oraciones",
   "hecho": "que cambios se aplicaron exactamente — archivos y funciones modificadas — maximo 2 oraciones",
   "tener_en_cuenta": "gotchas, restricciones no obvias, edge cases a considerar en el futuro — maximo 2 oraciones"
 }}"""
 
-    text, tokens = _call_claude(prompt, context="resumen-caso", max_tokens=800)
+    text, tokens = _call_claude(prompt, context="resumen-caso", max_tokens=1000)
     try:
         clean = text.strip().removeprefix("```json").removeprefix("```").removesuffix("```").strip()
         data = json.loads(clean)
@@ -244,10 +245,11 @@ Genera un JSON con exactamente estas claves, sin texto adicional antes ni despue
             "investigado": data.get("investigado", ""),
             "hecho": data.get("hecho", ""),
             "tener_en_cuenta": data.get("tener_en_cuenta", ""),
+            "pasos_qa": data.get("pasos_qa", ""),
         }
         return data.get("jira", ""), case_memory, tokens
     except Exception:
-        return text, {"investigado": "", "hecho": "", "tener_en_cuenta": ""}, tokens
+        return text, {"investigado": "", "hecho": "", "tener_en_cuenta": "", "pasos_qa": ""}, tokens
 
 
 def describe_image(image_path: str) -> tuple[str, int]:
