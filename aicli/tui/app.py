@@ -974,36 +974,43 @@ class OnboardingScreen(Screen):
     @work
     async def _run(self) -> None:
         import asyncio
-
-        import asyncio
         import concurrent.futures
         loop = asyncio.get_running_loop()
 
-        self._update("Paso 1 de 2", "Mapeando arquitectura",
-                     "MAGNA analiza la estructura de tu proyecto con IA.")
-        await asyncio.sleep(1.2)
+        try:
+            self._update("Paso 1 de 2", "Mapeando arquitectura",
+                         "MAGNA analiza la estructura de tu proyecto con IA.")
+            await asyncio.sleep(1.2)
 
-        def _run_init():
-            from aicli.commands.init import init
-            init()
+            def _run_init():
+                from aicli.commands.init import init
+                init()
 
-        with self.app.suspend():
-            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-                await loop.run_in_executor(pool, _run_init)
+            with self.app.suspend():
+                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                    await loop.run_in_executor(pool, _run_init)
 
-        self._update("Paso 2 de 2", "Detectando patrones",
-                     "MAGNA documenta los módulos y patrones de código.")
-        await asyncio.sleep(1.0)
+            self._update("Paso 2 de 2", "Detectando patrones",
+                         "MAGNA documenta los módulos y patrones de código.")
+            await asyncio.sleep(1.0)
 
-        def _run_proyecto():
-            from aicli.commands.proyecto import proyecto
-            proyecto()
+            def _run_proyecto():
+                from aicli.commands.proyecto import proyecto
+                proyecto()
 
-        with self.app.suspend():
-            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-                await loop.run_in_executor(pool, _run_proyecto)
+            with self.app.suspend():
+                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                    await loop.run_in_executor(pool, _run_proyecto)
 
-        self.app.switch_screen(MainScreen(self._project_name, self._project_path))
+            self.app.switch_screen(MainScreen(self._project_name, self._project_path))
+        except Exception as e:
+            self.app.notify(f"Error al inicializar proyecto: {e}", severity="error", timeout=8)
+            from sqlmodel import Session, select as _sel
+            from aicli.db import engine
+            from aicli.db.models import Project
+            with Session(engine) as s:
+                projects = list(s.exec(_sel(Project)).all())
+            self.app.switch_screen(ProjectScreen(projects))
 
 
 # ─── Project Screen ───────────────────────────────────────────────────────────
@@ -1631,7 +1638,15 @@ class MainScreen(Screen):
         import asyncio as _aio
         from aicli.services.jira import fetch_my_issues
 
-        radar = await _aio.get_running_loop().run_in_executor(None, fetch_my_issues)
+        try:
+            radar = await _aio.get_running_loop().run_in_executor(None, fetch_my_issues)
+        except Exception as e:
+            try:
+                log = self.query_one("#log-ahora", RichLog)
+                log.write(Text(f"Jira no disponible: {e}", style=f"dim {_MUTED}"))
+            except Exception:
+                pass
+            return
 
         try:
             log = self.query_one("#log-ahora", RichLog)
@@ -1724,12 +1739,15 @@ class MainScreen(Screen):
 
     @work
     async def _worker_change(self) -> None:
-        from sqlmodel import Session, select as sql_select
-        from aicli.db import engine
-        from aicli.db.models import Project
-        with Session(engine) as session:
-            projects = list(session.exec(sql_select(Project)).all())
-        await self.app.push_screen(ProjectScreen(projects))
+        try:
+            from sqlmodel import Session, select as sql_select
+            from aicli.db import engine
+            from aicli.db.models import Project
+            with Session(engine) as session:
+                projects = list(session.exec(sql_select(Project)).all())
+            await self.app.push_screen(ProjectScreen(projects))
+        except Exception as e:
+            self.app.notify(f"No se pudo cargar proyectos: {e}", severity="error", timeout=6)
 
     def action_cmd(self, command: str) -> None:
         self._worker_cmd(command)
@@ -1845,12 +1863,15 @@ class MainScreen(Screen):
         tui_console = TuiConsole(out_screen)
 
         loop = asyncio.get_running_loop()
-        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-            await loop.run_in_executor(
-                pool, _dispatch_tui, command, inputs, tui_console
-            )
-
-        out_screen.mark_done()
+        try:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                await loop.run_in_executor(
+                    pool, _dispatch_tui, command, inputs, tui_console
+                )
+        except Exception as e:
+            tui_console.print(f"\n[bold red]Error inesperado en {command}:[/bold red] {e}")
+        finally:
+            out_screen.mark_done()
 
 
 # ─── App entry point ──────────────────────────────────────────────────────────
