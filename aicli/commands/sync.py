@@ -29,8 +29,9 @@ _ESTILO = QStyle(Q_STYLE_ARGS)
 
 def _show_case_card(ticket_id: str, round_num: int, files: set[str], case_memory: dict) -> None:
     files_txt = "\n".join(f"  · {a}" for a in sorted(files))
+    pasos_qa = case_memory.get("pasos_qa", "")
 
-    body = Group(
+    items = [
         Text.from_markup(f"[{SECTION}]{files_txt}[/{SECTION}]"),
         Rule(style=BORDER),
         Text(""),
@@ -43,10 +44,18 @@ def _show_case_card(ticket_id: str, round_num: int, files: set[str], case_memory
         Text.from_markup(f"[bold #FBBF24]  Tener en cuenta[/bold #FBBF24]"),
         Text.from_markup(f"[{SECTION}]  {case_memory['tener_en_cuenta']}[/{SECTION}]"),
         Text(""),
-    )
+    ]
+    if pasos_qa:
+        items += [
+            Rule(style=BORDER),
+            Text(""),
+            Text.from_markup(f"[bold {ACCENT}]  Pasos para QA[/bold {ACCENT}]"),
+            Text.from_markup(f"[{SECTION}]  {pasos_qa}[/{SECTION}]"),
+            Text(""),
+        ]
 
     console.print(Panel(
-        body,
+        Group(*items),
         title=f"[bold {ACCENT}] {ticket_id} [/bold {ACCENT}][{SECTION}]· Ronda {round_num}[/{SECTION}]",
         border_style=ACCENT,
         padding=(1, 2),
@@ -268,13 +277,37 @@ def _sync_impl(ask_fn=None, confirm_fn=None):
                 magna_warn(console, f"No se pudo generar el resumen: {e}")
 
         if jira_msg:
+            pasos_qa = case_memory.get("pasos_qa", "") if case_memory else ""
+            full_msg = jira_msg
+            if pasos_qa:
+                full_msg += f"\n\nPasos para QA:\n{pasos_qa}"
+
+            panel_body = Group(
+                Text.from_markup(jira_msg),
+                *(
+                    [
+                        Text(""),
+                        Rule(style=BORDER),
+                        Text.from_markup(f"[bold {SECTION}]Pasos para QA[/bold {SECTION}]"),
+                        Text.from_markup(f"[{SECTION}]{pasos_qa}[/{SECTION}]"),
+                    ]
+                    if pasos_qa else []
+                ),
+            )
             console.print(Panel(
-                jira_msg,
+                panel_body,
                 title=f"[bold {ACCENT}]Mensaje de Jira[/bold {ACCENT}]",
                 border_style=ACCENT,
                 padding=(1, 2),
             ))
-            magna_info(console, f"{tokens_res:,} tokens · copiá el texto del panel")
+
+            # Auto-copiar al portapapeles de Windows
+            try:
+                import subprocess as _sp
+                _sp.run("clip", input=full_msg.encode("utf-16le"), check=False, shell=True)
+                magna_ok(console, f"{tokens_res:,} tokens · copiado al portapapeles")
+            except Exception:
+                magna_info(console, f"{tokens_res:,} tokens")
     else:
         console.print()
         magna_warn(console, "Sin tarea de sesión — ejecutá ctx task antes de sync para generar el resumen.")
