@@ -9,7 +9,7 @@ from textual.screen import Screen, ModalScreen
 from textual.widgets import (
     Static, Input, Label, DataTable, ListView, ListItem,
     Footer, Rule, Sparkline, TabbedContent, TabPane,
-    OptionList, Collapsible, RichLog,
+    OptionList, Collapsible, RichLog, TextArea,
 )
 from textual.widgets.option_list import Option
 from textual.containers import Container, Vertical, Horizontal
@@ -503,6 +503,84 @@ class InputModal(ModalScreen[str | None]):
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
         self.dismiss(event.value.strip() or None)
+
+    def action_cancel(self) -> None:
+        self.dismiss(None)
+
+
+# ─── TextArea Modal ───────────────────────────────────────────────────────────
+
+class TextAreaModal(ModalScreen[str | None]):
+    """Modal multilinea para descripciones de tarea. Ctrl+Enter confirma."""
+
+    BINDINGS = [
+        Binding("escape",     "cancel", show=False),
+        Binding("ctrl+enter", "submit", show=False),
+    ]
+
+    DEFAULT_CSS = f"""
+    TextAreaModal {{
+        align: center middle;
+    }}
+    #tam-box {{
+        background: {_ELEVATED};
+        border: double {_ACCENT};
+        padding: 1 3;
+        width: 82;
+        height: auto;
+    }}
+    #tam-header {{
+        color: {_ACCENT};
+        text-style: bold;
+        text-align: center;
+        height: 1;
+        margin-bottom: 1;
+    }}
+    #tam-prompt {{
+        color: #F1F3F9;
+        text-style: bold;
+        height: 1;
+        margin-bottom: 1;
+    }}
+    TextArea {{
+        background: #000000;
+        border: tall {_BORDER};
+        color: #F1F3F9;
+        height: 8;
+        scrollbar-color: {_BORDER};
+    }}
+    TextArea:focus {{
+        border: tall {_ACCENT};
+    }}
+    #tam-hint {{
+        color: {_MUTED};
+        text-align: right;
+        height: 1;
+        margin-top: 1;
+    }}
+    {_MODAL_CSS}
+    """
+
+    def __init__(self, prompt: str) -> None:
+        super().__init__()
+        self._prompt = prompt
+
+    def compose(self) -> ComposeResult:
+        with Container(id="tam-box"):
+            yield Static("━━━  MAGNA  ━━━", id="tam-header")
+            yield Label(self._prompt, id="tam-prompt")
+            yield TextArea(show_line_numbers=False)
+            yield Label(
+                f"[{_MUTED}][ctrl+↵] confirmar  [esc] cancelar[/{_MUTED}]",
+                id="tam-hint", markup=True,
+            )
+
+    def on_mount(self) -> None:
+        self.query_one(TextArea).focus()
+
+    def action_submit(self) -> None:
+        text = self.query_one(TextArea).text.strip()
+        self.dismiss(text or None)
 
     def action_cancel(self) -> None:
         self.dismiss(None)
@@ -1437,6 +1515,7 @@ class MainScreen(Screen):
                 log.write(Text(f"  · {m}", style=_MUTED))
 
     def _fill_ahora(self) -> None:
+        from pathlib import Path as _P
         from sqlmodel import Session, select as sql_select, col
         from aicli.db import engine
         from aicli.db.models import Activity, Project, Module
@@ -1444,6 +1523,29 @@ class MainScreen(Screen):
 
         log = self.query_one("#log-ahora", RichLog)
         log.clear()
+
+        # ── Aviso de session contexts expirados ───────────────────────────────
+        notice_path = _P.home() / ".mycontext" / ".session_purge_notice"
+        if notice_path.exists():
+            try:
+                count = int(notice_path.read_text(encoding="utf-8").strip())
+                notice_path.unlink()
+                s = "s" if count > 1 else ""
+                log.write(Text.assemble(
+                    ("⚠  ", f"bold {_WARN}"),
+                    (f"{count} session context{s} eliminado{s} (>4h)", f"bold {_WARN}"),
+                ))
+                log.write(Text.assemble(
+                    ("   ", ""),
+                    ("Si Claude sigue abierto para ese ticket,", _SEC),
+                ))
+                log.write(Text.assemble(
+                    ("   ", ""),
+                    ("relanzá ctx task para regenerar el contexto.", _SEC),
+                ))
+                log.write(Text(" "))
+            except Exception:
+                pass
 
         # ── Proyecto ───────────────────────────────────────────────────────────
         with Session(engine) as session:
@@ -1595,7 +1697,7 @@ class MainScreen(Screen):
 
         elif command == "task":
             desc = await self.app.push_screen_wait(
-                InputModal("Task description", "Implement payment validation...")
+                TextAreaModal("Task description  (paste freely — ctrl+↵ to confirm)")
             )
             if not desc:
                 return
