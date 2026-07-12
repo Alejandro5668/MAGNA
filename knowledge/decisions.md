@@ -1025,6 +1025,70 @@ al open source sin arriesgar la herramienta de trabajo.
 
 ---
 
+## DEC-058 — ticket_activo por PID en lugar de archivo global
+
+**Decisión:** Renombrar `ticket_activo.json` a `ticket_activo_{os.getpid()}.json` — un archivo por proceso de MAGNA.
+
+**Por qué:** Con un archivo global, tres instancias paralelas de MAGNA se pisaban mutuamente el ticket activo. La última en escribir determinaba qué ticket pre-rellenaba `ctx sync` en todas las instancias. Con PID, cada instancia escribe y lee su propio archivo — aislamiento total sin coordinación.
+
+**Implementación:** `_active_path()` en `tickets.py` devuelve la ruta con PID. Las tres funciones (`save_active_ticket`, `read_active_ticket`, `clear_active_ticket`) usan `_active_path()` en lugar de la constante.
+
+**Alternativas descartadas:** Lock files o semáforos: innecesario — el problema era de naming, no de acceso concurrente al mismo archivo.
+
+---
+
+## DEC-059 — openpyxl para Excel adjuntos de Jira
+
+**Decisión:** Usar `openpyxl` (local, sin API) para convertir archivos `.xlsx` adjuntos en Jira a texto markdown antes de inyectarlos en el session_context.
+
+**Por qué:** Excel no requiere comprensión visual ni IA — es texto estructurado en celdas. `read_only=True + data_only=True` lee fila a fila sin cargar el archivo entero en memoria. Gemini u otras APIs añadirían latencia de red para un problema que Python resuelve en milisegundos.
+
+**Límite de 200 filas por hoja:** Protege el contexto de Claude de tablas gigantes. Las primeras 200 filas entregan la estructura y datos más relevantes. Filas truncadas se indican con nota explícita.
+
+**Alternativas descartadas:** Gemini para Excel — innecesario cuando el contenido es texto plano en celdas. Solo tiene sentido para video o PDFs escaneados donde no hay alternativa local razonable.
+
+---
+
+## DEC-060 — pasos_qa en generate_case_summary
+
+**Decisión:** Agregar campo `pasos_qa` al JSON que genera `generate_case_summary()` en `indexer.py`.
+
+**Por qué:** QA siempre pregunta cómo replicar el caso. El desarrollador debe explicarlo manualmente cada vez. Con `pasos_qa`, Claude genera los pasos automáticamente a partir de la tarea y el diff — lenguaje simple, UI-only, máx 5 pasos, sin jerga técnica.
+
+**Formato:** Pasos numerados con acciones en UI ("Ir a X", "Hacer clic en Y", "Verificar que Z"). Orientado a alguien sin conocimientos de programación ni bases de datos.
+
+**Impacto en el prompt:** `max_tokens` subió de 800 a 1000 para acomodar el campo adicional.
+
+---
+
+## DEC-061 — Auto-copy al portapapeles con clip de Windows
+
+**Decisión:** Después de mostrar el mensaje de Jira en `ctx sync`, copiarlo automáticamente al portapapeles usando `clip` (built-in de Windows) via `subprocess.run`.
+
+**Por qué:** La terminal no permite seleccionar texto fácilmente dentro de un Panel de Rich. El usuario tenía que tomar capturas de pantalla del mensaje. Con `clip`, el texto queda listo para Ctrl+V directamente en Jira.
+
+**Implementación:** `subprocess.run("clip", input=full_msg.encode("utf-16le"), shell=True)` — `utf-16le` es el encoding que `clip` espera en Windows. Sin dependencia nueva.
+
+**Contenido copiado:** Mensaje técnico Jira + pasos QA concatenados, separados por salto de línea.
+
+---
+
+## DEC-062 — Fallbacks estándar en @work de Textual
+
+**Decisión:** Todos los workers `@work` async de la TUI deben tener manejo de error explícito. Patrón estandarizado según el tipo de worker.
+
+**Por qué:** Un `@work` que lanza excepción en Textual falla silenciosamente — el usuario no ve nada y puede quedar atrapado en una pantalla sin saber qué pasó.
+
+**Patrones aplicados:**
+- `_worker_cmd`: `try/finally` garantiza que `mark_done()` siempre se llama; error visible en CommandOutputScreen antes de cerrar
+- `_fill_jira_radar`: `fetch_my_issues` en try/except; error dim en el log del tab AHORA
+- `_run` (OnboardingScreen): try/except con `notify()` + `switch_screen(ProjectScreen)` si `init()` o `proyecto()` fallan; pantalla de carga nunca queda colgada
+- `_worker_change`: try/except con `notify()` si la BD no responde
+
+**Regla:** Workers cosmético (`_animate_entry`, `_auto_dismiss`) no necesitan fallback — si fallan, el impacto es visual y no bloquea al usuario.
+
+---
+
 ## DEC-057 — Transición a open source: arquitectura multi-stack dinámica
 
 **Decisión:** La transición de MAGNA a open source se hace en tres fases. El objetivo es soportar
