@@ -111,6 +111,10 @@ def _diagnose_and_retry(message: str) -> bool:
         return False
 
 
+def _set_terminal_title(title: str) -> None:
+    print(f"\033]0;{title}\007", end="", flush=True)
+
+
 def launch_claude(
     context: str,
     task: str | None = None,
@@ -118,6 +122,7 @@ def launch_claude(
     file: str | None = None,
     image_description: str | None = None,
     ticket_history: str | None = None,
+    ticket_id: str | None = None,
 ) -> None:
     from datetime import datetime
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -137,6 +142,17 @@ def launch_claude(
 
     message = f"Read {ctx_path} to get the project context and task, then start working."
 
+    # ── Título de terminal ────────────────────────────────────────────────────
+    import re
+    tid = ticket_id or (re.search(r'[A-Z]+-\d+', task or "") or None) and \
+          re.search(r'[A-Z]+-\d+', task or "").group()
+    if tid:
+        _set_terminal_title(f"MAGNA · {tid}")
+    elif task:
+        snippet = task.replace("\n", " ")[:28]
+        ellipsis = "…" if len(task) > 28 else ""
+        _set_terminal_title(f"MAGNA · {snippet}{ellipsis}")
+
     is_windows = platform.system() == "Windows"
     claude_path = _find_claude_windows() if is_windows else None
 
@@ -146,6 +162,7 @@ def launch_claude(
                 subprocess.run([str(claude_path), message], check=False, shell=False)
             else:
                 subprocess.run(["claude", message], check=False, shell=is_windows)
+            _set_terminal_title("MAGNA")
             return
         except FileNotFoundError:
             logging.error("launch_claude — 'claude' no encontrado en intento %d", attempt + 1)

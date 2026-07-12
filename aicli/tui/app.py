@@ -282,6 +282,7 @@ def _dispatch_tui(command: str, inputs: dict, tui_console) -> None:
                 inputs["desc"],
                 inputs.get("fp"),
                 inputs.get("image"),
+                ticket_id=inputs.get("ticket_id"),
                 suspend_fn=tui_console.suspend_and_run,
             )
 
@@ -1696,6 +1697,9 @@ class MainScreen(Screen):
             inputs["fp"] = fp
 
         elif command == "task":
+            ticket_id = await self.app.push_screen_wait(
+                InputModal("Ticket ID  (Enter para omitir)", "PROJ-1234")
+            )
             desc = await self.app.push_screen_wait(
                 TextAreaModal("Task description  (paste freely — ctrl+↵ to confirm)")
             )
@@ -1708,6 +1712,7 @@ class MainScreen(Screen):
                 ConfirmModal("¿Tenés una captura en el portapapeles?", default=False)
             )
             image = _capture_clipboard() if use_img else None
+            inputs["ticket_id"] = ticket_id.upper().strip() if ticket_id else None
             inputs["desc"] = desc
             inputs["fp"] = fp or None
             inputs["image"] = image or None
@@ -1764,4 +1769,5 @@ class MagnaApp(App):
 
 
 def run_app() -> None:
+    print("\033]0;MAGNA\007", end="", flush=True)
     MagnaApp().run()
