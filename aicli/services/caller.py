@@ -119,7 +119,9 @@ def launch_claude(
     image_description: str | None = None,
     ticket_history: str | None = None,
 ) -> None:
-    ctx_path = Path.home() / ".mycontext" / "session_context.md"
+    from datetime import datetime
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    ctx_path = Path.home() / ".mycontext" / f"session_context_{ts}.md"
     content = f"# Contexto del proyecto cargado por AICLI\n\n{context}"
     if ticket_history:
         content += f"\n\n---\n\n# Historial del ticket\n\n{ticket_history}"

@@ -61,6 +61,17 @@ def _purge_evidence() -> None:
             pass
 
 
+def _purge_session_contexts() -> None:
+    folder = Path.home() / ".mycontext"
+    limit = time.time() - 4 * 3600
+    deleted = sum(
+        1 for f in folder.glob("session_context_*.md")
+        if f.stat().st_mtime < limit and not f.unlink()
+    )
+    if deleted:
+        (folder / ".session_purge_notice").write_text(str(deleted), encoding="utf-8")
+
+
 def _check_api_key() -> bool:
     if os.getenv("ANTHROPIC_API_KEY"):
         return True
@@ -91,6 +102,7 @@ def _check_api_key() -> bool:
 
 
 _purge_evidence()
+_purge_session_contexts()
 
 
 @app.callback(invoke_without_command=True)
