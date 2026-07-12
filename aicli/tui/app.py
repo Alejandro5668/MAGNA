@@ -1770,16 +1770,31 @@ class MainScreen(Screen):
                 InputModal("Ticket ID  (Enter para omitir)", "SOL-1234")
             )
 
-            # ── Jira fetch automático ──────────────────────────────────────────
+            # ── Jira fetch automático (con setup guiado si no está configurado) ─
             jira_data = None
             initial_desc = ""
             jira_subtitle = ""
             if ticket_id:
-                from aicli.services.jira import is_configured, fetch_issue
+                from aicli.services.jira import is_configured, fetch_issue, setup_credentials
+                if not is_configured():
+                    want_setup = await self.app.push_screen_wait(
+                        ConfirmModal("¿Conectar Jira para auto-fetch de tickets?", default=False)
+                    )
+                    if want_setup:
+                        jira_url = await self.app.push_screen_wait(
+                            InputModal("Jira URL", "https://empresa.atlassian.net")
+                        )
+                        jira_email = await self.app.push_screen_wait(
+                            InputModal("Email de Atlassian", "vos@empresa.com")
+                        )
+                        jira_token = await self.app.push_screen_wait(
+                            InputModal("API Token  (id.atlassian.net → Security → API tokens)", "")
+                        )
+                        if jira_url and jira_email and jira_token:
+                            setup_credentials(jira_url, jira_email, jira_token)
                 if is_configured():
                     import asyncio as _aio
-                    loop = _aio.get_running_loop()
-                    jira_data = await loop.run_in_executor(
+                    jira_data = await _aio.get_running_loop().run_in_executor(
                         None, fetch_issue, ticket_id.upper().strip()
                     )
                     if jira_data:

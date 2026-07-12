@@ -8,6 +8,36 @@ def is_configured() -> bool:
     return bool(os.getenv("JIRA_URL") and os.getenv("JIRA_EMAIL") and os.getenv("JIRA_TOKEN"))
 
 
+def setup_credentials(url: str, email: str, token: str) -> None:
+    """Guarda credenciales Jira en ~/.mycontext/.env y actualiza el proceso actual."""
+    from pathlib import Path
+    env_path = Path.home() / ".mycontext" / ".env"
+
+    existing = env_path.read_text(encoding="utf-8") if env_path.exists() else ""
+    lines = [ln for ln in existing.splitlines() if ln.strip()]
+
+    new_vars = {"JIRA_URL": url.rstrip("/"), "JIRA_EMAIL": email, "JIRA_TOKEN": token}
+    updated: set[str] = set()
+    result: list[str] = []
+
+    for line in lines:
+        key = line.split("=", 1)[0] if "=" in line else ""
+        if key in new_vars:
+            result.append(f"{key}={new_vars[key]}")
+            updated.add(key)
+        else:
+            result.append(line)
+
+    for key, val in new_vars.items():
+        if key not in updated:
+            result.append(f"{key}={val}")
+
+    env_path.write_text("\n".join(result) + "\n", encoding="utf-8")
+
+    for key, val in new_vars.items():
+        os.environ[key] = val
+
+
 def _headers() -> dict:
     creds = base64.b64encode(
         f"{os.getenv('JIRA_EMAIL')}:{os.getenv('JIRA_TOKEN')}".encode()
