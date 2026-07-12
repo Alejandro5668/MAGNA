@@ -99,6 +99,7 @@ def _execute_task(
     file: str | None = None,
     image: str | None = None,
     ticket_history: str | None = None,
+    ticket_id: str | None = None,
     suspend_fn=None,
 ) -> None:
     path = Path.cwd()
@@ -112,6 +113,10 @@ def _execute_task(
     if not project:
         magna_error(console, "Este directorio no está registrado. Ejecutá ctx init primero.")
         return
+
+    if ticket_id:
+        from aicli.services.tickets import save_active_ticket
+        save_active_ticket(ticket_id.upper(), "")
 
     with Session(engine) as session:
         modules = list(session.exec(select(Module).where(Module.project_id == project.id)).all())
@@ -154,9 +159,9 @@ def _execute_task(
 
     context = build_context(relevant)
     if suspend_fn:
-        suspend_fn(lambda: launch_claude(context, task_desc, brief, file, image_description, ticket_history))
+        suspend_fn(lambda: launch_claude(context, task_desc, brief, file, image_description, ticket_history, ticket_id))
     else:
-        launch_claude(context, task_desc, brief, file, image_description, ticket_history)
+        launch_claude(context, task_desc, brief, file, image_description, ticket_history, ticket_id)
 
 
 @app.callback(invoke_without_command=True)
