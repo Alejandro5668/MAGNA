@@ -429,7 +429,10 @@ class HelpScreen(ModalScreen[None]):
             yield Rule()
             yield RichLog(markup=False, highlight=False, id="help-content")
             yield Rule()
-            yield Static(f"[{_MUTED}][esc] cerrar[/{_MUTED}]", id="help-foot", markup=True)
+            yield Static(
+                f"[bold {_ACCENT}][esc][/bold {_ACCENT}] [{_SEC}]cerrar[/{_SEC}]",
+                id="help-foot", markup=True,
+            )
 
     def on_mount(self) -> None:
         log = self.query_one("#help-content", RichLog)
@@ -498,7 +501,11 @@ class InputModal(ModalScreen[str | None]):
             yield Static("━━━  MAGNA  ━━━", id="im-header")
             yield Label(self._prompt, id="im-prompt")
             yield Input(placeholder=self._placeholder)
-            yield Label(f"[{_MUTED}][↵] confirm  [esc] cancel[/{_MUTED}]", id="im-hint", markup=True)
+            yield Label(
+                f"[bold {_ACCENT}][↵][/bold {_ACCENT}] [{_SEC}]confirmar[/{_SEC}]"
+                f"  [{_MUTED}]·[/{_MUTED}]  [bold {_SEC}][esc][/bold {_SEC}] [{_MUTED}]cancelar[/{_MUTED}]",
+                id="im-hint", markup=True,
+            )
 
     def on_mount(self) -> None:
         self.query_one(Input).focus()
@@ -513,11 +520,10 @@ class InputModal(ModalScreen[str | None]):
 # ─── TextArea Modal ───────────────────────────────────────────────────────────
 
 class TextAreaModal(ModalScreen[str | None]):
-    """Modal multilinea para descripciones de tarea. Ctrl+Enter confirma."""
+    """Modal multilinea para descripciones de tarea. Ctrl+Enter o Ctrl+S confirma."""
 
     BINDINGS = [
-        Binding("escape",     "cancel", show=False),
-        Binding("ctrl+enter", "submit", show=False),
+        Binding("escape", "cancel", show=False),
     ]
 
     DEFAULT_CSS = f"""
@@ -582,7 +588,9 @@ class TextAreaModal(ModalScreen[str | None]):
                 yield Label(self._subtitle, id="tam-subtitle", markup=True)
             yield TextArea(show_line_numbers=False)
             yield Label(
-                f"[{_MUTED}][ctrl+↵] confirmar  [esc] cancelar[/{_MUTED}]",
+                f"[bold {_ACCENT}][ctrl+↵][/bold {_ACCENT}] [{_SEC}]confirmar[/{_SEC}]"
+                f"  [bold {_ACCENT}][ctrl+s][/bold {_ACCENT}] [{_SEC}]también[/{_SEC}]"
+                f"  [{_MUTED}]·[/{_MUTED}]  [bold {_SEC}][esc][/bold {_SEC}] [{_MUTED}]cancelar[/{_MUTED}]",
                 id="tam-hint", markup=True,
             )
 
@@ -591,6 +599,11 @@ class TextAreaModal(ModalScreen[str | None]):
         ta.focus()
         if self._initial_text:
             ta.load_text(self._initial_text)
+
+    def on_key(self, event) -> None:
+        if event.key in ("ctrl+enter", "ctrl+s"):
+            event.stop()
+            self.action_submit()
 
     def action_submit(self) -> None:
         text = self.query_one(TextArea).text.strip()
@@ -608,7 +621,6 @@ class ConfirmModal(ModalScreen[bool]):
     BINDINGS = [
         Binding("y",      "answer_yes", show=False),
         Binding("n",      "answer_no",  show=False),
-        Binding("enter",  "answer_yes", show=False),
         Binding("escape", "answer_no",  show=False),
     ]
 
@@ -650,14 +662,23 @@ class ConfirmModal(ModalScreen[bool]):
         self._default = default
 
     def compose(self) -> ComposeResult:
-        hint = "[Y/n]" if self._default else "[y/N]"
+        enter_label = "↵ sí" if self._default else "↵ no"
         with Container(id="cf-box"):
             yield Static("━━━  MAGNA  ━━━", id="cf-header")
             yield Label(self._prompt, id="cf-prompt")
             yield Label(
-                f"[{_MUTED}]{hint}  [y] sí  [n] no  [esc] cancelar[/{_MUTED}]",
+                f"[bold {_OK}][y][/bold {_OK}] [{_SEC}]sí[/{_SEC}]"
+                f"  [bold {_ERROR}][n][/bold {_ERROR}] [{_SEC}]no[/{_SEC}]"
+                f"  [{_MUTED}]·[/{_MUTED}]"
+                f"  [bold {_ACCENT}][↵][/bold {_ACCENT}] [{_MUTED}]{enter_label}[/{_MUTED}]"
+                f"  [{_MUTED}]·  [esc] cancelar[/{_MUTED}]",
                 id="cf-hint", markup=True,
             )
+
+    def on_key(self, event) -> None:
+        if event.key == "enter":
+            event.stop()
+            self.dismiss(self._default)
 
     def action_answer_yes(self) -> None:
         self.dismiss(True)
@@ -1102,7 +1123,11 @@ class ProjectScreen(Screen):
             yield Rule()
             yield Static(self._render_list(), id="ps-list")
             yield Static(
-                f"[{_MUTED}]↑↓ navigate  ↵ select  n new  q quit[/{_MUTED}]",
+                f"[bold {_ACCENT}]↑↓[/bold {_ACCENT}] [{_SEC}]navegar[/{_SEC}]"
+                f"  [bold {_ACCENT}]↵[/bold {_ACCENT}] [{_SEC}]seleccionar[/{_SEC}]"
+                f"  [bold {_ACCENT}]n[/bold {_ACCENT}] [{_SEC}]nuevo[/{_SEC}]"
+                f"  [{_MUTED}]·[/{_MUTED}]"
+                f"  [bold {_SEC}]q[/bold {_SEC}] [{_MUTED}]salir[/{_MUTED}]",
                 id="ps-foot", markup=True,
             )
 
@@ -1810,12 +1835,16 @@ class MainScreen(Screen):
                         )
                         if jira_url and jira_email and jira_token:
                             setup_credentials(jira_url, jira_email, jira_token)
+                            self.app.notify("Credenciales Jira guardadas ✓", timeout=3)
                 if is_configured():
                     import asyncio as _aio
+                    tid_clean = ticket_id.upper().strip()
+                    self.app.notify(f"Cargando {tid_clean} de Jira…", timeout=15)
                     jira_data = await _aio.get_running_loop().run_in_executor(
-                        None, fetch_issue, ticket_id.upper().strip()
+                        None, fetch_issue, tid_clean
                     )
                     if jira_data:
+                        self.app.notify("Ticket cargado ✓", timeout=2)
                         initial_desc = jira_data.get("description", "")
                         s = jira_data["summary"]
                         short = s[:52] + ("…" if len(s) > 52 else "")
@@ -1824,10 +1853,12 @@ class MainScreen(Screen):
                             f"[{_MUTED}]  ·  {short}  [/{_MUTED}]"
                             f"[{_OK}][Jira ✓][/{_OK}]"
                         )
+                    else:
+                        self.app.notify("No se pudo cargar el ticket", severity="warning", timeout=4)
 
             desc = await self.app.push_screen_wait(
                 TextAreaModal(
-                    "Task description  (ctrl+↵ to confirm)",
+                    "Descripción de la tarea",
                     initial_text=initial_desc,
                     subtitle=jira_subtitle,
                 )
@@ -1840,7 +1871,16 @@ class MainScreen(Screen):
             use_img = await self.app.push_screen_wait(
                 ConfirmModal("¿Tenés una captura en el portapapeles?", default=False)
             )
-            image = _capture_clipboard() if use_img else None
+            if use_img:
+                import asyncio as _aio2
+                self.app.notify("Leyendo portapapeles…", timeout=12)
+                image = await _aio2.get_running_loop().run_in_executor(None, _capture_clipboard)
+                if image:
+                    self.app.notify("Captura guardada ✓", timeout=2)
+                else:
+                    self.app.notify("Sin imagen en portapapeles", severity="warning", timeout=3)
+            else:
+                image = None
             inputs["ticket_id"] = ticket_id.upper().strip() if ticket_id else None
             inputs["jira_data"] = jira_data
             inputs["desc"] = desc
