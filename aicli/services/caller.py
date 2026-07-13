@@ -142,6 +142,8 @@ def launch_claude(
             jira_sec += f"  |  **Prioridad:** {jira_data['priority']}"
         if jira_data.get("reporter"):
             jira_sec += f"  |  **Reportado por:** {jira_data['reporter']}"
+        if jira_data.get("assignee"):
+            jira_sec += f"  |  **Asignado a:** {jira_data['assignee']}"
         jira_sec += "\n"
         if jira_data.get("description"):
             jira_sec += f"\n## Descripción\n{jira_data['description']}\n"
