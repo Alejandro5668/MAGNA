@@ -503,7 +503,7 @@ class InputModal(ModalScreen[str | None]):
             yield Input(placeholder=self._placeholder)
             yield Label(
                 f"[bold {_ACCENT}][↵][/bold {_ACCENT}] [{_SEC}]confirmar[/{_SEC}]"
-                f"  [{_MUTED}]·[/{_MUTED}]  [bold {_SEC}][esc][/bold {_SEC}] [{_MUTED}]cancelar[/{_MUTED}]",
+                f"  [{_MUTED}]·[/{_MUTED}]  [bold {_ERROR}][esc][/bold {_ERROR}] [{_SEC}]cancelar[/{_SEC}]",
                 id="im-hint", markup=True,
             )
 
@@ -590,7 +590,7 @@ class TextAreaModal(ModalScreen[str | None]):
             yield Label(
                 f"[bold {_ACCENT}][ctrl+↵][/bold {_ACCENT}] [{_SEC}]confirmar[/{_SEC}]"
                 f"  [bold {_ACCENT}][ctrl+s][/bold {_ACCENT}] [{_SEC}]también[/{_SEC}]"
-                f"  [{_MUTED}]·[/{_MUTED}]  [bold {_SEC}][esc][/bold {_SEC}] [{_MUTED}]cancelar[/{_MUTED}]",
+                f"  [{_MUTED}]·[/{_MUTED}]  [bold {_ERROR}][esc][/bold {_ERROR}] [{_SEC}]cancelar[/{_SEC}]",
                 id="tam-hint", markup=True,
             )
 
@@ -670,8 +670,8 @@ class ConfirmModal(ModalScreen[bool]):
                 f"[bold {_OK}][y][/bold {_OK}] [{_SEC}]sí[/{_SEC}]"
                 f"  [bold {_ERROR}][n][/bold {_ERROR}] [{_SEC}]no[/{_SEC}]"
                 f"  [{_MUTED}]·[/{_MUTED}]"
-                f"  [bold {_ACCENT}][↵][/bold {_ACCENT}] [{_MUTED}]{enter_label}[/{_MUTED}]"
-                f"  [{_MUTED}]·  [esc] cancelar[/{_MUTED}]",
+                f"  [bold {_ACCENT}][↵][/bold {_ACCENT}] [{_SEC}]{enter_label}[/{_SEC}]"
+                f"  [{_MUTED}]·[/{_MUTED}]  [bold {_ERROR}][esc][/bold {_ERROR}] [{_SEC}]cancelar[/{_SEC}]",
                 id="cf-hint", markup=True,
             )
 
@@ -697,6 +697,12 @@ class JiraCardModal(ModalScreen[bool]):
         Binding("escape", "cancel",  show=False),
     ]
 
+    _IMG_MIME = frozenset({"image/png", "image/jpeg", "image/gif", "image/webp"})
+    _XLS_MIME = frozenset({
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "application/vnd.ms-excel",
+    })
+
     DEFAULT_CSS = f"""
     JiraCardModal {{
         align: center middle;
@@ -715,24 +721,36 @@ class JiraCardModal(ModalScreen[bool]):
         height: 1;
         margin-bottom: 1;
     }}
-    #jc-id {{
+    #jc-badges {{
+        height: 1;
+        margin-bottom: 1;
+    }}
+    #jc-people {{
         height: 1;
         margin-bottom: 1;
     }}
     #jc-summary {{
         color: #F1F3F9;
         text-style: bold;
-        height: 2;
+        height: auto;
         margin-bottom: 1;
+    }}
+    #jc-desc-label {{
+        height: 1;
     }}
     #jc-desc {{
         color: {_SEC};
-        height: 5;
+        height: auto;
+    }}
+    #jc-truncated {{
+        height: 1;
         margin-bottom: 1;
     }}
-    #jc-meta {{
-        color: {_MUTED};
+    #jc-atts-label {{
         height: 1;
+    }}
+    #jc-atts {{
+        height: auto;
         margin-bottom: 1;
     }}
     #jc-hint {{
@@ -747,41 +765,81 @@ class JiraCardModal(ModalScreen[bool]):
         super().__init__()
         self._d = data
 
+    def _att_markup(self, att: dict) -> str:
+        mime = att.get("mimeType", "")
+        name = att.get("filename", "adjunto")
+        if mime in self._IMG_MIME:
+            tag, color = "IMG", _OK
+        elif mime in self._XLS_MIME:
+            tag, color = "XLS", _WARN
+        else:
+            tag, color = "ATT", _SECTION
+        return f"[bold {color}][{tag}][/bold {color}] [{_SEC}]{name}[/{_SEC}]"
+
     def compose(self) -> ComposeResult:
         d = self._d
-        atts = d.get("attachments", [])
-        n_img = sum(1 for a in atts if a.get("mimeType", "").startswith("image/"))
-        n_xls = sum(1 for a in atts if "spreadsheet" in a.get("mimeType", "") or "excel" in a.get("mimeType", ""))
-        n_other = len(atts) - n_img - n_xls
-
-        att_parts = []
-        if n_img:   att_parts.append(f"{n_img} imagen{'es' if n_img > 1 else ''}")
-        if n_xls:   att_parts.append(f"{n_xls} Excel")
-        if n_other: att_parts.append(f"{n_other} otro{'s' if n_other > 1 else ''}")
-        att_str = "  ·  ".join(att_parts) if att_parts else "sin adjuntos"
+        atts = d.get("attachments", []) or []
+        status   = d.get("status",   "")
+        priority = d.get("priority", "")
+        assignee = d.get("assignee", "")
+        reporter = d.get("reporter", "")
 
         desc_raw  = (d.get("description", "") or "").strip()
-        desc_text = desc_raw[:320].replace("\n\n", "\n") if desc_raw else "(sin descripción)"
-
-        status   = d.get("status", "")
-        priority = d.get("priority", "")
+        truncated = len(desc_raw) > 600
+        desc_text = (desc_raw[:600] if truncated else desc_raw).replace("\n\n", "\n") or "(sin descripción)"
 
         with Container(id="jc-box"):
             yield Static("━━━  MAGNA  ━━━", id="jc-header")
-            yield Label(
-                f"[bold {_ACCENT}]{d['id']}[/bold {_ACCENT}]"
-                + (f"  [{_MUTED}]{status}[/{_MUTED}]" if status else "")
-                + (f"  [{_SEC}]{priority}[/{_SEC}]" if priority else ""),
-                id="jc-id", markup=True,
-            )
+
+            # ID · estado · prioridad
+            badge = f"[bold {_ACCENT}]{d['id']}[/bold {_ACCENT}]"
+            if status:
+                badge += f"  [{_MUTED}]│[/{_MUTED}]  [{_SEC}]{status}[/{_SEC}]"
+            if priority:
+                badge += f"  [{_MUTED}]│[/{_MUTED}]  [{_WARN}]{priority}[/{_WARN}]"
+            yield Label(badge, id="jc-badges", markup=True)
+
+            # Asignado · Reportado
+            people = []
+            if assignee:
+                people.append(f"Asignado a: {assignee}")
+            if reporter:
+                people.append(f"Reportado por: {reporter}")
+            if people:
+                yield Label(
+                    f"[{_MUTED}]{' · '.join(people)}[/{_MUTED}]",
+                    id="jc-people", markup=True,
+                )
+
             yield Label(d.get("summary", ""), id="jc-summary")
             yield Rule()
+
+            yield Label(
+                f"[bold {_SECTION}]Descripción[/bold {_SECTION}]",
+                id="jc-desc-label", markup=True,
+            )
             yield Label(desc_text, id="jc-desc")
+            if truncated:
+                yield Label(
+                    f"[{_MUTED}](… continúa en Claude)[/{_MUTED}]",
+                    id="jc-truncated", markup=True,
+                )
+
+            if atts:
+                yield Rule()
+                yield Label(
+                    f"[bold {_SECTION}]Adjuntos[/bold {_SECTION}]",
+                    id="jc-atts-label", markup=True,
+                )
+                with Vertical(id="jc-atts"):
+                    for att in atts:
+                        yield Label(self._att_markup(att), markup=True)
+
             yield Rule()
-            yield Label(f"[{_MUTED}]{att_str}[/{_MUTED}]", id="jc-meta", markup=True)
             yield Label(
                 f"[bold {_ACCENT}][↵][/bold {_ACCENT}] [{_SEC}]continuar[/{_SEC}]"
-                f"  [{_MUTED}]·[/{_MUTED}]  [bold {_SEC}][esc][/bold {_SEC}] [{_MUTED}]cancelar[/{_MUTED}]",
+                f"  [{_MUTED}]·[/{_MUTED}]  "
+                f"[bold {_ERROR}][esc][/bold {_ERROR}] [{_SEC}]cancelar[/{_SEC}]",
                 id="jc-hint", markup=True,
             )
 
