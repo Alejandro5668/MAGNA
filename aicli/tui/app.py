@@ -687,6 +687,111 @@ class ConfirmModal(ModalScreen[bool]):
         self.dismiss(False)
 
 
+# ─── Jira Card Modal ──────────────────────────────────────────────────────────
+
+class JiraCardModal(ModalScreen[bool]):
+    """Card de solo lectura con lo que se trajo de Jira. Enter=continuar, Esc=cancelar."""
+
+    BINDINGS = [
+        Binding("enter",  "proceed", show=False),
+        Binding("escape", "cancel",  show=False),
+    ]
+
+    DEFAULT_CSS = f"""
+    JiraCardModal {{
+        align: center middle;
+    }}
+    #jc-box {{
+        background: {_ELEVATED};
+        border: double {_ACCENT};
+        padding: 1 3;
+        width: 76;
+        height: auto;
+    }}
+    #jc-header {{
+        color: {_ACCENT};
+        text-style: bold;
+        text-align: center;
+        height: 1;
+        margin-bottom: 1;
+    }}
+    #jc-id {{
+        height: 1;
+        margin-bottom: 1;
+    }}
+    #jc-summary {{
+        color: #F1F3F9;
+        text-style: bold;
+        height: 2;
+        margin-bottom: 1;
+    }}
+    #jc-desc {{
+        color: {_SEC};
+        height: 5;
+        margin-bottom: 1;
+    }}
+    #jc-meta {{
+        color: {_MUTED};
+        height: 1;
+        margin-bottom: 1;
+    }}
+    #jc-hint {{
+        text-align: center;
+        height: 1;
+        margin-top: 1;
+    }}
+    {_MODAL_CSS}
+    """
+
+    def __init__(self, data: dict) -> None:
+        super().__init__()
+        self._d = data
+
+    def compose(self) -> ComposeResult:
+        d = self._d
+        atts = d.get("attachments", [])
+        n_img = sum(1 for a in atts if a.get("mimeType", "").startswith("image/"))
+        n_xls = sum(1 for a in atts if "spreadsheet" in a.get("mimeType", "") or "excel" in a.get("mimeType", ""))
+        n_other = len(atts) - n_img - n_xls
+
+        att_parts = []
+        if n_img:   att_parts.append(f"{n_img} imagen{'es' if n_img > 1 else ''}")
+        if n_xls:   att_parts.append(f"{n_xls} Excel")
+        if n_other: att_parts.append(f"{n_other} otro{'s' if n_other > 1 else ''}")
+        att_str = "  ·  ".join(att_parts) if att_parts else "sin adjuntos"
+
+        desc_raw  = (d.get("description", "") or "").strip()
+        desc_text = desc_raw[:320].replace("\n\n", "\n") if desc_raw else "(sin descripción)"
+
+        status   = d.get("status", "")
+        priority = d.get("priority", "")
+
+        with Container(id="jc-box"):
+            yield Static("━━━  MAGNA  ━━━", id="jc-header")
+            yield Label(
+                f"[bold {_ACCENT}]{d['id']}[/bold {_ACCENT}]"
+                + (f"  [{_MUTED}]{status}[/{_MUTED}]" if status else "")
+                + (f"  [{_SEC}]{priority}[/{_SEC}]" if priority else ""),
+                id="jc-id", markup=True,
+            )
+            yield Label(d.get("summary", ""), id="jc-summary")
+            yield Rule()
+            yield Label(desc_text, id="jc-desc")
+            yield Rule()
+            yield Label(f"[{_MUTED}]{att_str}[/{_MUTED}]", id="jc-meta", markup=True)
+            yield Label(
+                f"[bold {_ACCENT}][↵][/bold {_ACCENT}] [{_SEC}]continuar[/{_SEC}]"
+                f"  [{_MUTED}]·[/{_MUTED}]  [bold {_SEC}][esc][/bold {_SEC}] [{_MUTED}]cancelar[/{_MUTED}]",
+                id="jc-hint", markup=True,
+            )
+
+    def action_proceed(self) -> None:
+        self.dismiss(True)
+
+    def action_cancel(self) -> None:
+        self.dismiss(False)
+
+
 # ─── Command Transition Screen ────────────────────────────────────────────────
 
 class CommandScreen(ModalScreen[None]):
@@ -1813,12 +1918,14 @@ class MainScreen(Screen):
                 InputModal("Ticket ID  (Enter para omitir)", "SOL-1234")
             )
 
-            # ── Jira fetch automático (con setup guiado si no está configurado) ─
+            # ── Jira fetch + card de confirmación ────────────────────────────
             jira_data = None
-            initial_desc = ""
-            jira_subtitle = ""
+            desc = ""
+
             if ticket_id:
                 from aicli.services.jira import is_configured, fetch_issue, setup_credentials
+
+                # Setup guiado (solo la primera vez)
                 if not is_configured():
                     want_setup = await self.app.push_screen_wait(
                         ConfirmModal("¿Conectar Jira para auto-fetch de tickets?", default=False)
@@ -1836,6 +1943,7 @@ class MainScreen(Screen):
                         if jira_url and jira_email and jira_token:
                             setup_credentials(jira_url, jira_email, jira_token)
                             self.app.notify("Credenciales Jira guardadas ✓", timeout=3)
+
                 if is_configured():
                     import asyncio as _aio
                     tid_clean = ticket_id.upper().strip()
@@ -1843,49 +1951,37 @@ class MainScreen(Screen):
                     jira_data = await _aio.get_running_loop().run_in_executor(
                         None, fetch_issue, tid_clean
                     )
-                    if jira_data:
-                        self.app.notify("Ticket cargado ✓", timeout=2)
-                        initial_desc = jira_data.get("description", "")
-                        s = jira_data["summary"]
-                        short = s[:52] + ("…" if len(s) > 52 else "")
-                        jira_subtitle = (
-                            f"[bold {_SECTION}]{jira_data['id']}[/bold {_SECTION}]"
-                            f"[{_MUTED}]  ·  {short}  [/{_MUTED}]"
-                            f"[{_OK}][Jira ✓][/{_OK}]"
-                        )
-                    else:
-                        self.app.notify("No se pudo cargar el ticket", severity="warning", timeout=4)
 
-            desc = await self.app.push_screen_wait(
-                TextAreaModal(
-                    "Descripción de la tarea",
-                    initial_text=initial_desc,
-                    subtitle=jira_subtitle,
-                )
-            )
-            if not desc:
-                return
-            fp = await self.app.push_screen_wait(
-                InputModal("File path  (Enter to skip)", "pagos/PagosController.php")
-            )
-            use_img = await self.app.push_screen_wait(
-                ConfirmModal("¿Tenés una captura en el portapapeles?", default=False)
-            )
-            if use_img:
-                import asyncio as _aio2
-                self.app.notify("Leyendo portapapeles…", timeout=12)
-                image = await _aio2.get_running_loop().run_in_executor(None, _capture_clipboard)
-                if image:
-                    self.app.notify("Captura guardada ✓", timeout=2)
+                if jira_data:
+                    # Card con todo lo traído — usuario confirma o cancela
+                    proceed = await self.app.push_screen_wait(JiraCardModal(jira_data))
+                    if not proceed:
+                        return
+                    desc = jira_data.get("description", "") or ticket_id
                 else:
-                    self.app.notify("Sin imagen en portapapeles", severity="warning", timeout=3)
+                    self.app.notify("No se pudo cargar el ticket — ingresá descripción manual", severity="warning", timeout=4)
+                    desc = await self.app.push_screen_wait(
+                        TextAreaModal("Descripción de la tarea")
+                    )
+                    if not desc:
+                        return
             else:
-                image = None
+                # Sin ticket → descripción manual
+                desc = await self.app.push_screen_wait(
+                    TextAreaModal("Descripción de la tarea")
+                )
+                if not desc:
+                    return
+
+            # Única pregunta del flujo TUI
+            fp = await self.app.push_screen_wait(
+                InputModal("Archivo  (Enter para omitir)", "pagos/PagosController.php")
+            )
             inputs["ticket_id"] = ticket_id.upper().strip() if ticket_id else None
             inputs["jira_data"] = jira_data
             inputs["desc"] = desc
             inputs["fp"] = fp or None
-            inputs["image"] = image or None
+            inputs["image"] = None  # ponytail: imagen disponible por CLI --imagen, no en flujo TUI
 
         # ── Pantalla de transición ─────────────────────────────────────────────
         await self.app.push_screen_wait(CommandScreen(command, _cmd_desc(command)))
