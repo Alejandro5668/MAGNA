@@ -113,6 +113,12 @@ def _diagnose_and_retry(message: str) -> bool:
 
 def _set_terminal_title(title: str) -> None:
     print(f"\033]0;{title}\007", end="", flush=True)
+    if platform.system() == "Windows":
+        try:
+            import ctypes
+            ctypes.windll.kernel32.SetConsoleTitleW(title)
+        except Exception:
+            pass
 
 
 def launch_claude(
@@ -176,18 +182,27 @@ def launch_claude(
         content += f"\n\n---\n\n# Tarea\n{task}"
     ctx_path.write_text(content, encoding="utf-8")
 
-    message = f"Read {ctx_path} to get the project context and task, then start working."
-
-    # ── Título de terminal ────────────────────────────────────────────────────
+    # ── Título de terminal + mensaje inicial para Claude ─────────────────────
     import re
     tid = ticket_id or (re.search(r'[A-Z]+-\d+', task or "") or None) and \
           re.search(r'[A-Z]+-\d+', task or "").group()
-    if tid:
-        _set_terminal_title(f"MAGNA · {tid}")
+
+    if tid and jira_data and jira_data.get("summary"):
+        summary_short = jira_data["summary"][:50]
+        tab_title = f"{tid} — {summary_short}"
+        message = f"[{tid}] {summary_short} — Read {ctx_path} and start working on the task."
+    elif tid:
+        tab_title = f"MAGNA · {tid}"
+        message = f"[{tid}] Read {ctx_path} to get the project context and task, then start working."
     elif task:
-        snippet = task.replace("\n", " ")[:28]
-        ellipsis = "…" if len(task) > 28 else ""
-        _set_terminal_title(f"MAGNA · {snippet}{ellipsis}")
+        snippet = task.replace("\n", " ")[:40]
+        tab_title = f"MAGNA · {snippet[:28]}{'…' if len(task) > 28 else ''}"
+        message = f"Read {ctx_path} to get the project context and task, then start working."
+    else:
+        tab_title = "MAGNA"
+        message = f"Read {ctx_path} to get the project context and task, then start working."
+
+    _set_terminal_title(tab_title)
 
     is_windows = platform.system() == "Windows"
     claude_path = _find_claude_windows() if is_windows else None
