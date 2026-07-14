@@ -342,7 +342,6 @@ def _run_resume_tui(tui_console) -> None:
     if not reason:
         return
 
-    image = _ask_image_tui(tui_console)
     file_path = tui_console.request_input("Archivo específico (Enter para omitir)")
     save_active_ticket(ticket_id, reason)
 
@@ -350,7 +349,6 @@ def _run_resume_tui(tui_console) -> None:
         task_mod._execute_task(
             f"[TICKET REABIERTO {ticket_id}] {reason}",
             file_path or None,
-            image or None,
             ticket_history=history,
             suspend_fn=tui_console.suspend_and_run,
         )
