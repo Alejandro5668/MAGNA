@@ -518,7 +518,7 @@ class InputModal(ModalScreen[str | None]):
 # ─── TextArea Modal ───────────────────────────────────────────────────────────
 
 class TextAreaModal(ModalScreen[str | None]):
-    """Modal multilinea para descripciones de tarea. Ctrl+Enter o Ctrl+S confirma."""
+    """Modal multilinea para descripciones de tarea. Ctrl+S confirma."""
 
     BINDINGS = [
         Binding("escape", "cancel", show=False),
@@ -586,8 +586,7 @@ class TextAreaModal(ModalScreen[str | None]):
                 yield Label(self._subtitle, id="tam-subtitle", markup=True)
             yield TextArea(show_line_numbers=False)
             yield Label(
-                f"[bold {_ACCENT}][ctrl+↵][/bold {_ACCENT}] [{_SEC}]confirmar[/{_SEC}]"
-                f"  [bold {_ACCENT}][ctrl+s][/bold {_ACCENT}] [{_SEC}]también[/{_SEC}]"
+                f"[bold {_ACCENT}][ctrl+s][/bold {_ACCENT}] [{_SEC}]confirmar[/{_SEC}]"
                 f"  [{_MUTED}]·[/{_MUTED}]  [bold {_ERROR}][esc][/bold {_ERROR}] [{_SEC}]cancelar[/{_SEC}]",
                 id="tam-hint", markup=True,
             )
@@ -599,7 +598,7 @@ class TextAreaModal(ModalScreen[str | None]):
             ta.load_text(self._initial_text)
 
     def on_key(self, event) -> None:
-        if event.key in ("ctrl+enter", "ctrl+s"):
+        if event.key == "ctrl+s":
             event.stop()
             self.action_submit()
 
@@ -660,15 +659,12 @@ class ConfirmModal(ModalScreen[bool]):
         self._default = default
 
     def compose(self) -> ComposeResult:
-        enter_label = "↵ sí" if self._default else "↵ no"
+        confirm_label = "sí" if self._default else "no"
         with Container(id="cf-box"):
             yield Static("━━━  MAGNA  ━━━", id="cf-header")
             yield Label(self._prompt, id="cf-prompt")
             yield Label(
-                f"[bold {_OK}][y][/bold {_OK}] [{_SEC}]sí[/{_SEC}]"
-                f"  [bold {_ERROR}][n][/bold {_ERROR}] [{_SEC}]no[/{_SEC}]"
-                f"  [{_MUTED}]·[/{_MUTED}]"
-                f"  [bold {_ACCENT}][↵][/bold {_ACCENT}] [{_SEC}]{enter_label}[/{_SEC}]"
+                f"[bold {_ACCENT}][↵][/bold {_ACCENT}] [{_SEC}]{confirm_label}[/{_SEC}]"
                 f"  [{_MUTED}]·[/{_MUTED}]  [bold {_ERROR}][esc][/bold {_ERROR}] [{_SEC}]cancelar[/{_SEC}]",
                 id="cf-hint", markup=True,
             )
