@@ -1146,3 +1146,79 @@ las convenciones específicas de esa empresa y las inyecta en cada sesión de Cl
   debe funcionar bien desde el primer `ctx init` sin configuración.
 - Soportar todos los stacks desde el inicio: sin usuarios reales de otros stacks, no se puede
   validar si los perfiles funcionan. PHP vanilla primero, luego iterar con feedback real.
+
+---
+
+## DEC-063 — JiraCardModal: card completa en lugar de resumen con conteos
+
+**Decisión:** Rediseñar `JiraCardModal` para mostrar toda la información traída de Jira en un solo modal:
+badges (ID · estado · prioridad), asignado a + reportado por, summary en bold, descripción (máx 600 chars
+con indicador `(… continúa en Claude)` si se trunca), y lista de adjuntos por nombre con tipo (`[IMG]`/`[XLS]`/`[ATT]`).
+
+**Por qué:** La versión anterior mostraba la descripción truncada a 320 chars y solo conteos de adjuntos
+("2 imágenes · 1 Excel"). El usuario no podía verificar si el contenido cargado era el correcto antes de
+continuar. El rediseño da visibilidad completa de lo que se inyectará a Claude Code sin requerir
+confirmación paso a paso por cada campo.
+
+**Flujo resultante:** `[Ticket ID]` → fetch Jira → `JiraCardModal` (todo en uno) → `[Archivo]` → Claude.
+No hay paso de confirmación de adjuntos: siempre se incluyen todos. No hay descripción editable en el
+flujo TUI cuando Jira carga correctamente.
+
+**Alternativas descartadas:**
+- Modal paso a paso (descripción → confirm → adjuntos → confirm): demasiada fricción para info que el
+  usuario ya conoce del ticket.
+- Checkboxes para seleccionar adjuntos: complejidad no justificada; si hay un adjunto relevante en Jira
+  siempre se quiere incluir.
+- Mostrar descripción completa sin límite: modales sin scroll fijo hacen la UI impredecible en terminales
+  pequeñas. 600 chars cubre el 95% de descripciones útiles.
+
+---
+
+## DEC-064 — Hints de modales: patrón 2 teclas, colores uniformes, ctrl+enter eliminado
+
+**Decisión:** Todos los modales de la TUI usan exactamente el mismo patrón de hint:
+`[bold _ACCENT][KEY][/] [_SEC]acción[/]  [_MUTED]·[/]  [bold _ERROR][esc][/] [_SEC]cancelar[/]`
+
+Teclas de confirmación por modal:
+- `InputModal`: `↵`
+- `TextAreaModal`: `ctrl+s` (único — `ctrl+enter` eliminado)
+- `ConfirmModal`: `↵` (muestra "sí" o "no" según el default)
+- `JiraCardModal`: `↵`
+
+**Por qué:** La versión anterior tenía 4–5 opciones en el hint (`y`, `n`, `↵`, `ctrl+↵`, `ctrl+s`) con
+colores inconsistentes (`[esc]` en `_SEC` apagado vs teclas de acción en `_ACCENT` brillante). El usuario
+no podía identificar rápidamente cuál tecla usar. El nuevo patrón aplica semántica de color: dorado =
+avanzar, rojo = cancelar — consistente con el resto de la paleta (ej: `[n]` rojo en ConfirmModal).
+
+`ctrl+enter` eliminado porque Windows Terminal lo intercepta a nivel de terminal antes de que llegue a
+Textual, haciendo que el binding nunca dispare. `ctrl+s` es confiable en WT y semánticamente correcto
+("guardar/confirmar"). Los shortcuts `y`/`n` del ConfirmModal se mantienen funcionales pero no aparecen
+en el hint para reducir ruido.
+
+**Alternativas descartadas:**
+- `alt+enter` como alternativa a `ctrl+enter`: también interceptado por WT en algunas configs.
+- Mantener los 4–5 hints: cantidad de opciones visibles > 2 en un modal aumenta el tiempo de decisión
+  (Ley de Hick).
+
+---
+
+## DEC-065 — Título de terminal: solo el ID del ticket, sin prefijo ni summary
+
+**Decisión:** El título del tab de terminal muestra únicamente el ID del ticket Jira (ej: `SOL-1234`)
+cuando se lanza Claude Code desde `ctx task`. Sin prefijo "MAGNA ·", sin summary del ticket.
+
+**Por qué:** Los tabs de Windows Terminal son angostos. El formato anterior `MAGNA · SOL-1234 — Controles
+sin tipología en la...` dejaba el ID fuera de la vista al truncarse. El objetivo es que el ID sea siempre
+visible de un vistazo al cambiar de tab. El summary del ticket ya viaja en el mensaje inicial a Claude
+Code: `[SOL-1234] {summary} — Read {ctx_path}...`, lo que sirve para que Claude genere un nombre de
+sesión descriptivo sin contaminar el título del tab.
+
+**Implementación:** `_set_terminal_title(tid)` usando ANSI escape `\033]0;{title}\007` + Win32
+`ctypes.windll.kernel32.SetConsoleTitleW(title)` para mayor persistencia en Windows Terminal antes de que
+Claude Code arranque y potencialmente sobreescriba el título.
+
+**Alternativas descartadas:**
+- `MAGNA · SOL-1234`: "MAGNA" consume espacio sin aportar información — el usuario ya sabe que está en
+  MAGNA si abrió el tab desde MAGNA.
+- `SOL-1234 — summary[:40]`: el summary empuja al ID fuera del área visible del tab (confirmado con
+  screenshot del usuario).
