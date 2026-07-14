@@ -189,14 +189,14 @@ def launch_claude(
 
     if tid and jira_data and jira_data.get("summary"):
         summary_short = jira_data["summary"][:50]
-        tab_title = f"MAGNA · {tid}"
+        tab_title = tid
         message = f"[{tid}] {summary_short} — Read {ctx_path} and start working on the task."
     elif tid:
-        tab_title = f"MAGNA · {tid}"
+        tab_title = tid
         message = f"[{tid}] Read {ctx_path} to get the project context and task, then start working."
     elif task:
         snippet = task.replace("\n", " ")[:40]
-        tab_title = f"MAGNA · {snippet[:28]}{'…' if len(task) > 28 else ''}"
+        tab_title = snippet[:28] + ("…" if len(task) > 28 else "")
         message = f"Read {ctx_path} to get the project context and task, then start working."
     else:
         tab_title = "MAGNA"
