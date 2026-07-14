@@ -189,7 +189,7 @@ def launch_claude(
 
     if tid and jira_data and jira_data.get("summary"):
         summary_short = jira_data["summary"][:50]
-        tab_title = f"{tid} — {summary_short}"
+        tab_title = f"MAGNA · {tid}"
         message = f"[{tid}] {summary_short} — Read {ctx_path} and start working on the task."
     elif tid:
         tab_title = f"MAGNA · {tid}"
