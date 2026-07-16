@@ -13,6 +13,7 @@ from aicli.services.indexer import (
     generate_module_content,
     module_needs_update,
     NON_CODE_EXTENSIONS,
+    _write_md_atomic,
 )
 from aicli.tui.theme import magna_ok, magna_warn, magna_info, magna_status, ACCENT, SECTION
 
@@ -121,7 +122,7 @@ def _save_modules(modules: list[dict], project: Project) -> None:
         for m in modules:
             md_file = _md_path(project.id, m["file_path"])
             md_file.parent.mkdir(parents=True, exist_ok=True)
-            md_file.write_text(m.get("content_md", m.get("documentation", "")), encoding="utf-8")
+            _write_md_atomic(md_file, m.get("content_md", m.get("documentation", "")))
 
             existing = session.exec(
                 select(Module).where(
@@ -153,7 +154,7 @@ def _save_modules(modules: list[dict], project: Project) -> None:
 def _create_rol_if_missing() -> None:
     rol_path = Path.home() / ".mycontext" / "rol.md"
     if not rol_path.exists():
-        rol_path.write_text(_ROL_DEFAULT, encoding="utf-8")
+        _write_md_atomic(rol_path, _ROL_DEFAULT)
 
 
 @app.callback(invoke_without_command=True)
@@ -242,7 +243,7 @@ def _update_project(project: Project, path: Path) -> None:
             content_md, tokens = generate_module_content(module.name, module.file_path, source)
             md_file = _md_path(project.id, module.file_path)
             md_file.parent.mkdir(parents=True, exist_ok=True)
-            md_file.write_text(content_md, encoding="utf-8")
+            _write_md_atomic(md_file, content_md)
 
             with Session(engine) as session:
                 m = session.get(Module, module.id)

@@ -10,7 +10,7 @@ from aicli.db import engine
 from aicli.db.models import Project, Module
 from aicli.services.builder import build_context
 from aicli.services.caller import launch_claude
-from aicli.services.indexer import describe_image
+from aicli.services.indexer import describe_image, MODEL_BY_OPERATION
 from aicli.tui.theme import magna_status, magna_ok, magna_warn, magna_error, magna_info, magna_panel, magna_task_plan, ACCENT, SECTION
 
 app = typer.Typer()
@@ -20,10 +20,15 @@ console = Console()
 def _detect_relevant_modules(
     task_desc: str, modules: list[Module], file: str | None = None
 ) -> list[Module]:
-    listing = "\n".join([
-        f"- {m.name}: {m.description} | archivo: {m.file_path}"
-        for m in modules
-    ])
+    listing_parts = []
+    for m in modules:
+        listing_parts.append(f"- {m.name}: {m.description} | archivo: {m.file_path}")
+        if m.content_path:
+            md_path = Path(m.content_path)
+            if md_path.exists():
+                snippet = md_path.read_text(encoding="utf-8", errors="replace")[:300].replace("\n", " ")
+                listing_parts.append(f"  Contexto: {snippet}")
+    listing = "\n".join(listing_parts)
 
     file_context = (
         f"\nEl desarrollador indica que el problema ocurre específicamente en: {file}"
@@ -87,7 +92,7 @@ y técnico. Solo el plan, sin introducción ni conclusión."""
 
     client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
     response = client.messages.create(
-        model="claude-sonnet-4-6",
+        model=MODEL_BY_OPERATION["task_brief"],
         max_tokens=512,
         messages=[{"role": "user", "content": prompt}]
     )
@@ -195,7 +200,23 @@ def _execute_task(
         if non_other:
             magna_info(console, f"{len(non_other)} adjunto(s) no-imagen incluido(s) como metadata")
 
-    context = build_context(relevant)
+    context, ctx_warnings = build_context(relevant, project_path=path)
+    for w in ctx_warnings:
+        magna_warn(console, w)
+
+    # Context receipt — detecta módulos que cambiaron desde la última sesión
+    receipt_path = Path.home() / ".mycontext" / f"receipt_{project.id}.json"
+    current_sig = {m.file_path: m.last_updated_at for m in relevant}
+    if receipt_path.exists():
+        try:
+            prev_sig = json.loads(receipt_path.read_text(encoding="utf-8"))
+            changed = [fp for fp, ts in current_sig.items() if fp not in prev_sig or prev_sig[fp] != ts]
+            if changed:
+                magna_warn(console, f"Contexto cambió desde la última sesión: {', '.join(changed)}")
+        except Exception:
+            pass
+    receipt_path.write_text(json.dumps(current_sig, ensure_ascii=False), encoding="utf-8")
+
     if suspend_fn:
         suspend_fn(lambda: launch_claude(
             context, task_desc, brief, file, image_description,

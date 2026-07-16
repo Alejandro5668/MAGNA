@@ -23,7 +23,13 @@ def _load_raw() -> dict:
 
 
 def _save(tickets: dict) -> None:
-    _TICKETS_PATH.write_text(json.dumps(tickets, ensure_ascii=False, indent=2), encoding="utf-8")
+    tmp = _TICKETS_PATH.with_suffix(".tmp")
+    try:
+        tmp.write_text(json.dumps(tickets, ensure_ascii=False, indent=2), encoding="utf-8")
+        tmp.replace(_TICKETS_PATH)
+    except Exception:
+        tmp.unlink(missing_ok=True)
+        raise
 
 
 def load_tickets() -> dict:

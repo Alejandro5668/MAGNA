@@ -12,8 +12,8 @@ from pathlib import Path
 from questionary import Style as QStyle
 from sqlmodel import Session, select
 from aicli.db import engine
-from aicli.db.models import Project, Module
-from aicli.services.indexer import analyze_file_deep, generate_case_summary, NON_CODE_EXTENSIONS
+from aicli.db.models import Project, Module, ModuleLesson
+from aicli.services.indexer import analyze_file_deep, generate_case_summary, NON_CODE_EXTENSIONS, _write_md_atomic
 from aicli.services.tickets import load_tickets, save_round, format_history, read_active_ticket, clear_active_ticket
 from aicli.tui.theme import (
     magna_ok, magna_warn, magna_error, magna_info, magna_status, magna_panel,
@@ -62,11 +62,12 @@ def _show_case_card(ticket_id: str, round_num: int, files: set[str], case_memory
 
 
 def _read_session_task() -> str:
-    """Lee la descripción de la tarea de la última sesión ctx task."""
-    ctx_path = Path.home() / ".mycontext" / "session_context.md"
-    if not ctx_path.exists():
+    """Lee la tarea del session_context más reciente generado por ctx task."""
+    ctx_dir = Path.home() / ".mycontext"
+    ctx_files = sorted(ctx_dir.glob("session_context_*.md"), key=lambda p: p.stat().st_mtime, reverse=True)
+    if not ctx_files:
         return ""
-    content = ctx_path.read_text(encoding="utf-8")
+    content = ctx_files[0].read_text(encoding="utf-8")
     if "# Tarea" not in content:
         return ""
     return content.split("# Tarea")[-1].strip()
@@ -199,7 +200,7 @@ def _sync_impl(ask_fn=None, confirm_fn=None):
             continue
 
         md_file.parent.mkdir(parents=True, exist_ok=True)
-        md_file.write_text(content_md, encoding="utf-8")
+        _write_md_atomic(md_file, content_md)
 
         name = Path(file_path).stem
         description = next((l.lstrip("# ") for l in content_md.splitlines() if l.strip()), name)
@@ -380,6 +381,24 @@ def _sync_impl(ask_fn=None, confirm_fn=None):
                 motivo_reapertura=reason_prefill,
                 memoria=case_memory,
             )
+
+            # Persistir lecciones por módulo tocado
+            if case_memory:
+                lesson_text = case_memory.get("tener_en_cuenta", "").strip()
+                if lesson_text:
+                    date_str = datetime.now().strftime("%Y-%m-%d")
+                    with Session(engine) as session:
+                        for fp in existing_files:
+                            session.add(ModuleLesson(
+                                project_id=project.id,
+                                file_path=fp,
+                                ticket_id=ticket_id,
+                                date=date_str,
+                                lesson=lesson_text,
+                                lesson_type="gotcha",
+                            ))
+                        session.commit()
+
             clear_active_ticket()
             magna_ok(console, f"Ronda {round_num} guardada para {ticket_id}")
 
