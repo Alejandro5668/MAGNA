@@ -16,7 +16,7 @@ from aicli.services.indexer import (
     NON_CODE_EXTENSIONS,
     _write_md_atomic,
 )
-from aicli.services.stack_profile import get_profile
+from aicli.services.stack_profile import get_adapter
 from aicli.tui.theme import magna_ok, magna_warn, magna_info, ACCENT, SECTION
 
 app = typer.Typer()
@@ -134,13 +134,13 @@ def init():
     path = Path.cwd()
     name = path.name
     stack = detect_stack(path)
-    profile = get_profile(stack)
+    adapter = get_adapter(stack)
 
     with Session(engine) as session:
         existing_project = session.exec(select(Project).where(Project.path == str(path))).first()
 
     if existing_project:
-        _update_project(existing_project, path, profile.encoding)
+        _update_project(existing_project, path, adapter.encoding)
         return
 
     project = Project(
@@ -155,7 +155,13 @@ def init():
         session.refresh(project)
 
     tree = get_tree(path)
-    _create_rol_if_missing(profile.role_template, path, name, stack, tree, profile.encoding)
+    tree = adapter.filter_files(tree)
+    domains = adapter.suggest_domains(tree)
+    arch_hint = adapter.build_architecture_hint()
+    if domains:
+        arch_hint += f"\n\nDominios principales detectados: {', '.join(domains)}."
+
+    _create_rol_if_missing(adapter.role_template, path, name, stack, tree, adapter.encoding)
     n_code = len([f for f in tree if Path(f).suffix not in NON_CODE_EXTENSIONS])
 
     console.print(f"\n[bold {ACCENT}]Mapeando arquitectura de {name}...[/bold {ACCENT}]")
@@ -164,8 +170,8 @@ def init():
     raw_modules = document_architecture(
         path, name, stack, tree,
         on_progreso=_progreso_print,
-        encoding=profile.encoding,
-        hints=profile.hints,
+        encoding=adapter.encoding,
+        hints=arch_hint,
     )
     modules = [
         {**m, "content_md": m.pop("documentation", ""), "last_updated_at": time.time()}

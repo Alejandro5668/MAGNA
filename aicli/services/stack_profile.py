@@ -1,12 +1,4 @@
-from dataclasses import dataclass
-
-
-@dataclass
-class StackProfile:
-    name: str
-    encoding: str
-    hints: str        # injected into document_architecture / analyze_file_deep prompts
-    role_template: str
+from abc import ABC, abstractmethod
 
 
 _PHP_ROLE = """# Instrucciones — Claude Code + AICLI
@@ -75,83 +67,188 @@ Actuá como desarrollador senior:
 - Push a repositorios remotos o acciones visibles para otros.
 """
 
-_PROFILES: dict[str, StackProfile] = {
-    "php": StackProfile(
-        name="php",
-        encoding="latin-1",
-        hints=(
+
+class StackAdapter(ABC):
+    """Behavior-per-stack: filter noise, detect domains, build context hints."""
+
+    @property
+    @abstractmethod
+    def name(self) -> str: ...
+
+    @property
+    @abstractmethod
+    def encoding(self) -> str: ...
+
+    @property
+    def role_template(self) -> str:
+        return _GENERIC_ROLE
+
+    @property
+    def hints(self) -> str:
+        # ponytail: bridge for callers that still access .hints directly
+        return self.build_architecture_hint()
+
+    @abstractmethod
+    def filter_files(self, tree: list[str]) -> list[str]: ...
+
+    @abstractmethod
+    def build_architecture_hint(self) -> str: ...
+
+    def suggest_domains(self, tree: list[str]) -> list[str]:
+        return []
+
+
+class PHPAdapter(StackAdapter):
+    _NOISE = {"vendor/", "storage/logs/", "bootstrap/cache/", "node_modules/"}
+
+    @property
+    def name(self) -> str: return "php"
+
+    @property
+    def encoding(self) -> str: return "latin-1"
+
+    @property
+    def role_template(self) -> str: return _PHP_ROLE
+
+    def filter_files(self, tree: list[str]) -> list[str]:
+        return [f for f in tree if not any(f.startswith(n) for n in self._NOISE)]
+
+    def build_architecture_hint(self) -> str:
+        return (
             "El proyecto sigue el patrón modulo/archivo.php — cada carpeta de nivel 1 puede ser\n"
             "un módulo del sistema o una carpeta de infraestructura (config, assets, libs, etc).\n"
             "Los archivos *_querys.php contienen las queries SQL del módulo."
-        ),
-        role_template=_PHP_ROLE,
-    ),
-    "laravel": StackProfile(
-        name="laravel",
-        encoding="utf-8",
-        hints=(
+        )
+
+
+class LaravelAdapter(StackAdapter):
+    _NOISE = {"vendor/", "storage/", "bootstrap/cache/", "node_modules/", "public/build/"}
+
+    @property
+    def name(self) -> str: return "laravel"
+
+    @property
+    def encoding(self) -> str: return "utf-8"
+
+    def filter_files(self, tree: list[str]) -> list[str]:
+        return [f for f in tree if not any(f.startswith(n) for n in self._NOISE)]
+
+    def build_architecture_hint(self) -> str:
+        return (
             "Proyecto Laravel. Módulos principales en app/Http/Controllers, app/Models, app/Services.\n"
             "Rutas en routes/. Migraciones en database/migrations/.\n"
             "Seguí las convenciones de Laravel: resourceful controllers, Eloquent ORM."
-        ),
-        role_template=_GENERIC_ROLE,
-    ),
-    "nextjs": StackProfile(
-        name="nextjs",
-        encoding="utf-8",
-        hints=(
+        )
+
+    def suggest_domains(self, tree: list[str]) -> list[str]:
+        domains = []
+        if any("app/Http/Controllers" in f for f in tree): domains.append("api")
+        if any("app/Models" in f for f in tree):           domains.append("data")
+        if any("app/Services" in f for f in tree):         domains.append("services")
+        return domains
+
+
+class NextJSAdapter(StackAdapter):
+    _NOISE = {"node_modules/", ".next/", "dist/", "build/", "coverage/", ".turbo/"}
+
+    @property
+    def name(self) -> str: return "nextjs"
+
+    @property
+    def encoding(self) -> str: return "utf-8"
+
+    def filter_files(self, tree: list[str]) -> list[str]:
+        return [f for f in tree if not any(f.startswith(n) for n in self._NOISE)]
+
+    def build_architecture_hint(self) -> str:
+        return (
             "Proyecto Next.js. Pages o App Router en app/ o pages/. Componentes en components/.\n"
             "API routes en app/api/ o pages/api/. Lógica compartida en lib/ o utils/.\n"
             "Distinguí Server Components de Client Components ('use client')."
-        ),
-        role_template=_GENERIC_ROLE,
-    ),
-    "python": StackProfile(
-        name="python",
-        encoding="utf-8",
-        hints=(
+        )
+
+    def suggest_domains(self, tree: list[str]) -> list[str]:
+        domains = []
+        if any("app/api/" in f or "pages/api/" in f for f in tree): domains.append("api")
+        if any("components/" in f for f in tree):                    domains.append("ui")
+        if any("lib/" in f or "utils/" in f for f in tree):         domains.append("shared")
+        return domains
+
+
+class PythonAdapter(StackAdapter):
+    _NOISE = {
+        "__pycache__/", ".venv/", "venv/", ".mypy_cache/",
+        ".pytest_cache/", "dist/", "build/", ".ruff_cache/",
+    }
+
+    @property
+    def name(self) -> str: return "python"
+
+    @property
+    def encoding(self) -> str: return "utf-8"
+
+    def filter_files(self, tree: list[str]) -> list[str]:
+        return [
+            f for f in tree
+            if not any(f.startswith(n) for n in self._NOISE)
+            and ".egg-info/" not in f
+        ]
+
+    def build_architecture_hint(self) -> str:
+        return (
             "Proyecto Python. Módulos organizados por responsabilidad.\n"
             "Entrypoints en main.py, __main__.py o setup.py/pyproject.toml.\n"
             "Tests en tests/ o test_*.py."
-        ),
-        role_template=_GENERIC_ROLE,
-    ),
-    "generic": StackProfile(
-        name="generic",
-        encoding="utf-8",
-        hints=(
+        )
+
+
+class GenericAdapter(StackAdapter):
+    _NOISE = {"node_modules/", ".git/", "dist/", "build/", "coverage/"}
+
+    @property
+    def name(self) -> str: return "generic"
+
+    @property
+    def encoding(self) -> str: return "utf-8"
+
+    def filter_files(self, tree: list[str]) -> list[str]:
+        return [f for f in tree if not any(f.startswith(n) for n in self._NOISE)]
+
+    def build_architecture_hint(self) -> str:
+        return (
             "Proyecto de stack variado. Identificá los módulos de negocio por densidad de código\n"
             "y nombres de carpeta. Descartá carpetas de infraestructura, assets y dependencias."
-        ),
-        role_template=_GENERIC_ROLE,
-    ),
-}
+        )
 
-# Stacks that map to the same profile
-_ALIASES: dict[str, str] = {
-    "php": "php",
-    "laravel": "laravel",
-    "nextjs": "nextjs",
-    "nuxt": "nextjs",
-    "python": "python",
-    "react": "generic",
-    "vue": "generic",
-    "angular": "generic",
-    "svelte": "generic",
-    "javascript": "generic",
-    "typescript": "generic",
-    "nodejs": "generic",
-    "ruby": "generic",
-    "java": "generic",
-    "kotlin": "generic",
-    "go": "generic",
-    "rust": "generic",
-    "flutter": "generic",
-    "elixir": "generic",
-    "desconocido": "generic",
+
+_REGISTRY: dict[str, type[StackAdapter]] = {
+    "php":         PHPAdapter,
+    "laravel":     LaravelAdapter,
+    "nextjs":      NextJSAdapter,
+    "nuxt":        NextJSAdapter,
+    "python":      PythonAdapter,
+    "react":       GenericAdapter,
+    "vue":         GenericAdapter,
+    "angular":     GenericAdapter,
+    "svelte":      GenericAdapter,
+    "javascript":  GenericAdapter,
+    "typescript":  GenericAdapter,
+    "nodejs":      GenericAdapter,
+    "ruby":        GenericAdapter,
+    "java":        GenericAdapter,
+    "kotlin":      GenericAdapter,
+    "go":          GenericAdapter,
+    "rust":        GenericAdapter,
+    "flutter":     GenericAdapter,
+    "elixir":      GenericAdapter,
+    "desconocido": GenericAdapter,
 }
 
 
-def get_profile(stack: str) -> StackProfile:
-    key = _ALIASES.get(stack, "generic")
-    return _PROFILES[key]
+def get_adapter(stack: str) -> StackAdapter:
+    return _REGISTRY.get(stack, GenericAdapter)()
+
+
+# ponytail: alias — all callers use .encoding/.hints/.role_template which StackAdapter exposes
+def get_profile(stack: str) -> StackAdapter:
+    return get_adapter(stack)
