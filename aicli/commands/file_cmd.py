@@ -7,7 +7,7 @@ from datetime import datetime
 from sqlmodel import Session, select
 from aicli.db import engine
 from aicli.db.models import Project, Module
-from aicli.services.indexer import document_zone, NON_CODE_EXTENSIONS
+from aicli.services.indexer import document_zone, NON_CODE_EXTENSIONS, _write_md_atomic
 from aicli.services.stack_profile import get_profile
 from aicli.tui.theme import magna_ok, magna_warn, magna_error, magna_info, magna_status, ACCENT, SECTION
 
@@ -21,7 +21,7 @@ def _save_zone_modules(modules: list[dict], project: Project) -> None:
         for m in modules:
             md_file = base / Path(m["file_path"]).with_suffix(".md")
             md_file.parent.mkdir(parents=True, exist_ok=True)
-            md_file.write_text(m.get("documentation", ""), encoding="utf-8")
+            _write_md_atomic(md_file, m.get("documentation", ""))
 
             existing = session.exec(
                 select(Module).where(

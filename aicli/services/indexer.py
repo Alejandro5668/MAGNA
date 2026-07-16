@@ -31,6 +31,18 @@ MAX_TREE_ENTRIES = 300
 MAX_RETRIES = 4
 INITIAL_WAIT = 60
 
+MODEL_BY_OPERATION = {
+    "architecture":   "claude-sonnet-4-6",          # document_architecture — razonamiento estructural
+    "file_deep":      "claude-sonnet-4-6",           # analyze_file_deep — documentación profunda
+    "zone":           "claude-sonnet-4-6",           # document_zone — documentación de zona
+    "module_content": "claude-sonnet-4-6",           # generate_module_content — doc inicial
+    "project_md":     "claude-opus-4-8",             # generate_project_md — inferir arquitectura completa
+    "role":           "claude-haiku-4-5-20251001",   # generate_role_md — template rellenado
+    "case_summary":   "claude-haiku-4-5-20251001",   # generate_case_summary — JSON formato fijo
+    "task_brief":     "claude-haiku-4-5-20251001",   # _generate_task_brief — síntesis 8 líneas
+    "image":          "claude-sonnet-4-6",           # describe_image — requiere visión multimodal
+}
+
 
 def _load_ignore(path: Path) -> set[str]:
     """
@@ -132,11 +144,38 @@ def _reparar_json(text: str) -> str:
     return "".join(result)
 
 
-def _call_claude(prompt: str, context: str = "", max_tokens: int = 8192) -> tuple[str, int]:
+def _write_md_atomic(path: Path, content: str) -> None:
+    """Escribe a .tmp y hace rename atómico — si el proceso muere, el .md original queda intacto."""
+    tmp = path.with_suffix(".tmp")
+    try:
+        tmp.write_text(content, encoding="utf-8")
+        tmp.replace(path)
+    except Exception:
+        tmp.unlink(missing_ok=True)
+        raise
+
+
+def _parse_json_claude(text: str, required_keys: set[str] | None = None) -> dict | list:
+    """Parsea JSON de Claude con reparación y validación de campos requeridos."""
+    clean = text.strip().removeprefix("```json").removeprefix("```").removesuffix("```").strip()
+    try:
+        data = json.loads(clean)
+    except json.JSONDecodeError:
+        logging.warning("_parse_json_claude — JSON inválido, intentando reparar")
+        data = json.loads(_reparar_json(clean))
+    if required_keys and isinstance(data, dict):
+        missing = required_keys - data.keys()
+        if missing:
+            raise ValueError(f"JSON de Claude — campos faltantes: {missing}")
+    return data
+
+
+def _call_claude(prompt: str, context: str = "", max_tokens: int = 8192, model: str | None = None) -> tuple[str, int]:
     """
     Llama a la API de Claude y devuelve (texto, tokens_totales).
     Reintenta con backoff exponencial solo en rate limit.
     """
+    resolved_model = model or MODEL_BY_OPERATION["architecture"]
     client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
     wait = INITIAL_WAIT
     chars = len(prompt)
@@ -145,7 +184,7 @@ def _call_claude(prompt: str, context: str = "", max_tokens: int = 8192) -> tupl
     for attempt in range(MAX_RETRIES):
         try:
             response = client.messages.create(
-                model="claude-sonnet-4-6",
+                model=resolved_model,
                 max_tokens=max_tokens,
                 messages=[{"role": "user", "content": prompt}]
             )
@@ -192,7 +231,7 @@ Generá un documento markdown con exactamente estas secciones:
 Solo el markdown, sin texto adicional antes ni después."""
 
     try:
-        return _call_claude(prompt, context=f"generar_contenido:{name}")
+        return _call_claude(prompt, context=f"generar_contenido:{name}", model=MODEL_BY_OPERATION["module_content"])
     except Exception as e:
         logging.error("generate_module_content failed for '%s' (%s): %s", name, file_path, e, exc_info=True)
         raise
@@ -237,10 +276,9 @@ Genera un JSON con exactamente estas claves, sin texto adicional antes ni despue
   "tener_en_cuenta": "gotchas, restricciones no obvias, edge cases a considerar en el futuro — maximo 2 oraciones"
 }}"""
 
-    text, tokens = _call_claude(prompt, context="resumen-caso", max_tokens=1000)
+    text, tokens = _call_claude(prompt, context="resumen-caso", max_tokens=1000, model=MODEL_BY_OPERATION["case_summary"])
     try:
-        clean = text.strip().removeprefix("```json").removeprefix("```").removesuffix("```").strip()
-        data = json.loads(clean)
+        data = _parse_json_claude(text, required_keys={"jira", "investigado", "hecho", "tener_en_cuenta", "pasos_qa"})
         case_memory = {
             "investigado": data.get("investigado", ""),
             "hecho": data.get("hecho", ""),
@@ -248,7 +286,8 @@ Genera un JSON con exactamente estas claves, sin texto adicional antes ni despue
             "pasos_qa": data.get("pasos_qa", ""),
         }
         return data.get("jira", ""), case_memory, tokens
-    except Exception:
+    except Exception as e:
+        logging.warning("generate_case_summary — parse fallido: %s", e)
         return text, {"investigado": "", "hecho": "", "tener_en_cuenta": "", "pasos_qa": ""}, tokens
 
 
@@ -271,7 +310,7 @@ def describe_image(image_path: str) -> tuple[str, int]:
 
     client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
     response = client.messages.create(
-        model="claude-sonnet-4-6",
+        model=MODEL_BY_OPERATION["image"],
         max_tokens=1024,
         messages=[{
             "role": "user",
@@ -382,7 +421,7 @@ Generá un documento markdown con exactamente estas secciones:
 
 Solo el markdown, sin texto adicional antes ni después."""
 
-    return _call_claude(prompt, context=f"archivo:{name}", max_tokens=4000)
+    return _call_claude(prompt, context=f"archivo:{name}", max_tokens=4000, model=MODEL_BY_OPERATION["file_deep"])
 
 
 def document_zone(
@@ -461,13 +500,8 @@ Devolvé ÚNICAMENTE este JSON:
 
 Valores válidos para category: backend, frontend, infraestructura, negocio."""
 
-    text, tokens = _call_claude(prompt, context=f"zona:{zone_display}", max_tokens=8192)
-    text = text.strip().removeprefix("```json").removeprefix("```").removesuffix("```").strip()
-    try:
-        modules = json.loads(text)
-    except json.JSONDecodeError:
-        logging.warning("document_zone — JSON con saltos de línea, intentando reparar")
-        modules = json.loads(_reparar_json(text))
+    text, tokens = _call_claude(prompt, context=f"zona:{zone_display}", max_tokens=8192, model=MODEL_BY_OPERATION["zone"])
+    modules = _parse_json_claude(text)
 
     if on_progreso:
         on_progreso(f"{len(modules)} componentes documentados · {tokens:,} tokens")
@@ -510,7 +544,7 @@ def get_recent_files(path: Path, days: int) -> list[str]:
     """
     try:
         result = subprocess.run(
-            ["git", "log", f"--since={dias} days ago",
+            ["git", "log", f"--since={days} days ago",
              "--name-only", "--pretty=format:", "--diff-filter=AM"],
             cwd=str(path), capture_output=True, text=True, timeout=30
         )
@@ -657,7 +691,7 @@ Filtros siempre presentes (multi-tenant, activo, etc.):
     if on_progreso:
         on_progreso("Generando PROYECTO.md...")
 
-    text, tokens = _call_claude(prompt, context="generar_proyecto_md", max_tokens=8000)
+    text, tokens = _call_claude(prompt, context="generar_proyecto_md", max_tokens=8000, model=MODEL_BY_OPERATION["project_md"])
     return text.strip(), tokens
 
 
@@ -766,12 +800,8 @@ Devolvé ÚNICAMENTE este JSON:
 Valores válidos para category: backend, frontend, infraestructura, negocio."""
 
     try:
-        text, tokens = _call_claude(prompt, context=f"arquitectura:{name}", max_tokens=8000)
-        text = text.strip().removeprefix("```json").removeprefix("```").removesuffix("```").strip()
-        try:
-            modules = json.loads(text)
-        except json.JSONDecodeError:
-            modules = json.loads(_reparar_json(text))
+        text, tokens = _call_claude(prompt, context=f"arquitectura:{name}", max_tokens=8000, model=MODEL_BY_OPERATION["architecture"])
+        modules = _parse_json_claude(text)
         if on_progreso:
             on_progreso(f"{len(modules)} módulos identificados · {tokens:,} tokens")
         return modules
@@ -809,7 +839,7 @@ Basate en el código real para inferir convenciones (nombres, patrones, estructu
 Solo el markdown, sin texto adicional antes ni después."""
 
     try:
-        text, _ = _call_claude(prompt, context=f"generate_role:{name}", max_tokens=1500)
+        text, _ = _call_claude(prompt, context=f"generate_role:{name}", max_tokens=1500, model=MODEL_BY_OPERATION["role"])
         return text.strip()
     except Exception as e:
         logging.warning("generate_role_md falló para '%s', usando fallback: %s", name, e)

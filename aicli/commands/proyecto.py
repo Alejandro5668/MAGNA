@@ -3,7 +3,7 @@ from pathlib import Path
 from sqlmodel import Session, select
 from aicli.db import engine
 from aicli.db.models import Project, Module
-from aicli.services.indexer import get_tree, generate_project_md
+from aicli.services.indexer import get_tree, generate_project_md, _write_md_atomic
 from aicli.services.stack_profile import get_profile
 from aicli.tui.theme import print_header, print_footer, magna_status, magna_ok, magna_info, magna_error, magna_panel
 from rich.console import Console
@@ -55,7 +55,7 @@ def proyecto():  # registered as "scan" in main.py
         )
 
     dest.parent.mkdir(parents=True, exist_ok=True)
-    dest.write_text(content, encoding="utf-8")
+    _write_md_atomic(dest, content)
 
     magna_ok(console, f"PROYECTO.md generado  ·  {tokens:,} tokens")
     magna_info(console, f"Ubicación: {dest}")

@@ -180,7 +180,8 @@ def launch_claude(
         content += f"\n\n---\n\n# Archivo de entrada\n`{file}`"
     if task:
         content += f"\n\n---\n\n# Tarea\n{task}"
-    ctx_path.write_text(content, encoding="utf-8")
+    from aicli.services.indexer import _write_md_atomic
+    _write_md_atomic(ctx_path, content)
 
     # ── Título de terminal + mensaje inicial para Claude ─────────────────────
     import re

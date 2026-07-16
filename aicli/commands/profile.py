@@ -9,7 +9,7 @@ from sqlmodel import Session, select
 from aicli.db import engine
 from aicli.db.models import Project
 from aicli.services.stack_profile import get_profile
-from aicli.services.indexer import get_tree, generate_role_md
+from aicli.services.indexer import get_tree, generate_role_md, _write_md_atomic
 from aicli.tui.theme import magna_ok, magna_warn, magna_info, magna_error, ACCENT, SECTION, BORDER
 
 app = typer.Typer()
@@ -76,7 +76,7 @@ def profile(
             path, project.name, project.stack or "desconocido",
             tree, fallback=profile_obj.role_template, encoding=profile_obj.encoding,
         )
-        _ROL_PATH.write_text(content, encoding="utf-8")
+        _write_md_atomic(_ROL_PATH, content)
         magna_ok(console, f"rol.md regenerado — {len(content.splitlines())} líneas")
 
     if editar:

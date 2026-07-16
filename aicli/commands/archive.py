@@ -7,7 +7,7 @@ from datetime import datetime
 from sqlmodel import Session, select
 from aicli.db import engine
 from aicli.db.models import Project, Module
-from aicli.services.indexer import analyze_file_deep, module_needs_update
+from aicli.services.indexer import analyze_file_deep, module_needs_update, _write_md_atomic
 from aicli.services.stack_profile import get_profile
 from aicli.tui.theme import magna_error, magna_status, ACCENT, SECTION
 
@@ -58,7 +58,7 @@ def archive(
     base = Path.home() / ".mycontext" / "projects" / str(project.id)
     md_file = base / Path(source).with_suffix(".md")
     md_file.parent.mkdir(parents=True, exist_ok=True)
-    md_file.write_text(content_md, encoding="utf-8")
+    _write_md_atomic(md_file, content_md)
 
     name = Path(source).stem
     description = next((l.lstrip("# ") for l in content_md.splitlines() if l.strip()), name)

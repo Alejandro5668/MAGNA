@@ -34,7 +34,9 @@ def claude():
 
     try:
         magna_info(console, f"Cargando contexto completo... {len(modules)} módulos")
-        context = build_context(modules)
+        context, ctx_warnings = build_context(modules, project_path=path)
+        for w in ctx_warnings:
+            magna_warn(console, w)
         launch_claude(context)
     except Exception as e:
         logging.error("ctx claude falló: %s", e, exc_info=True)
