@@ -371,7 +371,7 @@ def _sync_impl(ask_fn=None, confirm_fn=None):
             if ticket_id in current_tickets:
                 description = current_tickets[ticket_id]["descripcion"]
             else:
-                description = original_task or ticket_id
+                description = ticket_id
 
             save_round(
                 ticket_id=ticket_id,
