@@ -33,7 +33,7 @@ exe = EXE(
     a.binaries,
     a.datas,
     [],
-    name='ctx',
+    name='MAGNA',
     icon='assets/icon.ico',
     debug=False,
     bootloader_ignore_signals=False,
