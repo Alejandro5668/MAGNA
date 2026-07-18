@@ -342,9 +342,14 @@ def _dispatch_tui(command: str, inputs: dict, tui_console) -> None:
 
 def _run_resume_tui(tui_console) -> None:
     """Flujo resume usando TuiConsole para output e InputModal para inputs."""
+    from pathlib import Path as _Path
     from rich.panel import Panel as RichPanel
     from rich.text import Text as RichText
-    from aicli.services.tickets import load_tickets, format_history, save_active_ticket
+    from aicli.services.tickets import (
+        load_tickets, format_history, save_active_ticket,
+        get_ticket_branch, save_ticket_branch,
+    )
+    from aicli.services import git_utils
     import aicli.commands.task as task_mod
 
     tickets = load_tickets()
@@ -365,6 +370,49 @@ def _run_resume_tui(tui_console) -> None:
         if not raw:
             return
         ticket_id = raw.upper()
+
+    # ── Branch checkout ───────────────────────────────────────────────────────
+    cwd = _Path.cwd()
+    saved_branch = get_ticket_branch(ticket_id)
+
+    if saved_branch:
+        ok, err = git_utils.checkout(saved_branch, cwd)
+        if ok:
+            tui_console.print(f"[{_OK}]✓ Branch: {saved_branch}[/{_OK}]")
+        else:
+            tui_console.print(f"[{_WARN}]No se pudo hacer checkout de '{saved_branch}': {err}[/{_WARN}]")
+    else:
+        matching = git_utils.branches_matching(ticket_id, cwd)
+        recent   = [b for b in git_utils.recent_branches(cwd, 10) if b not in matching]
+        candidates = matching + recent
+
+        if candidates:
+            lines = []
+            for i, b in enumerate(candidates):
+                star = f"[{_ACCENT}]★[/{_ACCENT}] " if b in matching else "  "
+                lines.append(f"{star}{i + 1}. [{_SEC}]{b}[/{_SEC}]")
+            tui_console.print(
+                f"[{_SECTION}]Ramas disponibles (★ = matchea {ticket_id}):[/{_SECTION}]\n"
+                + "\n".join(lines)
+            )
+            raw_b = tui_console.request_input("Número de rama (Enter para omitir)")
+
+            branch = None
+            if raw_b:
+                if raw_b.strip().isdigit():
+                    idx = int(raw_b.strip()) - 1
+                    if 0 <= idx < len(candidates):
+                        branch = candidates[idx]
+                else:
+                    branch = raw_b.strip()
+
+            if branch:
+                ok, err = git_utils.checkout(branch, cwd)
+                if ok:
+                    save_ticket_branch(ticket_id, branch)
+                    tui_console.print(f"[{_OK}]✓ Branch: {branch}[/{_OK}]")
+                else:
+                    tui_console.print(f"[{_WARN}]checkout falló: {err}[/{_WARN}]")
 
     history = format_history(ticket_id, tickets)
     if history:
