@@ -62,9 +62,18 @@ def _show_case_card(ticket_id: str, round_num: int, files: set[str], case_memory
 
 
 def _read_session_task() -> str:
-    """Lee la tarea del session_context más reciente generado por ctx task."""
+    """Lee la tarea del session_context de esta instancia (PID-scoped). Fallback: más reciente."""
+    from aicli.services.tickets import read_session_ctx_path
+    ctx_path_str = read_session_ctx_path()
+    if ctx_path_str:
+        p = Path(ctx_path_str)
+        if p.exists():
+            content = p.read_text(encoding="utf-8")
+            if "# Tarea" in content:
+                return content.split("# Tarea")[-1].strip()
+    # fallback para sesiones donde no se corrió ctx task
     ctx_dir = Path.home() / ".mycontext"
-    ctx_files = sorted(ctx_dir.glob("session_context_*.md"), key=lambda p: p.stat().st_mtime, reverse=True)
+    ctx_files = sorted(ctx_dir.glob("session_context_*.md"), key=lambda f: f.stat().st_mtime, reverse=True)
     if not ctx_files:
         return ""
     content = ctx_files[0].read_text(encoding="utf-8")

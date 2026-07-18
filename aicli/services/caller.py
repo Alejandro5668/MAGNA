@@ -181,7 +181,9 @@ def launch_claude(
     if task:
         content += f"\n\n---\n\n# Tarea\n{task}"
     from aicli.services.indexer import _write_md_atomic
+    from aicli.services.tickets import save_session_ctx_path
     _write_md_atomic(ctx_path, content)
+    save_session_ctx_path(str(ctx_path))
 
     # ── Título de terminal + mensaje inicial para Claude ─────────────────────
     import re

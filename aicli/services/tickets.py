@@ -126,3 +126,25 @@ def clear_active_ticket() -> None:
     path = _active_path()
     if path.exists():
         path.unlink()
+
+
+def _session_ctx_file() -> Path:
+    return Path.home() / ".mycontext" / f"session_ctx_{os.getpid()}.json"
+
+
+def save_session_ctx_path(ctx_path: str) -> None:
+    """Persiste la ruta del session_context creado en esta instancia (PID-scoped)."""
+    _session_ctx_file().write_text(
+        json.dumps({"ctx_path": ctx_path}, ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+
+def read_session_ctx_path() -> str | None:
+    path = _session_ctx_file()
+    if not path.exists():
+        return None
+    try:
+        return json.loads(path.read_text(encoding="utf-8")).get("ctx_path")
+    except Exception:
+        return None
