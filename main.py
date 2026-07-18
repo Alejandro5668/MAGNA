@@ -16,7 +16,8 @@ _log_handler.setFormatter(logging.Formatter(
     "%(asctime)s [%(levelname)s] %(name)s — %(message)s",
     datefmt="%Y-%m-%d %H:%M:%S",
 ))
-logging.getLogger().setLevel(logging.DEBUG)
+logging.getLogger().setLevel(logging.WARNING)       # libs de terceros: solo WARNING+
+logging.getLogger("aicli").setLevel(logging.DEBUG)  # nuestro código: todo
 logging.getLogger().addHandler(_log_handler)
 
 from aicli.tui.log_handler import tui_handler

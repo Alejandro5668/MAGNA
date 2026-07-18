@@ -933,6 +933,7 @@ class LogScreen(Screen):
     DEFAULT_CSS = f"""
     LogScreen {{
         layout: vertical;
+        background: {_ELEVATED};
         padding: 1 2;
     }}
     #log-header {{
@@ -941,32 +942,39 @@ class LogScreen(Screen):
         text-style: bold;
         margin-bottom: 1;
     }}
+    #log-hint {{
+        height: 1;
+        color: {_MUTED};
+        margin-top: 1;
+    }}
     #log-view {{
         height: 1fr;
-        border: solid {_BORDER};
+        border: solid {_BORDER_A};
+        background: {_ELEVATED};
     }}
     """
 
     def compose(self) -> ComposeResult:
         log_path = Path.home() / ".mycontext" / "magna.log"
+        content = (
+            log_path.read_text(encoding="utf-8", errors="replace")
+            if log_path.exists()
+            else "(sin logs aún — los errores aparecerán aquí)"
+        )
         yield Static(
             f"[bold {_ACCENT}]MAGNA — Logs[/bold {_ACCENT}]"
-            f"  [{_MUTED}]{log_path}[/{_MUTED}]"
-            f"  [[esc]] volver",
+            f"  [{_MUTED}]{log_path}[/{_MUTED}]",
             id="log-header", markup=True,
         )
-        yield RichLog(markup=False, highlight=False, wrap=True, id="log-view")
+        yield TextArea(content, id="log-view", read_only=True)
+        yield Static(
+            f"  seleccioná con el mouse o teclado  ·  Ctrl+C para copiar  ·  [[esc]] volver",
+            id="log-hint", markup=True,
+        )
 
     def on_mount(self) -> None:
-        log_path = Path.home() / ".mycontext" / "magna.log"
-        rl = self.query_one("#log-view", RichLog)
-        if log_path.exists():
-            lines = log_path.read_text(encoding="utf-8", errors="replace").splitlines()
-            for line in lines[-150:]:
-                rl.write(line)
-            rl.scroll_end(animate=False)
-        else:
-            rl.write("(sin logs aún — los errores aparecerán aquí)")
+        ta = self.query_one("#log-view", TextArea)
+        ta.move_cursor(ta.document.end)
 
 
 # ─── Main Screen ──────────────────────────────────────────────────────────────
