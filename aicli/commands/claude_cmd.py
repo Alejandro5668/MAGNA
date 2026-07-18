@@ -1,5 +1,6 @@
 import typer
 import logging
+import questionary
 from rich.console import Console
 from pathlib import Path
 from sqlmodel import Session, select
@@ -7,10 +8,13 @@ from aicli.db import engine
 from aicli.db.models import Project, Module
 from aicli.services.builder import build_context
 from aicli.services.caller import launch_claude
-from aicli.tui.theme import magna_error, magna_warn, magna_info, ACCENT
+from aicli.tui.theme import magna_error, magna_warn, magna_info, Q_STYLE_ARGS
+from questionary import Style as QStyle
 
 app = typer.Typer()
 console = Console()
+
+_ESTILO = QStyle(Q_STYLE_ARGS)
 
 
 @app.callback(invoke_without_command=True)
@@ -32,12 +36,17 @@ def claude():
         magna_warn(console, "No hay módulos documentados. Ejecutá ctx init primero.")
         raise typer.Exit(code=1)
 
+    duda = questionary.text("¿Qué duda tenés?", style=_ESTILO).ask()
+    if not duda or not duda.strip():
+        magna_warn(console, "Sin pregunta. Cancelado.")
+        return
+
     try:
         magna_info(console, f"Cargando contexto completo... {len(modules)} módulos")
         context, ctx_warnings = build_context(modules, project_path=path)
         for w in ctx_warnings:
             magna_warn(console, w)
-        launch_claude(context)
+        launch_claude(context, task=duda.strip(), question_mode=True)
     except Exception as e:
         logging.error("ctx claude falló: %s", e, exc_info=True)
         magna_error(console, str(e))

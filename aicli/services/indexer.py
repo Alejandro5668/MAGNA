@@ -309,30 +309,33 @@ def describe_image(image_path: str) -> tuple[str, int]:
     image_b64 = base64.standard_b64encode(path.read_bytes()).decode("utf-8")
 
     client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
-    response = client.messages.create(
-        model=MODEL_BY_OPERATION["image"],
-        max_tokens=1024,
-        messages=[{
-            "role": "user",
-            "content": [
-                {
-                    "type": "image",
-                    "source": {"type": "base64", "media_type": media_type, "data": image_b64},
-                },
-                {
-                    "type": "text",
-                    "text": (
-                        "Describí esta imagen con precisión técnica para un desarrollador.\n"
-                        "Si es una interfaz web o app: identificá elementos visibles, mensajes de error, "
-                        "texto en pantalla, comportamiento observable, clases CSS o IDs visibles.\n"
-                        "Si es un diagrama o esquema: describí la estructura y relaciones.\n"
-                        "Si es un bug visual: describí exactamente qué está mal y dónde.\n"
-                        "Sé específico. No uses frases genéricas."
-                    ),
-                },
-            ],
-        }],
-    )
+    try:
+        response = client.messages.create(
+            model=MODEL_BY_OPERATION["image"],
+            max_tokens=1024,
+            messages=[{
+                "role": "user",
+                "content": [
+                    {
+                        "type": "image",
+                        "source": {"type": "base64", "media_type": media_type, "data": image_b64},
+                    },
+                    {
+                        "type": "text",
+                        "text": (
+                            "Describí esta imagen con precisión técnica para un desarrollador.\n"
+                            "Si es una interfaz web o app: identificá elementos visibles, mensajes de error, "
+                            "texto en pantalla, comportamiento observable, clases CSS o IDs visibles.\n"
+                            "Si es un diagrama o esquema: describí la estructura y relaciones.\n"
+                            "Si es un bug visual: describí exactamente qué está mal y dónde.\n"
+                            "Sé específico. No uses frases genéricas."
+                        ),
+                    },
+                ],
+            }],
+        )
+    except Exception as e:
+        raise RuntimeError(f"Error al analizar imagen con Claude: {e}") from e
     tokens = response.usage.input_tokens + response.usage.output_tokens
     logging.info("describe_image — %s · %d tokens", path.name, tokens)
     return response.content[0].text.strip(), tokens
@@ -741,7 +744,7 @@ def document_architecture(
     if not candidates:
         root = [f for f in tree if len(Path(f).parts) == 1]
         candidates = [{"carpeta": "raiz", "n_archivos": len(root),
-                       "archivos": root[:6], "muestra": leer_archivos_clave(path, root)}]
+                       "archivos": root[:6], "muestra": read_key_files(path, root)}]
 
     # Limitar a 15 candidatos para mantener el output dentro de 8000 tokens
     # En proyectos grandes (>15 carpetas) se priorizan las que tienen más archivos

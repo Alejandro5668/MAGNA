@@ -106,7 +106,9 @@ def format_history(ticket_id: str, tickets: dict) -> str | None:
 
 def save_active_ticket(ticket_id: str, motivo_reapertura: str) -> None:
     """Persiste el ticket y motivo de reapertura para que ctx sync los capture al cerrar."""
-    _active_path().write_text(
+    p = _active_path()
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(
         json.dumps({"ticket_id": ticket_id, "motivo_reapertura": motivo_reapertura}, ensure_ascii=False),
         encoding="utf-8",
     )
@@ -134,7 +136,9 @@ def _session_ctx_file() -> Path:
 
 def save_session_ctx_path(ctx_path: str) -> None:
     """Persiste la ruta del session_context creado en esta instancia (PID-scoped)."""
-    _session_ctx_file().write_text(
+    f = _session_ctx_file()
+    f.parent.mkdir(parents=True, exist_ok=True)
+    f.write_text(
         json.dumps({"ctx_path": ctx_path}, ensure_ascii=False),
         encoding="utf-8",
     )
