@@ -110,16 +110,16 @@ def fetch_issue(ticket_id: str) -> dict | None:
 def fetch_my_issues() -> dict:
     """Trae issues asignados al usuario actual, agrupados por estado."""
     import httpx
-    url = f"{os.getenv('JIRA_URL')}/rest/api/3/search"
+    url = f"{os.getenv('JIRA_URL')}/rest/api/3/search/jql"
     jql = (
         "assignee = currentUser() "
         "AND statusCategory in (indeterminate, new) "
         "ORDER BY priority DESC, updated DESC"
     )
     try:
-        resp = httpx.get(
+        resp = httpx.post(
             url, headers=_headers(),
-            params={"jql": jql, "maxResults": 20, "fields": "summary,status,priority"},
+            json={"jql": jql, "maxResults": 20, "fields": ["summary", "status", "priority"]},
             timeout=10,
         )
         if resp.status_code != 200:
