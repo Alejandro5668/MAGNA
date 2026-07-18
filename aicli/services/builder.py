@@ -18,6 +18,7 @@ def build_context(modules: list[Module], project_path: Path | None = None) -> tu
     if rol_path.exists():
         fragments.append(rol_path.read_text(encoding="utf-8"))
 
+    lessons_by_path: dict[str, list[ModuleLesson]] = {}
     if modules:
         project_id = modules[0].project_id
         proyecto_md = Path.home() / ".mycontext" / "projects" / str(project_id) / "PROYECTO.md"
@@ -35,7 +36,6 @@ def build_context(modules: list[Module], project_path: Path | None = None) -> tu
                 select(ModuleLesson)
                 .where(ModuleLesson.project_id == project_id)
             ).all())
-        lessons_by_path: dict[str, list[ModuleLesson]] = {}
         for lesson in sorted(all_lessons, key=lambda l: l.date, reverse=True):
             bucket = lessons_by_path.setdefault(lesson.file_path, [])
             if len(bucket) < 3:

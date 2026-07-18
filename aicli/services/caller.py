@@ -132,6 +132,7 @@ def launch_claude(
     jira_data: dict | None = None,
     jira_images: list | None = None,
     jira_excel: list | None = None,
+    question_mode: bool = False,
 ) -> None:
     from datetime import datetime
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -200,7 +201,13 @@ def launch_claude(
     elif task:
         snippet = task.replace("\n", " ")[:40]
         tab_title = snippet[:28] + ("…" if len(task) > 28 else "")
-        message = f"Read {ctx_path} to get the project context and task, then start working."
+        if question_mode:
+            message = (
+                f"Read {ctx_path} for full project context. "
+                f"Then answer this question directly and concisely in Spanish: {task}"
+            )
+        else:
+            message = f"Read {ctx_path} to get the project context and task, then start working."
     else:
         tab_title = "MAGNA"
         message = f"Read {ctx_path} to get the project context and task, then start working."
