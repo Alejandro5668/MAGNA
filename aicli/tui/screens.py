@@ -68,6 +68,49 @@ _SEC      = "#AAB4D4"   # text.secondary
 _MUTED    = "#5E6A94"   # text.muted
 
 
+_ENV_LABELS: dict[str, str] = {
+    "ANTHROPIC_API_KEY": "Anthropic API Key",
+    "JIRA_URL":          "Jira URL",
+    "JIRA_EMAIL":        "Jira Email",
+    "JIRA_TOKEN":        "Jira Token",
+    "GEMINI_API_KEY":    "Gemini API Key",
+}
+
+
+def _save_env_var(key: str, value: str) -> None:
+    env_path = Path.home() / ".mycontext" / ".env"
+    existing = env_path.read_text(encoding="utf-8") if env_path.exists() else ""
+    lines = [ln for ln in existing.splitlines() if ln.strip()]
+    result, updated = [], False
+    for line in lines:
+        k = line.split("=", 1)[0] if "=" in line else ""
+        if k == key:
+            result.append(f"{key}={value}")
+            updated = True
+        else:
+            result.append(line)
+    if not updated:
+        result.append(f"{key}={value}")
+    env_path.write_text("\n".join(result) + "\n", encoding="utf-8")
+    os.environ[key] = value
+
+
+def _cfg_option(env_key: str) -> Option:
+    label = _ENV_LABELS.get(env_key, env_key)
+    is_set = bool(os.getenv(env_key))
+    status = "✓ configurada" if is_set else "✗ no configurada"
+    color  = _OK if is_set else _ERROR
+    return Option(
+        Text.assemble(
+            ("  ", ""),
+            (f"{label:<28}", "#F1F3F9"),
+            (status, f"bold {color}"),
+        ),
+        id=f"k:{env_key}",
+    )
+
+
+
 def _error_panel(command: str, exc: BaseException, tb: str) -> RichPanel:
     """MAGNA-branded error panel for CommandOutputScreen."""
     body = Text()
@@ -98,8 +141,7 @@ _MENU = [
         ("7", "status",   "View architecture"),
     ]),
     ("TEAM", [
-        ("8", "rules",    "Reglas del equipo"),
-        ("0", "logs",     "Ver logs"),
+        ("s", "settings", "Settings"),
     ]),
 ]
 
@@ -1025,6 +1067,177 @@ class LogScreen(Screen):
         ta.move_cursor(ta.document.end)
 
 
+# ─── Settings Screen ──────────────────────────────────────────────────────────
+
+class SettingsScreen(Screen):
+
+    BINDINGS = [
+        Binding("escape", "app.pop_screen", show=False),
+        Binding("q",      "app.pop_screen", show=False),
+    ]
+
+    DEFAULT_CSS = f"""
+    SettingsScreen {{
+        background: transparent;
+    }}
+    #cfg-logo {{
+        text-align: center;
+        padding: 1 0 0 0;
+    }}
+    #cfg-title {{
+        color: {_SECTION};
+        text-align: center;
+        height: 1;
+    }}
+    #cfg-body {{
+        height: 1fr;
+        border-top: heavy {_BORDER_A};
+        margin-top: 1;
+        overflow-y: auto;
+        padding: 0 6;
+    }}
+    .cfg-section-hdr {{
+        color: {_SECTION};
+        text-style: bold;
+        height: 2;
+        padding: 1 1 0 1;
+    }}
+    OptionList {{
+        background: transparent;
+        border: none;
+        height: auto;
+        padding: 0;
+    }}
+    OptionList > .option-list--option {{
+        padding: 0 1;
+    }}
+    OptionList > .option-list--option-highlighted {{
+        background: transparent;
+    }}
+    OptionList:focus > .option-list--option-highlighted {{
+        background: {_SELECT};
+    }}
+    #cfg-foot {{
+        dock: bottom;
+        color: {_MUTED};
+        text-align: center;
+        height: 2;
+        padding: 0 2;
+        border-top: solid {_BORDER};
+    }}
+    Rule {{
+        color: {_BORDER};
+        margin: 0;
+    }}
+    """
+
+    def _rule_options(self) -> list[Option]:
+        rules_dir = Path.home() / ".mycontext" / "rules"
+        rule_files = sorted(rules_dir.glob("*.md")) if rules_dir.exists() else []
+        items = [
+            Option(
+                Text.assemble(("  ", ""), (f.name, _SEC), ("   ", ""), ("↵ eliminar", _MUTED)),
+                id=f"rules:del:{f.name}",
+            )
+            for f in rule_files
+        ]
+        items.append(
+            Option(Text.assemble(("  ", ""), ("+ Agregar regla...", _ACCENT)), id="rules:add")
+        )
+        return items
+
+    def compose(self) -> ComposeResult:
+        yield Static(_gradient_logo(), id="cfg-logo")
+        yield Static("SETTINGS", id="cfg-title")
+        with Container(id="cfg-body"):
+            yield Static("  ▌  CREDENCIALES", classes="cfg-section-hdr")
+            yield OptionList(
+                _cfg_option("ANTHROPIC_API_KEY"),
+                _cfg_option("JIRA_URL"),
+                _cfg_option("JIRA_EMAIL"),
+                _cfg_option("JIRA_TOKEN"),
+                _cfg_option("GEMINI_API_KEY"),
+                id="cfg-creds",
+            )
+            yield Rule()
+            yield Static("  ▌  REGLAS DEL EQUIPO", classes="cfg-section-hdr")
+            yield OptionList(*self._rule_options(), id="cfg-rules")
+            yield Rule()
+            yield Static("  ▌  LOGS", classes="cfg-section-hdr")
+            yield OptionList(
+                Option(
+                    Text.assemble(("  ", ""), ("Ver magna.log", "#F1F3F9"), ("          →", _SEC)),
+                    id="logs",
+                ),
+                id="cfg-logs",
+            )
+        yield Static(
+            f"  [bold {_ACCENT}]↑↓[/bold {_ACCENT}] [{_SEC}]navegar[/{_SEC}]"
+            f"  [bold {_ACCENT}]↵[/bold {_ACCENT}] [{_SEC}]editar · abrir[/{_SEC}]"
+            f"  [bold {_ACCENT}]esc[/bold {_ACCENT}] [{_SEC}]volver[/{_SEC}]",
+            id="cfg-foot", markup=True,
+        )
+
+    def on_mount(self) -> None:
+        self.query_one("#cfg-creds", OptionList).focus()
+
+    def _rebuild_creds(self) -> None:
+        ol = self.query_one("#cfg-creds", OptionList)
+        ol.clear_options()
+        for key in _ENV_LABELS:
+            ol.add_option(_cfg_option(key))
+
+    def _rebuild_rules(self) -> None:
+        ol = self.query_one("#cfg-rules", OptionList)
+        ol.clear_options()
+        for item in self._rule_options():
+            ol.add_option(item)
+
+    def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
+        self._worker_action(event.option.id or "")
+
+    @work
+    async def _worker_action(self, opt_id: str) -> None:
+        if opt_id.startswith("k:"):
+            env_key = opt_id[2:]
+            label   = _ENV_LABELS.get(env_key, env_key)
+            hint    = "configurada — Enter para cambiar" if os.getenv(env_key) else "no configurada"
+            value   = await self.app.push_screen_wait(InputModal(f"{label}  ({hint})", ""))
+            if value and value.strip():
+                _save_env_var(env_key, value.strip())
+                self.app.notify(f"{label} guardada ✓", timeout=3)
+                self._rebuild_creds()
+
+        elif opt_id == "rules:add":
+            file_path_str = await self.app.push_screen_wait(
+                InputModal("Ruta del archivo de reglas (.md)", r"C:\rules\techlead-rules.md")
+            )
+            if not file_path_str:
+                return
+            src = Path(file_path_str.strip())
+            if not src.exists() or src.suffix.lower() != ".md":
+                self.app.notify(f"No encontrado o no es .md: {src}", severity="error", timeout=5)
+                return
+            rules_dir = Path.home() / ".mycontext" / "rules"
+            rules_dir.mkdir(parents=True, exist_ok=True)
+            (rules_dir / src.name).write_bytes(src.read_bytes())
+            self.app.notify(f"Regla agregada: {src.name}", timeout=4)
+            self._rebuild_rules()
+
+        elif opt_id.startswith("rules:del:"):
+            fname     = opt_id[10:]
+            confirmed = await self.app.push_screen_wait(ConfirmModal(f"¿Eliminar {fname}?", default=False))
+            if confirmed:
+                dest = Path.home() / ".mycontext" / "rules" / fname
+                if dest.exists():
+                    dest.unlink()
+                self.app.notify(f"Regla eliminada: {fname}", timeout=4)
+                self._rebuild_rules()
+
+        elif opt_id == "logs":
+            await self.app.push_screen(LogScreen())
+
+
 # ─── Main Screen ──────────────────────────────────────────────────────────────
 
 class MainScreen(Screen):
@@ -1037,8 +1250,7 @@ class MainScreen(Screen):
         Binding("5", "cmd('resume')",    show=False),
         Binding("6", "cmd('claude')",    show=False),
         Binding("7", "cmd('status')",    show=False),
-        Binding("8", "cmd('rules')",     show=False),
-        Binding("0", "cmd('logs')",      show=False),
+        Binding("s", "cmd('settings')",  show=False),
         Binding("g", "jump_top",         show=False),
         Binding("G", "jump_bottom",      show=False),
         Binding("h", "collapse_section", show=False),
@@ -1339,30 +1551,8 @@ class MainScreen(Screen):
             )
             return
 
-        if command == "logs":
-            await self.app.push_screen(LogScreen())
-            return
-
-        if command == "rules":
-            file_path_str = await self.app.push_screen_wait(
-                InputModal("Ruta del archivo de reglas (.md)", r"C:\rules\techlead-rules.md")
-            )
-            if not file_path_str:
-                return
-            src = Path(file_path_str.strip())
-            if not src.exists() or not src.suffix.lower() == ".md":
-                self.app.notify(
-                    f"Archivo no encontrado o no es .md: {src}",
-                    severity="error", timeout=5,
-                )
-                return
-            rules_dir = Path.home() / ".mycontext" / "rules"
-            rules_dir.mkdir(parents=True, exist_ok=True)
-            dest = rules_dir / src.name
-            dest.write_bytes(src.read_bytes())
-            self.app.notify(
-                f"Regla agregada: {src.name}", severity="information", timeout=4,
-            )
+        if command == "settings":
+            await self.app.push_screen(SettingsScreen())
             return
 
         # ── Recoger inputs via InputModal (TUI, sin suspend) ──────────────────
