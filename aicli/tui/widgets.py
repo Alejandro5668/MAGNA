@@ -146,6 +146,9 @@ class TicketPanel(Widget):
             t["_rounds"] = len(local.get(t["id"], {}).get("rondas", []))
             t["_active"] = (t["id"] == active_tid)
 
+        if not flat:
+            self.app.call_from_thread(self._set_desc, "Sin tickets asignados en curso.")
+            return
         self.app.call_from_thread(self._populate, flat)
 
     def _set_desc(self, msg: str) -> None:

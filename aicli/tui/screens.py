@@ -1,5 +1,7 @@
 from __future__ import annotations
 import os
+import logging
+import traceback
 from pathlib import Path
 
 import pyfiglet
@@ -80,6 +82,7 @@ _MENU = [
     ]),
     ("TEAM", [
         ("8", "rules",    "Reglas del equipo"),
+        ("0", "logs",     "Ver logs"),
     ]),
 ]
 
@@ -292,9 +295,32 @@ def _dispatch_tui(command: str, inputs: dict, tui_console) -> None:
         _run_resume_tui(tui_console)
 
     elif command == "claude":
-        import aicli.commands.claude_cmd as mod
-        with _inject(mod, tui_console):
-            tui_console.suspend_and_run(mod.claude)
+        from pathlib import Path as _Path
+        from sqlmodel import Session as _Session, select as _select
+        from aicli.db import engine as _engine
+        from aicli.db.models import Project as _Project, Module as _Module
+        from aicli.services.builder import build_context as _build_ctx
+        from aicli.services.caller import launch_claude as _launch
+        from aicli.tui.theme import magna_warn as _mw, magna_error as _me
+
+        path = _Path.cwd()
+        with _Session(_engine) as s:
+            project = s.exec(_select(_Project).where(_Project.path == str(path))).first()
+        if not project:
+            tui_console.print(f"[bold {_ERROR}]Proyecto no registrado. Ejecutá ctx init primero.[/bold {_ERROR}]")
+            return
+        with _Session(_engine) as s:
+            modules = list(s.exec(_select(_Module).where(_Module.project_id == project.id)).all())
+        if not modules:
+            tui_console.print(f"[{_WARN}]Sin módulos documentados. Ejecutá ctx init primero.[/{_WARN}]")
+            return
+
+        tui_console.print(f"[{_SECTION}]Cargando contexto… {len(modules)} módulos[/{_SECTION}]")
+        context, ctx_warnings = _build_ctx(modules, project_path=path)
+        for w in ctx_warnings:
+            tui_console.print(f"[{_WARN}]{w}[/{_WARN}]")
+
+        tui_console.suspend_and_run(lambda: _launch(context, task=inputs["duda"], question_mode=True))
 
 
 def _run_resume_tui(tui_console) -> None:
@@ -882,6 +908,50 @@ class ProjectScreen(Screen):
         self.app.switch_screen(OnboardingScreen(target.name, str(target)))
 
 
+# ─── Log Screen ───────────────────────────────────────────────────────────────
+
+class LogScreen(Screen):
+    BINDINGS = [Binding("escape", "dismiss", show=False)]
+
+    DEFAULT_CSS = f"""
+    LogScreen {{
+        layout: vertical;
+        padding: 1 2;
+    }}
+    #log-header {{
+        height: 1;
+        color: {_ACCENT};
+        text-style: bold;
+        margin-bottom: 1;
+    }}
+    #log-view {{
+        height: 1fr;
+        border: solid {_BORDER};
+    }}
+    """
+
+    def compose(self) -> ComposeResult:
+        log_path = Path.home() / ".mycontext" / "magna.log"
+        yield Static(
+            f"[bold {_ACCENT}]MAGNA — Logs[/bold {_ACCENT}]"
+            f"  [{_MUTED}]{log_path}[/{_MUTED}]"
+            f"  [[esc]] volver",
+            id="log-header", markup=True,
+        )
+        yield RichLog(markup=False, highlight=False, wrap=True, id="log-view")
+
+    def on_mount(self) -> None:
+        log_path = Path.home() / ".mycontext" / "magna.log"
+        rl = self.query_one("#log-view", RichLog)
+        if log_path.exists():
+            lines = log_path.read_text(encoding="utf-8", errors="replace").splitlines()
+            for line in lines[-150:]:
+                rl.write(line)
+            rl.scroll_end(animate=False)
+        else:
+            rl.write("(sin logs aún — los errores aparecerán aquí)")
+
+
 # ─── Main Screen ──────────────────────────────────────────────────────────────
 
 class MainScreen(Screen):
@@ -895,6 +965,7 @@ class MainScreen(Screen):
         Binding("6", "cmd('claude')",    show=False),
         Binding("7", "cmd('status')",    show=False),
         Binding("8", "cmd('rules')",     show=False),
+        Binding("0", "cmd('logs')",      show=False),
         Binding("g", "jump_top",         show=False),
         Binding("G", "jump_bottom",      show=False),
         Binding("h", "collapse_section", show=False),
@@ -1066,11 +1137,13 @@ class MainScreen(Screen):
             with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
                 await loop.run_in_executor(pool, _dispatch_tui, "sync", {}, tui_console)
         except BaseException as e:
-            tui_console.print(
-                f"\n[bold {_WARN}]⚠  Ocurrió un error en sync.[/bold {_WARN}]"
-                f"\n[{_MUTED}]   {type(e).__name__}: {e}[/{_MUTED}]"
-                f"\n[{_SEC}]   Presioná [[esc]] para volver al dashboard.[/{_SEC}]"
-            )
+            tb = traceback.format_exc()
+            logging.error("sync failed: %s", e, exc_info=True)
+            out_screen.write_line(Text.from_markup(f"\n[bold {_WARN}]⚠  Error en sync[/bold {_WARN}]"))
+            out_screen.write_line(Text(tb, style=_MUTED))
+            out_screen.write_line(Text.from_markup(
+                f"[{_SEC}]  [[esc]] volver  ·  [[0]] ver logs[/{_SEC}]"
+            ))
 
     def on_ticket_panel_ticket_selected(self, event: TicketPanel.TicketSelected) -> None:
         self._worker_task_from_ticket(event.ticket_id)
@@ -1130,11 +1203,13 @@ class MainScreen(Screen):
                 await loop.run_in_executor(pool, _dispatch_tui, "task", inputs, tui_console)
         except BaseException as e:
             _cmd_ok = False
-            tui_console.print(
-                f"\n[bold {_WARN}]⚠  Ocurrió un error en task.[/bold {_WARN}]"
-                f"\n[{_MUTED}]   {type(e).__name__}: {e}[/{_MUTED}]"
-                f"\n[{_SEC}]   Presioná [[esc]] para volver al dashboard.[/{_SEC}]"
-            )
+            tb = traceback.format_exc()
+            logging.error("task (from ticket) failed: %s", e, exc_info=True)
+            out_screen.write_line(Text.from_markup(f"\n[bold {_WARN}]⚠  Error en task[/bold {_WARN}]"))
+            out_screen.write_line(Text(tb, style=_MUTED))
+            out_screen.write_line(Text.from_markup(
+                f"[{_SEC}]  [[esc]] volver  ·  [[0]] ver logs[/{_SEC}]"
+            ))
 
         if _cmd_ok:
             await self._offer_sync(out_screen, tui_console, loop)
@@ -1190,6 +1265,10 @@ class MainScreen(Screen):
             )
             return
 
+        if command == "logs":
+            await self.app.push_screen(LogScreen())
+            return
+
         if command == "rules":
             file_path_str = await self.app.push_screen_wait(
                 InputModal("Ruta del archivo de reglas (.md)", r"C:\rules\techlead-rules.md")
@@ -1228,6 +1307,14 @@ class MainScreen(Screen):
             if not fp:
                 return
             inputs["fp"] = fp
+
+        elif command == "claude":
+            duda = await self.app.push_screen_wait(
+                InputModal("¿Qué duda tenés?", "describe tu pregunta aquí")
+            )
+            if not duda or not duda.strip():
+                return
+            inputs["duda"] = duda.strip()
 
         elif command == "task":
             ticket_id = await self.app.push_screen_wait(
@@ -1323,11 +1410,14 @@ class MainScreen(Screen):
                 )
         except BaseException as e:
             _cmd_ok = False
-            tui_console.print(
-                f"\n[bold {_WARN}]⚠  Ocurrió un error en {command}.[/bold {_WARN}]"
-                f"\n[{_MUTED}]   {type(e).__name__}: {e}[/{_MUTED}]"
-                f"\n[{_SEC}]   Presioná [[esc]] para volver al dashboard.[/{_SEC}]"
-            )
+            tb = traceback.format_exc()
+            logging.error("command %s failed: %s", command, e, exc_info=True)
+            # call_from_thread is forbidden on the app thread — write directly
+            out_screen.write_line(Text.from_markup(f"\n[bold {_WARN}]⚠  Error en {command}[/bold {_WARN}]"))
+            out_screen.write_line(Text(tb, style=_MUTED))
+            out_screen.write_line(Text.from_markup(
+                f"[{_SEC}]  [[esc]] volver  ·  [[0]] ver logs[/{_SEC}]"
+            ))
 
         if _cmd_ok and command in ("task", "resume"):
             await self._offer_sync(out_screen, tui_console, loop)

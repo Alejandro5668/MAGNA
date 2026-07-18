@@ -123,7 +123,7 @@ def fetch_my_issues() -> dict:
             timeout=10,
         )
         if resp.status_code != 200:
-            return {}
+            raise RuntimeError(f"HTTP {resp.status_code} — {resp.text[:120]}")
 
         _HIGH = {"high", "highest", "critical", "alta", "crítica", "critica"}
         result: dict = {"en_curso": [], "alta_prioridad": [], "reabiertos": []}
