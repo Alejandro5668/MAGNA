@@ -163,7 +163,7 @@ class TicketPanel(Widget):
         with self.app.batch_update():
             lv.clear()
             for t in tickets:
-                lv.append(ListItem(Static(self._row(t)), id=f"tp-{t['id']}"))
+                lv.append(ListItem(Static(self._row(t))))
         if tickets:
             self._update_desc(0)
 
