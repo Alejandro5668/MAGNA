@@ -1723,6 +1723,26 @@ class MainScreen(Screen):
         except Exception:
             pass
 
+    async def _offer_sync(self, out_screen, tui_console, loop) -> None:
+        """Ofrece sync post-Claude. ticket_id pre-llenado via read_active_ticket()."""
+        import concurrent.futures
+        tui_console.print(f"\n[{_SECTION}]── Claude cerró ──[/{_SECTION}]")
+        do_sync = await self.app.push_screen_wait(
+            ConfirmModal("¿Hacer sync ahora?", default=True)
+        )
+        if not do_sync:
+            return
+        tui_console.print(f"\n[{_ACCENT}]◆  Iniciando sync...[/{_ACCENT}]")
+        try:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                await loop.run_in_executor(pool, _dispatch_tui, "sync", {}, tui_console)
+        except BaseException as e:
+            tui_console.print(
+                f"\n[bold {_WARN}]⚠  Ocurrió un error en sync.[/bold {_WARN}]"
+                f"\n[{_MUTED}]   {type(e).__name__}: {e}[/{_MUTED}]"
+                f"\n[{_SEC}]   Presioná [[esc]] para volver al dashboard.[/{_SEC}]"
+            )
+
     def on_ticket_panel_ticket_selected(self, event: TicketPanel.TicketSelected) -> None:
         self._worker_task_from_ticket(event.ticket_id)
 
@@ -1775,17 +1795,22 @@ class MainScreen(Screen):
 
         import concurrent.futures
         loop = asyncio.get_running_loop()
+        _cmd_ok = True
         try:
             with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
                 await loop.run_in_executor(pool, _dispatch_tui, "task", inputs, tui_console)
         except BaseException as e:
+            _cmd_ok = False
             tui_console.print(
                 f"\n[bold {_WARN}]⚠  Ocurrió un error en task.[/bold {_WARN}]"
                 f"\n[{_MUTED}]   {type(e).__name__}: {e}[/{_MUTED}]"
                 f"\n[{_SEC}]   Presioná [[esc]] para volver al dashboard.[/{_SEC}]"
             )
-        finally:
-            out_screen.mark_done()
+
+        if _cmd_ok:
+            await self._offer_sync(out_screen, tui_console, loop)
+
+        out_screen.mark_done()
 
     def action_collapse_section(self) -> None:
         self._set_focused_collapsible(True)
@@ -1939,19 +1964,24 @@ class MainScreen(Screen):
         tui_console = TuiConsole(out_screen)
 
         loop = asyncio.get_running_loop()
+        _cmd_ok = True
         try:
             with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
                 await loop.run_in_executor(
                     pool, _dispatch_tui, command, inputs, tui_console
                 )
         except BaseException as e:
+            _cmd_ok = False
             tui_console.print(
                 f"\n[bold {_WARN}]⚠  Ocurrió un error en {command}.[/bold {_WARN}]"
                 f"\n[{_MUTED}]   {type(e).__name__}: {e}[/{_MUTED}]"
                 f"\n[{_SEC}]   Presioná [[esc]] para volver al dashboard.[/{_SEC}]"
             )
-        finally:
-            out_screen.mark_done()
+
+        if _cmd_ok and command in ("task", "resume"):
+            await self._offer_sync(out_screen, tui_console, loop)
+
+        out_screen.mark_done()
 
 
 # ─── App entry point ──────────────────────────────────────────────────────────
