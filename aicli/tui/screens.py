@@ -78,6 +78,9 @@ _MENU = [
         ("6", "claude",   "Claude full context"),
         ("7", "status",   "View architecture"),
     ]),
+    ("TEAM", [
+        ("8", "rules",    "Reglas del equipo"),
+    ]),
 ]
 
 
@@ -891,6 +894,7 @@ class MainScreen(Screen):
         Binding("5", "cmd('resume')",    show=False),
         Binding("6", "cmd('claude')",    show=False),
         Binding("7", "cmd('status')",    show=False),
+        Binding("8", "cmd('rules')",     show=False),
         Binding("g", "jump_top",         show=False),
         Binding("G", "jump_bottom",      show=False),
         Binding("h", "collapse_section", show=False),
@@ -1183,6 +1187,28 @@ class MainScreen(Screen):
         if command == "status":
             await self.app.push_screen(
                 StatusScreen(self._project_name, self._project_path)
+            )
+            return
+
+        if command == "rules":
+            file_path_str = await self.app.push_screen_wait(
+                InputModal("Ruta del archivo de reglas (.md)", r"C:\rules\techlead-rules.md")
+            )
+            if not file_path_str:
+                return
+            src = Path(file_path_str.strip())
+            if not src.exists() or not src.suffix.lower() == ".md":
+                self.app.notify(
+                    f"Archivo no encontrado o no es .md: {src}",
+                    severity="error", timeout=5,
+                )
+                return
+            rules_dir = Path.home() / ".mycontext" / "rules"
+            rules_dir.mkdir(parents=True, exist_ok=True)
+            dest = rules_dir / src.name
+            dest.write_bytes(src.read_bytes())
+            self.app.notify(
+                f"Regla agregada: {src.name}", severity="information", timeout=4,
             )
             return
 
