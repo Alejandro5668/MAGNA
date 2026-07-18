@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pyfiglet
 from rich.text import Text
+from rich.panel import Panel as RichPanel
 from textual.app import ComposeResult
 from textual.screen import Screen, ModalScreen
 from textual.widgets import (
@@ -65,6 +66,22 @@ _ERROR    = "#F87171"   # state.error
 _MID      = "#3A4468"   # border.active (puntos separadores)
 _SEC      = "#AAB4D4"   # text.secondary
 _MUTED    = "#5E6A94"   # text.muted
+
+
+def _error_panel(command: str, exc: BaseException, tb: str) -> RichPanel:
+    """MAGNA-branded error panel for CommandOutputScreen."""
+    body = Text()
+    body.append(f"{type(exc).__name__}: ", style=f"bold {_ERROR}")
+    body.append(str(exc), style=_ERROR)
+    body.append(f"\n\n{tb}", style=_MUTED)
+    body.append(f"\n  [esc] volver al dashboard   [0] ver logs completos", style=_SEC)
+    return RichPanel(
+        body,
+        title=f"[bold {_ERROR}]✖  MAGNA — error en {command}[/bold {_ERROR}]",
+        border_style=_ERROR,
+        padding=(0, 1),
+    )
+
 
 _MENU = [
     ("DOCUMENTATION", [
@@ -1133,17 +1150,17 @@ class MainScreen(Screen):
         if not do_sync:
             return
         tui_console.print(f"\n[{_ACCENT}]◆  Iniciando sync...[/{_ACCENT}]")
+        from aicli.tui.log_handler import tui_handler
+        tui_handler.set_screen(out_screen)
         try:
             with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
                 await loop.run_in_executor(pool, _dispatch_tui, "sync", {}, tui_console)
         except BaseException as e:
             tb = traceback.format_exc()
             logging.error("sync failed: %s", e, exc_info=True)
-            out_screen.write_line(Text.from_markup(f"\n[bold {_WARN}]⚠  Error en sync[/bold {_WARN}]"))
-            out_screen.write_line(Text(tb, style=_MUTED))
-            out_screen.write_line(Text.from_markup(
-                f"[{_SEC}]  [[esc]] volver  ·  [[0]] ver logs[/{_SEC}]"
-            ))
+            out_screen.write_line(_error_panel("sync", e, tb))
+        finally:
+            tui_handler.clear_screen()
 
     def on_ticket_panel_ticket_selected(self, event: TicketPanel.TicketSelected) -> None:
         self._worker_task_from_ticket(event.ticket_id)
@@ -1195,6 +1212,9 @@ class MainScreen(Screen):
         await asyncio.sleep(0.05)
         tui_console = TuiConsole(out_screen)
 
+        from aicli.tui.log_handler import tui_handler
+        tui_handler.set_screen(out_screen)
+
         import concurrent.futures
         loop = asyncio.get_running_loop()
         _cmd_ok = True
@@ -1205,11 +1225,9 @@ class MainScreen(Screen):
             _cmd_ok = False
             tb = traceback.format_exc()
             logging.error("task (from ticket) failed: %s", e, exc_info=True)
-            out_screen.write_line(Text.from_markup(f"\n[bold {_WARN}]⚠  Error en task[/bold {_WARN}]"))
-            out_screen.write_line(Text(tb, style=_MUTED))
-            out_screen.write_line(Text.from_markup(
-                f"[{_SEC}]  [[esc]] volver  ·  [[0]] ver logs[/{_SEC}]"
-            ))
+            out_screen.write_line(_error_panel("task", e, tb))
+        finally:
+            tui_handler.clear_screen()
 
         if _cmd_ok:
             await self._offer_sync(out_screen, tui_console, loop)
@@ -1401,6 +1419,9 @@ class MainScreen(Screen):
 
         tui_console = TuiConsole(out_screen)
 
+        from aicli.tui.log_handler import tui_handler
+        tui_handler.set_screen(out_screen)
+
         loop = asyncio.get_running_loop()
         _cmd_ok = True
         try:
@@ -1412,12 +1433,9 @@ class MainScreen(Screen):
             _cmd_ok = False
             tb = traceback.format_exc()
             logging.error("command %s failed: %s", command, e, exc_info=True)
-            # call_from_thread is forbidden on the app thread — write directly
-            out_screen.write_line(Text.from_markup(f"\n[bold {_WARN}]⚠  Error en {command}[/bold {_WARN}]"))
-            out_screen.write_line(Text(tb, style=_MUTED))
-            out_screen.write_line(Text.from_markup(
-                f"[{_SEC}]  [[esc]] volver  ·  [[0]] ver logs[/{_SEC}]"
-            ))
+            out_screen.write_line(_error_panel(command, e, tb))
+        finally:
+            tui_handler.clear_screen()
 
         if _cmd_ok and command in ("task", "resume"):
             await self._offer_sync(out_screen, tui_console, loop)

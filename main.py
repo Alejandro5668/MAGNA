@@ -19,6 +19,9 @@ _log_handler.setFormatter(logging.Formatter(
 logging.getLogger().setLevel(logging.DEBUG)
 logging.getLogger().addHandler(_log_handler)
 
+from aicli.tui.log_handler import tui_handler
+logging.getLogger().addHandler(tui_handler)
+
 load_dotenv()
 load_dotenv(dotenv_path=Path.home() / ".mycontext" / ".env", override=False)
 
