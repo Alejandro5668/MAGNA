@@ -162,6 +162,8 @@ def _sync_impl(ask_fn=None, confirm_fn=None):
 
     if not project:
         magna_error(console, "Este directorio no está registrado. Ejecutá ctx init primero.")
+        if ask_fn is not None:
+            return
         raise typer.Exit(code=1)
 
     with magna_status(console, "Detectando archivos cambiados..."):

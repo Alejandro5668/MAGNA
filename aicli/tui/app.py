@@ -7,10 +7,11 @@ from rich.text import Text
 from textual.app import App, ComposeResult
 from textual.screen import Screen, ModalScreen
 from textual.widgets import (
-    Static, Input, Label, DataTable, ListView, ListItem,
-    Footer, Rule, Sparkline, TabbedContent, TabPane,
-    OptionList, Collapsible, RichLog, TextArea,
+    Static, Input, Label, DataTable,
+    Footer, Rule, OptionList, Collapsible, RichLog, TextArea,
+    ListView, ListItem,
 )
+from textual.widget import Widget
 from textual.widgets.option_list import Option
 from textual.containers import Container, Vertical, Horizontal
 from textual.binding import Binding
@@ -75,14 +76,15 @@ _MENU = [
 
 _HELP_ROWS = [
     ("1 – 7",    "Ejecutar comando directamente"),
-    ("j / ↓",    "Bajar en menú"),
-    ("k / ↑",    "Subir en menú"),
-    ("g",        "Saltar al primer ítem"),
-    ("G",        "Saltar al último ítem"),
+    ("j / ↓",    "Bajar en menú / tickets"),
+    ("k / ↑",    "Subir en menú / tickets"),
+    ("g",        "Ir al primer ítem"),
+    ("G",        "Ir al último ítem"),
     ("h",        "Colapsar sección"),
     ("l",        "Expandir sección"),
-    ("Enter",    "Seleccionar ítem del menú"),
-    ("Tab",      "Cambiar pestaña del panel derecho"),
+    ("Enter",    "Seleccionar / iniciar tarea"),
+    ("t",        "Enfocar panel de tickets"),
+    ("r",        "Refrescar tickets (en panel)"),
     ("p",        "Cambiar proyecto activo"),
     ("?",        "Esta ayuda"),
     ("Esc",      "Volver / Cancelar"),
@@ -428,7 +430,7 @@ class HelpScreen(ModalScreen[None]):
             yield RichLog(markup=False, highlight=False, id="help-content")
             yield Rule()
             yield Static(
-                f"[bold {_ACCENT}][esc][/bold {_ACCENT}] [{_SEC}]cerrar[/{_SEC}]",
+                f"[bold {_ACCENT}][[esc]][/bold {_ACCENT}] [{_SEC}]cerrar[/{_SEC}]",
                 id="help-foot", markup=True,
             )
 
@@ -500,8 +502,8 @@ class InputModal(ModalScreen[str | None]):
             yield Label(self._prompt, id="im-prompt")
             yield Input(placeholder=self._placeholder)
             yield Label(
-                f"[bold {_ACCENT}][↵][/bold {_ACCENT}] [{_SEC}]confirmar[/{_SEC}]"
-                f"  [{_MUTED}]·[/{_MUTED}]  [bold {_ERROR}][esc][/bold {_ERROR}] [{_SEC}]cancelar[/{_SEC}]",
+                f"[bold {_ACCENT}][[↵]][/bold {_ACCENT}] [{_SEC}]confirmar[/{_SEC}]"
+                f"  [{_MUTED}]·[/{_MUTED}]  [bold {_ERROR}][[esc]][/bold {_ERROR}] [{_SEC}]cancelar[/{_SEC}]",
                 id="im-hint", markup=True,
             )
 
@@ -586,8 +588,8 @@ class TextAreaModal(ModalScreen[str | None]):
                 yield Label(self._subtitle, id="tam-subtitle", markup=True)
             yield TextArea(show_line_numbers=False)
             yield Label(
-                f"[bold {_ACCENT}][ctrl+s][/bold {_ACCENT}] [{_SEC}]confirmar[/{_SEC}]"
-                f"  [{_MUTED}]·[/{_MUTED}]  [bold {_ERROR}][esc][/bold {_ERROR}] [{_SEC}]cancelar[/{_SEC}]",
+                f"[bold {_ACCENT}][[ctrl+s]][/bold {_ACCENT}] [{_SEC}]confirmar[/{_SEC}]"
+                f"  [{_MUTED}]·[/{_MUTED}]  [bold {_ERROR}][[esc]][/bold {_ERROR}] [{_SEC}]cancelar[/{_SEC}]",
                 id="tam-hint", markup=True,
             )
 
@@ -664,8 +666,8 @@ class ConfirmModal(ModalScreen[bool]):
             yield Static("━━━  MAGNA  ━━━", id="cf-header")
             yield Label(self._prompt, id="cf-prompt")
             yield Label(
-                f"[bold {_ACCENT}][↵][/bold {_ACCENT}] [{_SEC}]{confirm_label}[/{_SEC}]"
-                f"  [{_MUTED}]·[/{_MUTED}]  [bold {_ERROR}][esc][/bold {_ERROR}] [{_SEC}]cancelar[/{_SEC}]",
+                f"[bold {_ACCENT}][[↵]][/bold {_ACCENT}] [{_SEC}]{confirm_label}[/{_SEC}]"
+                f"  [{_MUTED}]·[/{_MUTED}]  [bold {_ERROR}][[esc]][/bold {_ERROR}] [{_SEC}]cancelar[/{_SEC}]",
                 id="cf-hint", markup=True,
             )
 
@@ -831,9 +833,9 @@ class JiraCardModal(ModalScreen[bool]):
 
             yield Rule()
             yield Label(
-                f"[bold {_ACCENT}][↵][/bold {_ACCENT}] [{_SEC}]continuar[/{_SEC}]"
+                f"[bold {_ACCENT}][[↵]][/bold {_ACCENT}] [{_SEC}]continuar[/{_SEC}]"
                 f"  [{_MUTED}]·[/{_MUTED}]  "
-                f"[bold {_ERROR}][esc][/bold {_ERROR}] [{_SEC}]cancelar[/{_SEC}]",
+                f"[bold {_ERROR}][[esc]][/bold {_ERROR}] [{_SEC}]cancelar[/{_SEC}]",
                 id="jc-hint", markup=True,
             )
 
@@ -842,6 +844,195 @@ class JiraCardModal(ModalScreen[bool]):
 
     def action_cancel(self) -> None:
         self.dismiss(False)
+
+
+# ─── Ticket Panel ─────────────────────────────────────────────────────────────
+
+_PRIO_ORDER = {
+    "Critical": 0, "Crítica": 0, "Highest": 0,
+    "High": 1, "Alta": 1,
+    "Medium": 2, "Media": 2,
+    "Low": 3, "Baja": 3, "Lowest": 4,
+}
+_PRIO_BADGE = {
+    "Critical": ("!", _ERROR), "Crítica": ("!", _ERROR), "Highest": ("!", _ERROR),
+    "High": ("▲", _WARN),  "Alta": ("▲", _WARN),
+    "Medium": ("·", _SEC), "Media": ("·", _SEC),
+    "Low": ("▽", _MUTED),  "Baja": ("▽", _MUTED), "Lowest": ("▽", _MUTED),
+}
+
+
+class TicketPanel(Widget):
+    """Panel derecho — lista plana de tickets Jira asignados."""
+
+    can_focus = False
+
+    class TicketSelected(Message):
+        def __init__(self, ticket_id: str) -> None:
+            self.ticket_id = ticket_id
+            super().__init__()
+
+    DEFAULT_CSS = f"""
+    TicketPanel {{
+        width: 1fr;
+        height: 1fr;
+        layout: vertical;
+        border-left: solid {_BORDER};
+    }}
+    TicketPanel:focus-within {{
+        border-left: solid {_ACCENT};
+    }}
+    #tp-header {{
+        height: 1;
+        color: {_SECTION};
+        text-style: bold;
+        padding: 0 2;
+        margin-top: 1;
+    }}
+    #tp-list {{
+        height: 1fr;
+        background: transparent;
+        border: none;
+        padding: 0 1;
+    }}
+    #tp-list > ListItem {{
+        background: transparent;
+        padding: 0 0;
+        height: 1;
+    }}
+    #tp-list > ListItem.--highlight {{
+        background: {_SELECT};
+    }}
+    #tp-divider {{
+        color: {_BORDER};
+        margin: 0 1;
+        height: 1;
+    }}
+    #tp-desc {{
+        height: 5;
+        padding: 0 2;
+        overflow-y: auto;
+    }}
+    #tp-foot {{
+        height: 1;
+        padding: 0 2;
+        color: {_MUTED};
+    }}
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._tickets: list[dict] = []
+
+    def compose(self) -> ComposeResult:
+        yield Static("  TICKETS", id="tp-header", markup=False)
+        yield ListView(id="tp-list")
+        yield Rule(id="tp-divider")
+        yield Static("", id="tp-desc", markup=False)
+        yield Static(
+            f"  [[↵]] iniciar tarea  ·  [[r]] refrescar",
+            id="tp-foot", markup=True,
+        )
+
+    def on_mount(self) -> None:
+        self._fetch()
+
+    @work(thread=True, exclusive=True)
+    def _fetch(self) -> None:
+        import os as _os
+        from aicli.services.jira import fetch_my_issues
+        from aicli.services.tickets import load_tickets, read_active_ticket
+
+        if not _os.getenv("JIRA_URL"):
+            self.app.call_from_thread(self._set_desc, "JIRA_URL no configurada.")
+            return
+        try:
+            grouped = fetch_my_issues()
+        except Exception as e:
+            self.app.call_from_thread(self._set_desc, f"Error Jira: {str(e)[:60]}")
+            return
+
+        seen: set[str] = set()
+        flat: list[dict] = []
+        for group_items in grouped.values():
+            for item in group_items:
+                if item["id"] not in seen:
+                    seen.add(item["id"])
+                    flat.append(item)
+
+        flat.sort(key=lambda x: _PRIO_ORDER.get(x.get("priority", ""), 99))
+
+        local = load_tickets()
+        active_data = read_active_ticket()
+        active_tid = active_data["ticket_id"] if active_data else None
+        for t in flat:
+            t["_rounds"] = len(local.get(t["id"], {}).get("rondas", []))
+            t["_active"] = (t["id"] == active_tid)
+
+        self.app.call_from_thread(self._populate, flat)
+
+    def _set_desc(self, msg: str) -> None:
+        try:
+            self.query_one("#tp-desc", Static).update(msg)
+        except Exception:
+            pass
+
+    def _populate(self, tickets: list[dict]) -> None:
+        self._tickets = tickets
+        lv = self.query_one("#tp-list", ListView)
+        with self.app.batch_update():
+            lv.clear()
+            for t in tickets:
+                lv.append(ListItem(Static(self._row(t)), id=f"tp-{t['id']}"))
+        if tickets:
+            self._update_desc(0)
+
+    def _row(self, t: dict) -> Text:
+        badge_ch, badge_col = _PRIO_BADGE.get(t.get("priority", ""), ("·", _MUTED))
+        tid = t["id"]
+        summary = t.get("summary", "")
+        if len(summary) > 34:
+            summary = summary[:33] + "…"
+        txt = Text(no_wrap=True, overflow="crop")
+        txt.append("▶ " if t.get("_active") else "  ", style=_OK if t.get("_active") else "")
+        txt.append(badge_ch + " ", style=badge_col)
+        txt.append(f"{tid:<13}", style=_ACCENT)
+        txt.append(summary, style=_SEC)
+        if t["_rounds"]:
+            txt.append(f"  ⟳×{t['_rounds']}", style=_MUTED)
+        return txt
+
+    def _update_desc(self, index: int) -> None:
+        if not self._tickets or index >= len(self._tickets):
+            return
+        t = self._tickets[index]
+        txt = Text()
+        txt.append(t["id"] + "  ", style=f"bold {_ACCENT}")
+        txt.append(t.get("summary", ""), style="bold #F1F3F9")
+        txt.append("\n")
+        meta: list[str] = []
+        if t.get("status"):
+            meta.append(t["status"])
+        if t.get("priority"):
+            meta.append(t["priority"])
+        if meta:
+            txt.append("  ·  ".join(meta), style=_MUTED)
+        self._set_desc(txt)
+
+    def on_list_view_highlighted(self, event: ListView.Highlighted) -> None:
+        if event.list_view.id == "tp-list" and event.item is not None:
+            self._update_desc(event.list_view.index or 0)
+
+    def on_list_view_selected(self, event: ListView.Selected) -> None:
+        if event.list_view.id == "tp-list" and event.item is not None:
+            idx = event.list_view.index or 0
+            if idx < len(self._tickets):
+                self.post_message(self.TicketSelected(self._tickets[idx]["id"]))
+
+    def on_key(self, event) -> None:
+        if event.key == "r":
+            self._fetch()
+            event.stop()
 
 
 # ─── Command Transition Screen ────────────────────────────────────────────────
@@ -1379,6 +1570,7 @@ class MainScreen(Screen):
         Binding("G", "jump_bottom",      show=False),
         Binding("h", "collapse_section", show=False),
         Binding("l", "expand_section",   show=False),
+        Binding("t", "focus_tickets",    show=False),
         Binding("p", "change_proj",      "Project"),
         Binding("q", "app.quit",         "Quit"),
         Binding("?", "help",             "Help"),
@@ -1463,71 +1655,6 @@ class MainScreen(Screen):
         color: {_GLOW};
     }}
 
-    /* ── Panel derecho — tabs ── */
-    #right-tabs {{
-        width: 1fr;
-        height: 1fr;
-        border: none;
-        padding: 0;
-        background: transparent;
-    }}
-    #right-tabs:focus-within Tabs {{
-        border-bottom: solid {_ACCENT};
-    }}
-    TabbedContent Tabs {{
-        background: transparent;
-        height: 3;
-        border-bottom: solid {_BORDER};
-    }}
-    TabbedContent Tab {{
-        background: transparent;
-        color: {_MUTED};
-        padding: 0 2;
-    }}
-    TabbedContent Tab.-active {{
-        color: {_ACCENT};
-        text-style: bold;
-        background: transparent;
-    }}
-    TabbedContent Tab:hover {{
-        background: transparent;
-        color: {_SEC};
-    }}
-    ContentSwitcher {{
-        background: transparent;
-    }}
-    TabbedContent TabPane {{
-        padding: 1 2;
-        background: transparent;
-    }}
-
-    /* ── RichLog ── */
-    RichLog {{
-        background: transparent;
-        border: none;
-        height: auto;
-        max-height: 20;
-        scrollbar-color: {_BORDER};
-        scrollbar-color-hover: {_SECTION};
-    }}
-
-    /* ── Sparkline ── */
-    Sparkline {{
-        height: 4;
-        margin: 1 0 0 0;
-    }}
-    Sparkline > .sparkline--max-color {{
-        color: {_ACCENT};
-    }}
-    Sparkline > .sparkline--min-color {{
-        color: {_BORDER};
-    }}
-    #spark-label {{
-        color: {_MUTED};
-        height: 1;
-        margin-top: 1;
-    }}
-
     /* ── Footer ── */
     Footer {{
         background: transparent;
@@ -1565,323 +1692,8 @@ class MainScreen(Screen):
                             *[_menu_option(k, n, d) for k, n, d in items],
                             id=f"ol-{section.lower()}",
                         )
-            with TabbedContent(id="right-tabs"):
-                with TabPane("VELOCIDAD", id="tab-velocidad"):
-                    yield RichLog(markup=False, highlight=False, id="log-velocidad")
-                    yield Static("casos / día · últimos 7 días", id="spark-label", markup=True)
-                    yield Sparkline([], summary_function=sum, id="spark")
-                with TabPane("CALIDAD", id="tab-calidad"):
-                    yield RichLog(markup=False, highlight=False, id="log-calidad")
-                with TabPane("AHORA", id="tab-ahora"):
-                    yield RichLog(markup=False, highlight=False, id="log-ahora")
+            yield TicketPanel(id="tp-panel")
         yield Footer()
-
-    def on_mount(self) -> None:
-        self._fill_velocidad()
-        self._fill_calidad()
-        self._fill_ahora()
-
-    # ── Tab loaders ───────────────────────────────────────────────────────────
-
-    def _fill_velocidad(self) -> None:
-        import time as _t
-        from sqlmodel import Session, select as sql_select, col
-        from aicli.db import engine
-        from aicli.db.models import Activity
-
-        log = self.query_one("#log-velocidad", RichLog)
-        log.clear()
-
-        with Session(engine) as session:
-            week_ago = _t.time() - 7 * 86400
-            week_acts = list(session.exec(
-                sql_select(Activity)
-                .where(Activity.timestamp > week_ago)
-                .order_by(col(Activity.timestamp))
-            ).all())
-
-        task_evs = [a for a in week_acts if a.command == "task"]
-        sync_evs = [a for a in week_acts if a.command == "sync"]
-
-        now = _t.time()
-        daily = [0] * 7
-        for te in task_evs:
-            days_ago = int((now - te.timestamp) / 86400)
-            if 0 <= days_ago < 7:
-                daily[6 - days_ago] += 1
-
-        durations: list[float] = []
-        for te in task_evs:
-            ns = next((s for s in sync_evs if s.timestamp > te.timestamp), None)
-            if ns:
-                durations.append((ns.timestamp - te.timestamp) / 60)
-
-        if durations:
-            avg   = sum(durations) / len(durations)
-            best  = min(durations)
-            worst = max(durations)
-
-            def _fmt(m: float) -> str:
-                return f"{m / 60:.1f}h" if m >= 60 else f"{int(m)}min"
-
-            log.write(Text.assemble(("Tiempo promedio / caso   ", _MUTED), (_fmt(avg),   _ACCENT)))
-            log.write(Text.assemble(("Mejor caso esta semana   ", _MUTED), (_fmt(best),  _OK)))
-            log.write(Text.assemble(("Caso más largo           ", _MUTED), (_fmt(worst), _ERROR)))
-            log.write(Text(" "))
-
-            fast   = sum(1 for d in durations if d < 30)
-            normal = sum(1 for d in durations if 30 <= d <= 120)
-            slow   = sum(1 for d in durations if d > 120)
-            total  = len(durations)
-            MAX_B  = 8
-
-            def _bar(n: int) -> str:
-                filled = round(n / total * MAX_B) if total else 0
-                return "█" * filled + "░" * (MAX_B - filled)
-
-            log.write(Text(f"Distribución  {total} casos", style=f"bold {_SEC}"))
-            log.write(Text.assemble(("  Rápido  < 30min  ", _MUTED), (_bar(fast),   _OK),    (f"  {fast}", _SEC)))
-            log.write(Text.assemble(("  Normal  30–120m  ", _MUTED), (_bar(normal), _ACCENT), (f"  {normal}", _SEC)))
-            log.write(Text.assemble(("  Largo   > 2h     ", _MUTED), (_bar(slow),   _ERROR),  (f"  {slow}", _SEC)))
-        else:
-            log.write(Text("Sin datos — usá ctx task + ctx sync", style=_SEC))
-
-        self.query_one("#spark", Sparkline).data = daily
-
-    def _fill_calidad(self) -> None:
-        import json
-        from pathlib import Path as _P
-        from collections import Counter
-
-        log = self.query_one("#log-calidad", RichLog)
-        log.clear()
-
-        tickets_path = _P.home() / ".mycontext" / "tickets.json"
-        if not tickets_path.exists():
-            log.write(Text("Sin historial — usá ctx sync para registrar casos", style=_SEC))
-            return
-
-        try:
-            raw: dict = json.loads(tickets_path.read_text(encoding="utf-8"))
-        except Exception:
-            log.write(Text("Error leyendo historial de tickets", style=_MUTED))
-            return
-
-        if not raw:
-            log.write(Text("Sin historial — usá ctx sync para registrar casos", style=_SEC))
-            return
-
-        total        = len(raw)
-        reabiertos   = sum(1 for d in raw.values() if len(d["rondas"]) > 1)
-        total_rondas = sum(len(d["rondas"]) for d in raw.values())
-        avg_rondas   = total_rondas / total if total else 0
-        reopen_pct   = reabiertos / total * 100 if total else 0
-
-        rate_color = _OK if reopen_pct < 15 else (_WARN if reopen_pct < 30 else _ERROR)
-        warn_sym   = " ⚠" if reopen_pct >= 15 else ""
-
-        log.write(Text.assemble(("Tickets resueltos    ", _MUTED), (str(total), _SEC)))
-        log.write(Text.assemble(("Reabiertos por QA    ", _MUTED), (f"{reabiertos}  ({reopen_pct:.0f}%){warn_sym}", rate_color)))
-        log.write(Text.assemble(("Promedio rondas      ", _MUTED), (f"{avg_rondas:.1f}", _SEC)))
-        log.write(Text(" "))
-
-        file_counts: Counter = Counter()
-        for data in raw.values():
-            if len(data["rondas"]) > 1:
-                for ronda in data["rondas"][1:]:
-                    for f in ronda.get("archivos_tocados", []):
-                        file_counts[f] += 1
-
-        if file_counts:
-            log.write(Text("Archivos más reabiertos", style=f"bold {_SEC}"))
-            for fpath, cnt in file_counts.most_common(3):
-                short = (fpath.split("/")[-1] if "/" in fpath else fpath)[:26]
-                log.write(Text.assemble(("  ", ""), (f"{short:<26}", _SEC), (f" ×{cnt}", _WARN)))
-            log.write(Text(" "))
-
-        motivos = [
-            r["motivo_reapertura"]
-            for d in raw.values()
-            for r in d["rondas"]
-            if r.get("motivo_reapertura")
-        ]
-        if motivos:
-            log.write(Text("Motivos frecuentes", style=f"bold {_SEC}"))
-            seen: list[str] = []
-            for m in reversed(motivos):
-                s = m[:42]
-                if s not in seen:
-                    seen.append(s)
-                if len(seen) >= 3:
-                    break
-            for m in seen:
-                log.write(Text(f"  · {m}", style=_MUTED))
-
-    def _fill_ahora(self) -> None:
-        from pathlib import Path as _P
-        from sqlmodel import Session, select as sql_select, col
-        from aicli.db import engine
-        from aicli.db.models import Activity, Project, Module
-        from aicli.services.tickets import read_active_ticket, load_tickets
-
-        log = self.query_one("#log-ahora", RichLog)
-        log.clear()
-
-        # ── Aviso de session contexts expirados ───────────────────────────────
-        notice_path = _P.home() / ".mycontext" / ".session_purge_notice"
-        if notice_path.exists():
-            try:
-                count = int(notice_path.read_text(encoding="utf-8").strip())
-                notice_path.unlink()
-                s = "s" if count > 1 else ""
-                log.write(Text.assemble(
-                    ("⚠  ", f"bold {_WARN}"),
-                    (f"{count} session context{s} eliminado{s} (>4h)", f"bold {_WARN}"),
-                ))
-                log.write(Text.assemble(
-                    ("   ", ""),
-                    ("Si Claude sigue abierto para ese ticket,", _SEC),
-                ))
-                log.write(Text.assemble(
-                    ("   ", ""),
-                    ("relanzá ctx task para regenerar el contexto.", _SEC),
-                ))
-                log.write(Text(" "))
-            except Exception:
-                pass
-
-        # ── Proyecto ───────────────────────────────────────────────────────────
-        with Session(engine) as session:
-            project = session.exec(
-                sql_select(Project).where(Project.path == self._project_path)
-            ).first()
-            mod_count = 0
-            stack = "?"
-            if project:
-                mod_count = len(list(session.exec(
-                    sql_select(Module).where(Module.project_id == project.id)
-                ).all()))
-                stack = project.stack or "?"
-
-        log.write(Text.assemble(
-            (f"{self._project_name:<22}", "bold #F1F3F9"),
-            (stack, _SECTION),
-            ("  ·  ", _MUTED),
-            (f"{mod_count} módulos", _MUTED),
-        ))
-        log.write(Text(" "))
-
-        # ── Ticket activo ──────────────────────────────────────────────────────
-        active = read_active_ticket()
-        if active:
-            tid      = active.get("ticket_id", "")
-            motivo   = active.get("motivo_reapertura", "")
-            tickets  = load_tickets()
-            n_rondas = len(tickets.get(tid, {}).get("rondas", [])) + 1
-            desc     = tickets.get(tid, {}).get("descripcion", "")
-            log.write(Text.assemble(
-                ("◆ ", _ACCENT),
-                (tid, f"bold {_ACCENT}"),
-                ("  ", ""),
-                (desc[:30] if desc else "", _SEC),
-            ))
-            log.write(Text.assemble(
-                ("  Ronda ", _MUTED), (str(n_rondas), _SEC),
-                ("  ·  ", _MUTED),   ((motivo[:30] if motivo else ""), _MUTED),
-            ))
-        else:
-            log.write(Text("Sin ticket activo", style=_MUTED))
-
-        log.write(Text(" "))
-
-        # ── Último sync ────────────────────────────────────────────────────────
-        with Session(engine) as session:
-            last_sync = session.exec(
-                sql_select(Activity)
-                .where(Activity.command == "sync")
-                .order_by(col(Activity.timestamp).desc())
-            ).first()
-
-        if last_sync:
-            log.write(Text.assemble(
-                ("Último sync  ", _MUTED),
-                (self._rel(last_sync.timestamp), _SEC),
-            ))
-        else:
-            log.write(Text("Sin syncs registrados", style=_MUTED))
-
-        # ── Jira radar (se carga async en segundo plano) ──────────────────────
-        import os as _os
-        if _os.getenv("JIRA_URL"):
-            self._fill_jira_radar()
-
-    @work
-    async def _fill_jira_radar(self) -> None:
-        import asyncio as _aio
-        from aicli.services.jira import fetch_my_issues
-
-        try:
-            radar = await _aio.get_running_loop().run_in_executor(None, fetch_my_issues)
-        except Exception as e:
-            try:
-                log = self.query_one("#log-ahora", RichLog)
-                log.write(Text(f"Jira no disponible: {e}", style=f"dim {_MUTED}"))
-            except Exception:
-                pass
-            return
-
-        try:
-            log = self.query_one("#log-ahora", RichLog)
-        except Exception:
-            return
-
-        _HIGH = {"High", "Highest", "Critical", "Alta", "Crítica"}
-
-        def _short(s: str, n: int = 38) -> str:
-            return s[:n - 1] + "…" if len(s) > n else s
-
-        def _write_items(items: list) -> None:
-            for item in items[:4]:
-                hi = item["priority"] in _HIGH
-                log.write(Text.assemble(
-                    ("  ", ""),
-                    (f"{item['id']:<12}", _ACCENT),
-                    ("▲  " if hi else "·  ", _WARN if hi else _MUTED),
-                    (_short(item["summary"]), _SEC),
-                ))
-
-        en_curso   = radar.get("en_curso", [])
-        alta       = radar.get("alta_prioridad", [])
-        reabiertos = radar.get("reabiertos", [])
-
-        if not (en_curso or alta or reabiertos):
-            return
-
-        log.write(Text(" "))
-        log.write(Text.assemble(("─" * 28, _BORDER)))
-        log.write(Text.assemble(("JIRA  ", f"bold {_SECTION}"), ("radar de trabajo", _MUTED)))
-        log.write(Text(" "))
-
-        if en_curso:
-            log.write(Text("EN CURSO", style=f"bold {_OK}"))
-            _write_items(en_curso)
-            log.write(Text(" "))
-        if alta:
-            log.write(Text("PENDIENTE · ALTA PRIORIDAD", style=f"bold {_WARN}"))
-            _write_items(alta)
-            log.write(Text(" "))
-        if reabiertos:
-            log.write(Text("REABIERTOS", style=f"bold {_ERROR}"))
-            _write_items(reabiertos)
-
-    def _rel(self, ts: float) -> str:
-        import time as _t
-        delta = _t.time() - ts
-        if delta < 3600:
-            return f"hace {max(1, int(delta / 60))}min"
-        if delta < 86400:
-            return f"hace {int(delta / 3600)}h"
-        return f"hace {int(delta / 86400)}d"
 
     # ── Event handlers ────────────────────────────────────────────────────────
 
@@ -1892,12 +1704,88 @@ class MainScreen(Screen):
     # ── Actions ───────────────────────────────────────────────────────────────
 
     def action_jump_top(self) -> None:
-        if isinstance(self.focused, OptionList) and self.focused.option_count > 0:
-            self.focused.highlighted = 0
+        focused = self.focused
+        if isinstance(focused, OptionList) and focused.option_count > 0:
+            focused.highlighted = 0
+        elif isinstance(focused, ListView) and len(focused) > 0:
+            focused.index = 0
 
     def action_jump_bottom(self) -> None:
-        if isinstance(self.focused, OptionList) and self.focused.option_count > 0:
-            self.focused.highlighted = self.focused.option_count - 1
+        focused = self.focused
+        if isinstance(focused, OptionList) and focused.option_count > 0:
+            focused.highlighted = focused.option_count - 1
+        elif isinstance(focused, ListView) and len(focused) > 0:
+            focused.index = len(focused) - 1
+
+    def action_focus_tickets(self) -> None:
+        try:
+            self.query_one("#tp-list", ListView).focus()
+        except Exception:
+            pass
+
+    def on_ticket_panel_ticket_selected(self, event: TicketPanel.TicketSelected) -> None:
+        self._worker_task_from_ticket(event.ticket_id)
+
+    @work
+    async def _worker_task_from_ticket(self, ticket_id: str) -> None:
+        import asyncio as _aio
+        from aicli.tui.output_screen import CommandOutputScreen, TuiConsole
+        from aicli.services.jira import is_configured, fetch_issue
+
+        jira_data = None
+        desc = ""
+        tid = ticket_id.upper().strip()
+
+        if is_configured():
+            self.app.notify(f"Cargando {tid} de Jira…", timeout=15)
+            try:
+                jira_data = await _aio.get_running_loop().run_in_executor(None, fetch_issue, tid)
+            except Exception:
+                pass
+
+        if jira_data:
+            proceed = await self.app.push_screen_wait(JiraCardModal(jira_data))
+            if not proceed:
+                return
+            desc = jira_data.get("description", "") or tid
+        else:
+            desc = await self.app.push_screen_wait(TextAreaModal("Descripción de la tarea"))
+            if not desc:
+                return
+
+        fp = await self.app.push_screen_wait(
+            InputModal("Archivo  (Enter para omitir)", "pagos/PagosController.php")
+        )
+        inputs = {
+            "ticket_id": tid,
+            "jira_data": jira_data,
+            "desc": desc,
+            "fp": fp or None,
+            "image": None,
+        }
+
+        import asyncio, contextvars
+        await self.app.push_screen_wait(CommandScreen("task", _cmd_desc("task")))
+        out_screen = CommandOutputScreen("task", _cmd_desc("task"))
+        out_screen._loop = asyncio.get_running_loop()
+        out_screen._ctx  = contextvars.copy_context()
+        self.app.push_screen(out_screen)
+        await asyncio.sleep(0.05)
+        tui_console = TuiConsole(out_screen)
+
+        import concurrent.futures
+        loop = asyncio.get_running_loop()
+        try:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                await loop.run_in_executor(pool, _dispatch_tui, "task", inputs, tui_console)
+        except BaseException as e:
+            tui_console.print(
+                f"\n[bold {_WARN}]⚠  Ocurrió un error en task.[/bold {_WARN}]"
+                f"\n[{_MUTED}]   {type(e).__name__}: {e}[/{_MUTED}]"
+                f"\n[{_SEC}]   Presioná [[esc]] para volver al dashboard.[/{_SEC}]"
+            )
+        finally:
+            out_screen.mark_done()
 
     def action_collapse_section(self) -> None:
         self._set_focused_collapsible(True)
@@ -2056,8 +1944,12 @@ class MainScreen(Screen):
                 await loop.run_in_executor(
                     pool, _dispatch_tui, command, inputs, tui_console
                 )
-        except Exception as e:
-            tui_console.print(f"\n[bold red]Error inesperado en {command}:[/bold red] {e}")
+        except BaseException as e:
+            tui_console.print(
+                f"\n[bold {_WARN}]⚠  Ocurrió un error en {command}.[/bold {_WARN}]"
+                f"\n[{_MUTED}]   {type(e).__name__}: {e}[/{_MUTED}]"
+                f"\n[{_SEC}]   Presioná [[esc]] para volver al dashboard.[/{_SEC}]"
+            )
         finally:
             out_screen.mark_done()
 
