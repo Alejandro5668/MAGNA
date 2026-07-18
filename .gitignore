@@ -54,3 +54,9 @@ knowledge/progress.md
 skills-lock.json
 knowledge/skills-lock.json
 knowledge/.claude/
+
+# gentle-ai tool-generated
+.atl/
+
+# Imágenes sueltas
+*.png
