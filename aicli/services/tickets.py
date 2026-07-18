@@ -104,6 +104,18 @@ def format_history(ticket_id: str, tickets: dict) -> str | None:
     return "\n".join(lines)
 
 
+def get_ticket_branch(ticket_id: str) -> str | None:
+    return _load_raw().get(ticket_id, {}).get("branch")
+
+
+def save_ticket_branch(ticket_id: str, branch: str) -> None:
+    tickets = _load_raw()
+    if ticket_id not in tickets:
+        tickets[ticket_id] = {"rondas": [], "ultima_actividad": 0}
+    tickets[ticket_id]["branch"] = branch
+    _save(tickets)
+
+
 def save_active_ticket(ticket_id: str, motivo_reapertura: str) -> None:
     """Persiste el ticket y motivo de reapertura para que ctx sync los capture al cerrar."""
     p = _active_path()
