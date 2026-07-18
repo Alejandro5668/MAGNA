@@ -3,16 +3,21 @@ from pathlib import Path
 import os
 import time
 import logging
+from logging.handlers import RotatingFileHandler
 
 Path.home().joinpath(".mycontext").mkdir(exist_ok=True)
 Path.home().joinpath(".mycontext", "evidencias").mkdir(exist_ok=True)
-logging.basicConfig(
-    filename=Path.home() / ".mycontext" / "aicli_log.log",
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(message)s",
-    datefmt="%Y-%m-%d %H:%M:%S",
-    encoding="utf-8",
+
+_log_handler = RotatingFileHandler(
+    Path.home() / ".mycontext" / "magna.log",
+    maxBytes=50_000, backupCount=2, encoding="utf-8",
 )
+_log_handler.setFormatter(logging.Formatter(
+    "%(asctime)s [%(levelname)s] %(name)s — %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+))
+logging.getLogger().setLevel(logging.DEBUG)
+logging.getLogger().addHandler(_log_handler)
 
 load_dotenv()
 load_dotenv(dotenv_path=Path.home() / ".mycontext" / ".env", override=False)
