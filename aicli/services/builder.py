@@ -14,6 +14,15 @@ def build_context(modules: list[Module], project_path: Path | None = None) -> tu
     warnings: list[str] = []
     fragments: list[str] = []
 
+    # Team rules come first so Claude treats them as highest-priority constraints
+    rules_dir = Path.home() / ".mycontext" / "rules"
+    if rules_dir.exists():
+        for rule_file in sorted(rules_dir.glob("*.md")):
+            fragments.append(
+                f"# Reglas del equipo: {rule_file.stem}\n\n"
+                f"{rule_file.read_text(encoding='utf-8')}"
+            )
+
     rol_path = Path.home() / ".mycontext" / "rol.md"
     if rol_path.exists():
         fragments.append(rol_path.read_text(encoding="utf-8"))

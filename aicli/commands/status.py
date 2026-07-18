@@ -67,3 +67,11 @@ def status():
     magna_info(console, f"{len(modules)} módulos en {len(folders)} carpetas")
     console.print()
     magna_info(console, f"¿No ves una carpeta? Ejecutá ctx init para actualizar la arquitectura.")
+
+    rules_dir = Path.home() / ".mycontext" / "rules"
+    rule_files = sorted(rules_dir.glob("*.md")) if rules_dir.exists() else []
+    if rule_files:
+        names = ", ".join(f.name for f in rule_files)
+        magna_info(console, f"Reglas del equipo: {len(rule_files)} archivo/s ({names})")
+    else:
+        magna_info(console, "Reglas del equipo: ninguna")
