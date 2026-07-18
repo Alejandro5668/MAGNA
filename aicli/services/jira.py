@@ -178,6 +178,11 @@ _EXCEL_MIME = {
     "application/vnd.ms-excel",
 }
 
+_VIDEO_MIME = {
+    "video/mp4", "video/quicktime", "video/x-msvideo",
+    "video/webm", "video/x-matroska",
+}
+
 
 def download_excel_attachments(attachments: list) -> list[str]:
     """Descarga adjuntos Excel al directorio de evidencias. Retorna rutas locales."""
@@ -195,6 +200,25 @@ def download_excel_attachments(attachments: list) -> list[str]:
                 paths.append(str(dest))
         except Exception as e:
             logging.warning("jira.download_excel %s — %s", att.get("filename"), e)
+    return paths
+
+
+def download_video_attachments(attachments: list) -> list[str]:
+    """Descarga adjuntos de video al directorio de evidencias. Retorna rutas locales."""
+    import httpx
+    folder = Path.home() / ".mycontext" / "evidencias"
+    paths = []
+    for att in attachments:
+        if att.get("mimeType", "") not in _VIDEO_MIME:
+            continue
+        try:
+            resp = httpx.get(att["content"], headers=_headers(), timeout=120, follow_redirects=True)
+            if resp.status_code == 200:
+                dest = folder / att.get("filename", "jira_video.mp4")
+                dest.write_bytes(resp.content)
+                paths.append(str(dest))
+        except Exception as e:
+            logging.warning("jira.download_video %s — %s", att.get("filename"), e)
     return paths
 
 

@@ -132,6 +132,7 @@ def launch_claude(
     jira_data: dict | None = None,
     jira_images: list | None = None,
     jira_excel: list | None = None,
+    jira_videos: list | None = None,
     question_mode: bool = False,
 ) -> None:
     from datetime import datetime
@@ -162,11 +163,16 @@ def launch_claude(
             jira_sec += "\n## Archivos Excel adjuntos\n"
             for name, content in jira_excel:
                 jira_sec += f"\n**{name}:**\n{content}\n"
+        if jira_videos:
+            jira_sec += "\n## Videos QA (analizados por Gemini)\n"
+            for name, desc in jira_videos:
+                jira_sec += f"\n**{name}:**\n{desc}\n"
         non_other = [
             a for a in (jira_data.get("attachments") or [])
             if not a.get("mimeType", "").startswith("image/")
             and "spreadsheet" not in a.get("mimeType", "")
             and "ms-excel" not in a.get("mimeType", "")
+            and not a.get("mimeType", "").startswith("video/")
         ]
         if non_other:
             jira_sec += "\n## Otros adjuntos\n"

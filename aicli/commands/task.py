@@ -165,12 +165,18 @@ def _execute_task(
 
     # ── Adjuntos de Jira ───────────────────────────────────────────────────────
     jira_images: list[tuple[str, str]] = []
-    jira_excel: list[tuple[str, str]] = []
+    jira_excel:  list[tuple[str, str]] = []
+    jira_videos: list[tuple[str, str]] = []
     if jira_data and jira_data.get("attachments"):
-        from aicli.services.jira import download_image_attachments, download_excel_attachments, excel_to_text, _EXCEL_MIME
+        from aicli.services.jira import (
+            download_image_attachments, download_excel_attachments,
+            download_video_attachments, excel_to_text, _EXCEL_MIME, _VIDEO_MIME,
+        )
         with magna_status(console, "Descargando adjuntos de Jira..."):
             local_paths = download_image_attachments(jira_data["attachments"])
             excel_paths = download_excel_attachments(jira_data["attachments"])
+            video_paths = download_video_attachments(jira_data["attachments"])
+
         if local_paths:
             magna_ok(console, f"{len(local_paths)} imagen(es) descargada(s) de Jira")
         for img_path in local_paths:
@@ -192,13 +198,30 @@ def _execute_task(
                 jira_excel.append((name, content))
                 magna_ok(console, f"{name} convertido a texto")
 
+        if video_paths:
+            if not os.getenv("GEMINI_API_KEY"):
+                magna_warn(console, f"{len(video_paths)} video(s) adjunto(s) — configurá GEMINI_API_KEY para analizarlos")
+            else:
+                magna_ok(console, f"{len(video_paths)} video(s) descargado(s) de Jira")
+                from aicli.services.gemini import analyze_video
+                for vid_path in video_paths:
+                    name = Path(vid_path).name
+                    with magna_status(console, f"Analizando {name} con Gemini..."):
+                        try:
+                            desc, tokens_v = analyze_video(vid_path)
+                            jira_videos.append((name, desc))
+                            magna_ok(console, f"{name} · {tokens_v:,} tokens")
+                        except Exception as e:
+                            magna_warn(console, f"No se pudo analizar {name}: {e}")
+
         non_other = [
             a for a in jira_data["attachments"]
             if not a.get("mimeType", "").startswith("image/")
             and a.get("mimeType", "") not in _EXCEL_MIME
+            and a.get("mimeType", "") not in _VIDEO_MIME
         ]
         if non_other:
-            magna_info(console, f"{len(non_other)} adjunto(s) no-imagen incluido(s) como metadata")
+            magna_info(console, f"{len(non_other)} adjunto(s) de otro tipo incluido(s) como metadata")
 
     context, ctx_warnings = build_context(relevant, project_path=path)
     for w in ctx_warnings:
@@ -220,12 +243,12 @@ def _execute_task(
     if suspend_fn:
         suspend_fn(lambda: launch_claude(
             context, task_desc, brief, file, image_description,
-            ticket_history, ticket_id, jira_data, jira_images, jira_excel,
+            ticket_history, ticket_id, jira_data, jira_images, jira_excel, jira_videos,
         ))
     else:
         launch_claude(
             context, task_desc, brief, file, image_description,
-            ticket_history, ticket_id, jira_data, jira_images, jira_excel,
+            ticket_history, ticket_id, jira_data, jira_images, jira_excel, jira_videos,
         )
 
 
