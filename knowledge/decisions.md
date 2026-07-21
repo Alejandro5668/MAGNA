@@ -1280,3 +1280,181 @@ Claude Code arranque y potencialmente sobreescriba el título.
   MAGNA si abrió el tab desde MAGNA.
 - `SOL-1234 — summary[:40]`: el summary empuja al ID fuera del área visible del tab (confirmado con
   screenshot del usuario).
+
+---
+
+## DEC-066 — TuiLogHandler: singleton que enruta WARNING+ al screen activo
+
+**Decisión:** `aicli/tui/log_handler.py` define `TuiLogHandler(logging.Handler)` como singleton
+(`tui_handler = TuiLogHandler()`) con métodos `set_screen(screen)` / `clear_screen()`. En `emit()`,
+llama a `screen.app.call_from_thread(screen.write_line, Text(msg, style=color))`.
+Registrado en el root logger en `main.py`. Los comandos que abren `CommandOutputScreen` llaman
+`tui_handler.set_screen(out_screen)` al inicio y `clear_screen()` en el bloque `finally`.
+
+**Por qué:** Los errores que ocurren en worker threads necesitan llegar a la pantalla activa sin
+que el desarrollador tenga que pasar referencias manuales a cada función del servicio. Un handler
+de logging centralizado intercepta cualquier `logging.warning/error` de cualquier parte del código,
+sin modificar los servicios. El `finally` garantiza que el handler no quede apuntando a una pantalla
+ya desmontada.
+
+**Alternativas descartadas:**
+- Pasar `out_screen` como parámetro a cada servicio: acoplamiento innecesario.
+- `call_from_thread` en servicios directamente: los servicios no deberían conocer la TUI.
+
+---
+
+## DEC-067 — MAGNA error panel: capturar excepciones sin expulsar al usuario
+
+**Decisión:** Los bloques `except BaseException` en `_worker_cmd` y `_worker_task_from_ticket`
+muestran un `RichPanel` MAGNA-branded (borde `_ERROR`, traceback completo, hint `[esc] volver`)
+mediante `out_screen.write_line(_error_panel(command, exc, tb))`. El usuario permanece en
+`CommandOutputScreen` y puede ver el error completo + ir a logs. No se relanza la excepción.
+
+**Por qué:** En la versión anterior, una excepción no manejada en un worker dejaba la TUI
+en estado desconocido o mostraba un notify genérico sin contexto. El desarrollador necesita
+ver el traceback para diagnosticar sin salir de MAGNA. `mark_done()` se llama igualmente en
+el `finally` para que el footer `[esc]` aparezca.
+
+**Alternativas descartadas:**
+- `app.notify(str(e))`: mensaje fugaz de 5s, sin traceback, sin acción.
+- Re-raise: termina el worker y puede colgar la TUI.
+
+---
+
+## DEC-068 — LogScreen con TextArea read_only en lugar de RichLog
+
+**Decisión:** `LogScreen` usa `TextArea(content, read_only=True)` con `ta.move_cursor(ta.document.end)`
+en `on_mount`. El contenido es el texto completo de `magna.log` leído en `compose()`.
+
+**Por qué:** `RichLog` no soporta selección de texto ni copia. El desarrollador necesita
+copiar líneas de log para pegarlas en un issue o buscar en Google. `TextArea` en modo
+`read_only=True` sí soporta selección con mouse/teclado y Ctrl+C. El fondo sólido
+`background: {_ELEVATED}` evita el efecto transparente sobre el dashboard.
+
+**Alternativas descartadas:**
+- `RichLog`: no tiene selección de texto.
+- Abrir el archivo en el editor del sistema: rompe el flujo de la TUI.
+
+---
+
+## DEC-069 — Jira search: migrar a POST /rest/api/3/search/jql
+
+**Decisión:** `fetch_my_issues()` usa `httpx.post(url, json={"jql": ..., "fields": [...]})`
+en lugar del antiguo `httpx.get(url, params={"jql": ...})`. El endpoint es
+`/rest/api/3/search/jql` (sin barra final).
+
+**Por qué:** Atlassian deprecó `GET /rest/api/3/search` y lo eliminó retornando HTTP 410.
+El nuevo endpoint requiere el body en JSON via POST. La migración es de 3 líneas.
+
+**Impacto:** Cambiar `return {}` en error a `raise RuntimeError(f"HTTP {resp.status_code}")` para
+que el error llegue al handler de la TUI en vez de silenciarse silenciosamente.
+
+---
+
+## DEC-070 — Niveles de log: root=WARNING, aicli=DEBUG
+
+**Decisión:** En `main.py`, `logging.getLogger().setLevel(logging.WARNING)` para el root
+logger, y `logging.getLogger("aicli").setLevel(logging.DEBUG)` para nuestro propio código.
+El `RotatingFileHandler` en `magna.log` (50KB, 2 backups) recibe todo lo que llega al root.
+
+**Por qué:** Con root en DEBUG, librerías como `httpcore`, `httpx`, `anthropic` inundan el
+log con cientos de líneas por request. El desarrollador no puede ver sus propios mensajes.
+La separación root=WARNING / aicli=DEBUG da detalle máximo del código propio sin ruido externo.
+
+**Alternativas descartadas:**
+- Filtro por nombre de logger en el handler: más complejo, mismo efecto.
+- Silenciar solo httpcore: frágil, cada librería que se agregue contamina de nuevo.
+
+---
+
+## DEC-071 — DuplicateIds fix en TicketPanel: eliminar id de ListItem
+
+**Decisión:** `TicketPanel._populate()` no asigna `id=f"tp-{t['id']}"` a los `ListItem`.
+Los ítems de la lista no necesitan IDs para funcionar; el ID del ticket viaja en el
+`Label` interno y se extrae en `on_list_view_selected` por índice.
+
+**Por qué:** Al hacer `lv.clear()` y repoblar la lista, Textual no libera inmediatamente
+los IDs de los widgets eliminados. Al añadir `ListItem(id="tp-SOL-544")` de nuevo en el
+mismo frame, Textual lanza `DuplicateID`. Eliminar el `id=` evita el conflicto sin pérdida
+de funcionalidad.
+
+**Alternativas descartadas:**
+- UUID por cada refresh: el ID sería diferente en cada refresco, rompiendo cualquier
+  referencia persistida.
+- `await asyncio.sleep(0)` entre clear y populate: workaround frágil dependiente del
+  ciclo de eventos de Textual.
+
+---
+
+## DEC-072 — Branch checkout learn-once en ctx resume
+
+**Decisión:** Al retomar un ticket, MAGNA busca la rama en dos pasos:
+1. Si `tickets.json` ya tiene `"branch"` para ese ticket → `git checkout <branch>` directo.
+2. Si no → muestra lista combinada: ramas que matchean `*{ticket_id}*` (marcadas ★) +
+   últimas 10 por `git branch --sort=-committerdate`. El usuario elige una vez y MAGNA
+   guarda la asociación en `tickets.json`.
+
+**Por qué:** El desarrollador nombra las ramas de forma inconsistente (`SOL-111/V48`,
+`SOL-111-fix`, `hotfix-sol111`). Un wildcard match cubre la convención principal pero
+no todos los casos. Las 10 ramas recientes cubren los casos atípicos sin requerir que
+el usuario escriba el nombre exacto. Aprender la asociación la primera vez elimina
+la fricción en todos los usos posteriores.
+
+**Implementación:** `aicli/services/git_utils.py` con `recent_branches(cwd, n)`,
+`branches_matching(ticket_id, cwd)`, `checkout(branch, cwd)`.
+
+**Alternativas descartadas:**
+- Solo wildcard match: falla en ramas con nombres no convencionales.
+- Siempre preguntar: fricción repetida innecesaria.
+- fuzzy search por nombre: dependencia extra, complejidad sin beneficio claro.
+
+---
+
+## DEC-073 — Análisis de video de adjuntos Jira con Gemini Files API
+
+**Decisión:** Los adjuntos de video en tickets Jira se analizan con `gemini-2.0-flash`
+via Google Files API: upload → poll estado `PROCESSING` → `generate_content` → delete remoto.
+Si `GEMINI_API_KEY` no está configurada, MAGNA advierte y continúa sin analizar los videos.
+
+**Por qué:** La API de Claude no soporta video como tipo de media (solo imágenes y PDFs).
+Gemini Pro soporta video nativo via Files API. El desarrollador tiene acceso a Gemini Pro.
+El análisis en español describe el bug paso a paso — el mismo prompt que se usaría para
+imágenes pero adaptado a evidencia de video de QA.
+
+**Flujo de credencial:** `GEMINI_API_KEY` en `~/.mycontext/.env`, configurada desde
+`SettingsScreen` (DEC-074). Si ausente, el video se omite silenciosamente con un warning.
+
+**Alternativas descartadas:**
+- Claude API para video: no soportado al momento de implementación.
+- Extraer frames y enviarlos como imágenes: pérdida de contexto temporal, complejidad extra.
+- Requerir la key como bloqueante: un video sin analizar es mejor que una tarea que falla.
+
+---
+
+## DEC-074 — SettingsScreen: centralizar credenciales, reglas y logs
+
+**Decisión:** Tecla `S` desde `MainScreen` abre `SettingsScreen` — pantalla completa (no modal)
+con tres secciones separadas por `Rule` widgets y headers `Static`:
+- **CREDENCIALES**: 5 `Option` (Anthropic/Jira URL+Email+Token/Gemini), cada una muestra
+  `✓ configurada` / `✗ no configurada`. Enter → `InputModal` → `_save_env_var()` → `os.environ`.
+- **REGLAS DEL EQUIPO**: lista los `.md` en `~/.mycontext/rules/`, Enter elimina con confirm,
+  opción `+ Agregar regla...`.
+- **LOGS**: abre `LogScreen` existente.
+
+Las entradas `8` (rules) y `0` (logs) fueron eliminadas del menú principal.
+
+**`_save_env_var(key, value)`:** lee `~/.mycontext/.env`, reemplaza o agrega la línea,
+escribe el archivo y actualiza `os.environ[key]` — sin reiniciar el proceso.
+
+**Por qué:** La configuración estaba dispersa: Jira se pedía en medio del flujo `task`,
+Gemini no tenía UI, rules era un item separado del menú. Un `SettingsScreen` centraliza
+todo y permite al usuario ver de un vistazo qué está configurado y qué falta.
+
+**`Separator` no disponible en Textual 8.2.8:** `OptionListContent = Option | VisualType | None`
+— no existe clase `Separator`. Solución: múltiples `OptionList` independientes con `Static`
+como headers y `Rule` como separadores visuales entre secciones.
+
+**Alternativas descartadas:**
+- Secciones colapsables (Collapsible): más interacción para pocas opciones.
+- Modal de settings: no hay suficiente espacio para mostrar todas las secciones.
+- Seguir pidiendo credenciales inline en cada comando: interrumpe el flujo de trabajo.

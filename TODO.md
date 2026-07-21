@@ -28,10 +28,10 @@
 
 > Actualizá esto al inicio de cada sesión. Máximo 3 tareas. Si tenés más de 3, el resto va al backlog.
 
-Fecha: 2026-07-04
+Fecha: 2026-07-18
 
-- [ ] Empaquetar `.exe` nuevo: `pyinstaller ctx.spec`
-- [ ] Verificar Option B end-to-end (task, sync, archive, revision) en `.exe`
+- [ ] Reempaquetar `.exe` con todos los fixes: `pyinstaller ctx.spec`
+- [ ] Verificar Option B end-to-end (task, sync, archive, revision) en `.exe` compilado
 
 ---
 
@@ -430,3 +430,7 @@ aplicar paleta Van Gogh, y redirigir el output de comandos al RichLog de Textual
 | 2026-07-12 (2) | Integración Jira REST API: fetch automático de tickets en ctx task, TextAreaModal pre-poblado con descripción ADF, imágenes adjuntas analizadas con visión Claude, sección Jira en session_context.md, radar EN CURSO/ALTA PRIORIDAD/REABIERTOS en tab AHORA — push en personal y main | Empaquetar .exe nuevo, verificar Option B en compilado |
 | 2026-07-12 (3) | Setup guiado de Jira al primer uso (ConfirmModal + 3 InputModals + setup_credentials en jira.py, guarda en .env y actualiza proceso sin reiniciar); knowledge/flow.md reescrito con flujo Jira, TextArea multilinea, radar AHORA y sesiones paralelas — push en personal y main | Empaquetar .exe nuevo, verificar Option B en compilado |
 | 2026-07-12 (4) | ticket_activo por PID (3 casos paralelos sin conflicto), soporte Excel adjuntos Jira con openpyxl (200 filas, markdown por hoja), pasos QA en generate_case_summary + auto-copy portapapeles con clip, fallbacks estándar en todos los @work de la TUI (mark_done garantizado, notify en errores) — push en personal y main | Empaquetar .exe nuevo, verificar Option B en compilado |
+| 2026-07-13 | JiraCardModal rediseñada (desc 600c + adjuntos por nombre), hints 2 teclas uniformes gold/rojo (ctrl+enter eliminado), título terminal = solo ID ticket, assignee en session_context, portapapeles removido de resume — DEC-063–065 | Empaquetar .exe nuevo, verificar Option B en compilado |
+| 2026-07-16 | Multi-model routing, atomic writes, freshness ctx, ModuleLesson, adapter pattern (main), cherry-pick a personal — push en ambas ramas | Empaquetar .exe nuevo, verificar Option B en compilado |
+| 2026-07-18 | Split TUI en 4 módulos, fix 2 crashes en exe (Message + TicketPanel id), ctx claude pregunta duda, exception handling en servicios, reglas del equipo auto-inyectadas en contexto | Reempaquetar .exe con todos los fixes, verificar Option B en compilado |
+| 2026-07-18 (2) | TuiLogHandler + MAGNA error panel, LogScreen copiable, DuplicateIds fix, checkout de branch en resume (learn-once), análisis de video con Gemini Files API, SettingsScreen centraliza credenciales/reglas/logs — DEC-066–074 | Reempaquetar .exe, verificar Option B en compilado |
