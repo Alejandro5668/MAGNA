@@ -1411,13 +1411,15 @@ class MainScreen(Screen):
     async def _offer_sync(self, out_screen, tui_console, loop) -> None:
         """Ofrece sync post-Claude. ticket_id pre-llenado via read_active_ticket()."""
         import concurrent.futures
-        tui_console.print(f"\n[{_SECTION}]── Claude cerró ──[/{_SECTION}]")
+        from rich.text import Text
+        # call_from_thread no puede usarse desde el event loop — escribir directo al screen
+        out_screen.write_line(Text.from_markup(f"\n[{_SECTION}]── Claude cerró ──[/{_SECTION}]"))
         do_sync = await self.app.push_screen_wait(
             ConfirmModal("¿Hacer sync ahora?", default=True)
         )
         if not do_sync:
             return
-        tui_console.print(f"\n[{_ACCENT}]◆  Iniciando sync...[/{_ACCENT}]")
+        out_screen.write_line(Text.from_markup(f"\n[{_ACCENT}]◆  Iniciando sync...[/{_ACCENT}]"))
         from aicli.tui.log_handler import tui_handler
         tui_handler.set_screen(out_screen)
         try:
