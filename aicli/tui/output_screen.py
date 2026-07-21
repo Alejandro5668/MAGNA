@@ -149,7 +149,7 @@ class CommandOutputScreen(ModalScreen[None]):
     # ── Input bridge ──────────────────────────────────────────────────────────
 
     async def _push_input(self, prompt: str, placeholder: str) -> str | None:
-        from aicli.tui.app import InputModal
+        from aicli.tui.modals import InputModal
         return await self.app.push_screen_wait(InputModal(prompt, placeholder))
 
     def request_input(self, prompt: str, placeholder: str = "") -> str | None:
