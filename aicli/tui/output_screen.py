@@ -159,7 +159,7 @@ class CommandOutputScreen(ModalScreen[None]):
         return self._run_on_loop(self._push_input(prompt, placeholder))
 
     async def _push_confirm(self, prompt: str, default: bool) -> bool:
-        from aicli.tui.app import ConfirmModal
+        from aicli.tui.modals import ConfirmModal
         return await self.app.push_screen_wait(ConfirmModal(prompt, default))
 
     def request_confirm(self, prompt: str, default: bool = True) -> bool:
