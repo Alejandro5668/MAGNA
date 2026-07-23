@@ -60,7 +60,7 @@ Si no podés filtrar con seguridad, devolvé todos los nombres."""
 
     text = next(b.text for b in response.content if b.type == "text")
     text = text.strip().removeprefix("```json").removeprefix("```").removesuffix("```").strip()
-    names = json.loads(text)
+    names, _ = json.JSONDecoder().raw_decode(text)
     return [m for m in modules if m.name in names]
 
 
