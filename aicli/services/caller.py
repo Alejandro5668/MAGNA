@@ -155,6 +155,12 @@ def launch_claude(
         jira_sec += "\n"
         if jira_data.get("description"):
             jira_sec += f"\n## Descripción\n{jira_data['description']}\n"
+        if jira_data.get("comments"):
+            jira_sec += "\n## Comentarios nuevos\n"
+            for comment in jira_data["comments"]:
+                autor = comment.get("author", "")
+                fecha = comment.get("created", "")
+                jira_sec += f"\n**{autor}** ({fecha}):\n{comment.get('body', '')}\n"
         if jira_images:
             jira_sec += "\n## Evidencia adjunta (analizada)\n"
             for name, desc in jira_images:

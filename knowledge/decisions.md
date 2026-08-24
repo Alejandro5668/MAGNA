@@ -1458,3 +1458,123 @@ como headers y `Rule` como separadores visuales entre secciones.
 - Secciones colapsables (Collapsible): más interacción para pocas opciones.
 - Modal de settings: no hay suficiente espacio para mostrar todas las secciones.
 - Seguir pidiendo credenciales inline en cada comando: interrumpe el flujo de trabajo.
+
+---
+
+## DEC-075 — Storage per-ticket en lugar de `tickets.json` compartido
+
+**Decisión:** `tickets.py` pasa de un único `tickets.json` a un archivo por ticket en
+`~/.mycontext/tickets/<TICKET_ID>.json`. `_base_dir()` resuelve el directorio base leyendo
+`MYCONTEXT_HOME` en cada llamada (nunca cacheado, permite sandboxing en tests), y `_safe_id()`
+sanea el id antes de usarlo como nombre de archivo. La migración desde `tickets.json` es lazy
+y aditiva: se dispara la primera vez que un ticket se lee o escribe, crea el archivo per-ticket
+correspondiente y **nunca** borra ni reescribe `tickets.json`.
+
+**Por qué:** Con el archivo compartido, `load_tickets()` reescribía todo lo que leía al purgar
+tickets expirados, y `_save()` reescribía el archivo completo en cada `save_round`/`save_ticket_branch`.
+Dos tickets distintos guardándose en paralelo (dos terminales de MAGNA en dos tareas distintas)
+podían pisarse el uno al otro. Aislar por archivo elimina esa pérdida cruzada estructuralmente,
+sin coordinación entre procesos — continuación directa de DEC-058 (aislar por clave, no coordinar acceso).
+
+**Alternativas descartadas:**
+- Mantener `tickets.json` único: el vector de pérdida está en el patrón read-all-rewrite-all.
+- SQLite: abstracción prematura para <100 registros chicos; JSON plano ya resolvía el caso de uso.
+
+---
+
+## DEC-076 — Merge-on-write en los mutadores de `tickets.py` (sin locks)
+
+**Decisión:** Cada mutador (`save_round`, `save_ticket_branch`, `save_comment_watermark`,
+`save_processed_attachments`) pasa por `_mutate_ticket()`: re-lee el archivo del ticket
+inmediatamente antes de escribir, aplica su delta sobre esa lectura fresca, y escribe
+atómicamente (`tmp` + `os.replace`). No hay flock ni semáforo — la ventana de pérdida se
+achica a la escritura misma en vez de eliminarse. Si dos terminales escriben la sección exacta
+del mismo ticket en el mismo instante, no se garantiza que ambas sobrevivan (documentado como
+limitación aceptada, no bug). `ctx retomar` además avisa (no bloquea) si otro PID ya tiene el
+mismo ticket activo, vía `other_sessions_with_ticket()`.
+
+**Por qué:** Verdadera exclusión mutua (lock files, retry/backoff) agrega complejidad de
+recuperación de locks obsoletos en Windows/POSIX para una ventana de colisión sub-milisegundo,
+que en el uso real de MAGNA (un desarrollador, distintas terminales) casi nunca ocurre en el
+mismo ticket. Un warning informativo cubre el caso real sin la complejidad del lock.
+
+**Alternativas descartadas:**
+- flock/msvcrt + retry loop: complejidad de recuperación de locks obsoletos sin beneficio medible.
+- Bloquear el resume si el ticket está abierto en otro PID: fricción para un caso raro y no destructivo.
+
+---
+
+## DEC-077 — Historial de ticket capado a 5 rondas
+
+**Decisión:** `format_history()` renderiza como máximo las últimas 5 rondas de un ticket.
+Cuando hay rondas omitidas, antepone un marcador explícito en español: `(N rondas anteriores
+omitidas)` (singular: `(1 ronda anterior omitida)`). La numeración de rondas mostradas sigue
+siendo absoluta (ronda 8 de 8 sigue diciendo "Ronda 8", no "Ronda 5"). Las rondas omitidas
+**no se borran** del archivo per-ticket — solo no se renderizan en `session_context.md`.
+
+**Por qué:** Sin cap, tickets reabiertos muchas veces inflan `session_context.md` con historial
+cada vez menos relevante para Claude. El marcador explícito evita que el desarrollador piense
+que hubo pérdida de datos — dice exactamente cuánto quedó afuera y por qué.
+
+**Alternativas descartadas:**
+- Sin cap: el historial crece sin límite en tickets con muchas reaperturas.
+- Truncar por caracteres en vez de por ronda: rompe rondas a la mitad, ilegible.
+
+---
+
+## DEC-078 — Delta de comentarios de Jira por watermark, cache de adjuntos sin TTL
+
+**Decisión:** `jira.fetch_comments(ticket_id)` trae los últimos 20 comentarios
+(`orderBy=-created`, convertidos a texto plano con `_adf_to_text`) y los devuelve en orden
+cronológico. `filter_new_comments()` es una función pura que compara contra el
+`last_comment_id` guardado en el ticket (`jira_cache.last_comment_id`) y devuelve solo los
+comentarios posteriores; si no hay watermark o el id no aparece en el lote traído, devuelve
+todos. El watermark avanza recién después de que `_execute_task` retorna. Los adjuntos
+procesados (imagen/Excel/video) se cachean por id de adjunto en `jira_cache.processed_attachments`
+y **nunca expiran** — un adjunto ya analizado no se vuelve a descargar ni a mandar a IA en un
+resume posterior.
+
+**Limitación aceptada:** si un comentario ya visto (por debajo del watermark) se edita en Jira
+después de haber avanzado el watermark, la edición no se vuelve a mostrar. Es una limitación
+documentada, no un bug — paginar/diffear contenido editado agrega complejidad no justificada
+por el caso de uso real (QA rara vez edita comentarios ya leídos).
+
+**Por qué:** Sin delta, cada resume reprocesaría el historial completo de comentarios y
+adjuntos, inflando `session_context.md` y volviendo a pagar costo de IA por imágenes/videos ya
+analizados. El watermark-only es la estrategia más simple que cubre el caso real (comentarios
+nuevos de QA tras reabrir el ticket).
+
+**Alternativas descartadas:**
+- Paginación completa server-side (JQL) para detectar ediciones: complejidad no justificada.
+- TTL en el cache de adjuntos: un adjunto de Jira no cambia una vez subido: no hay razón para
+  reprocesarlo nunca.
+
+---
+
+## DEC-079 — Fixes de bugs pre-existentes en `tickets.py` + prefill de motivo de reapertura
+
+**Decisión:** Dos bugs encontrados durante el diseño de esta change se corrigen en el mismo
+change:
+1. `save_active_ticket(ticket_id, "")` ya no pisa el `motivo_reapertura` guardado — si el
+   motivo viene vacío y el marcador activo apuntaba al mismo `ticket_id`, conserva el valor
+   existente. Esto era necesario porque, a partir de esta change, `_execute_task` llama
+   `save_active_ticket(ticket_id, "")` apenas arranca (para registrar qué ticket está activo),
+   lo que antes borraba el motivo que el resume acababa de guardar.
+2. `save_ticket_branch()` sobre un ticket nunca antes tocado ahora pasa por `_mutate_ticket()` +
+   `_new_ticket()`, que siempre completa `descripcion`/`ultima_actividad` — evita el `KeyError`
+   que `format_history()` disparaba al toparse con un ticket creado solo con `branch`+`rondas`.
+
+Además, al retomar un ticket reabierto, el campo "Motivo de reapertura" se precarga con el
+texto completo del comentario nuevo más reciente traído de Jira — editable y borrable por el
+usuario antes de confirmar, no de solo lectura.
+
+**Por qué:** Ambos bugs fueron hallados al diseñar el flujo de resume con `ticket_id` real
+(antes, `_run_resume`/`_run_resume_tui` nunca lo pasaban, así que nunca se disparaban). El
+prefill del motivo ahorra al desarrollador transcribir a mano el comentario de QA que motivó
+la reapertura, sin quitarle la posibilidad de editarlo o de escribir uno propio.
+
+**Alternativas descartadas:**
+- Dejar `_execute_task` sin llamar `save_active_ticket` para tickets de resume: rompería el
+  registro de ticket activo que `ctx sync` necesita al cerrar la sesión.
+- Prefill de solo los primeros 120 caracteres del comentario: se descartó a favor del texto
+  completo, ya que el usuario puede editarlo o borrarlo igual antes de confirmar.

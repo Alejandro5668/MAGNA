@@ -172,10 +172,36 @@ def _execute_task(
             download_image_attachments, download_excel_attachments,
             download_video_attachments, excel_to_text, _EXCEL_MIME, _VIDEO_MIME,
         )
+        from aicli.services.tickets import get_jira_cache, save_processed_attachments
+
+        attachments = jira_data["attachments"]
+        cache = get_jira_cache(ticket_id) if ticket_id else {"processed_attachments": {}}
+        processed = cache.get("processed_attachments", {})
+
+        # Hidrata los adjuntos ya procesados en un resume anterior, sin pagar IA de nuevo.
+        for cached in processed.values():
+            entry = (cached.get("name", ""), cached.get("text", ""))
+            cached_type = cached.get("type")
+            if cached_type == "image":
+                jira_images.append(entry)
+            elif cached_type == "excel":
+                jira_excel.append(entry)
+            elif cached_type == "video":
+                jira_videos.append(entry)
+
+        pending = [a for a in attachments if str(a.get("id")) not in processed]
+        if pending and len(pending) < len(attachments):
+            magna_info(console, f"{len(attachments) - len(pending)} adjunto(s) ya procesado(s) reutilizado(s) del cache")
+        elif not pending and processed:
+            magna_info(console, f"{len(attachments)} adjunto(s) ya procesado(s) reutilizado(s) del cache")
+
+        id_by_filename = {a.get("filename"): str(a.get("id")) for a in pending if a.get("filename")}
+        new_cache_entries: dict[str, dict] = {}
+
         with magna_status(console, "Descargando adjuntos de Jira..."):
-            local_paths = download_image_attachments(jira_data["attachments"])
-            excel_paths = download_excel_attachments(jira_data["attachments"])
-            video_paths = download_video_attachments(jira_data["attachments"])
+            local_paths = download_image_attachments(pending)
+            excel_paths = download_excel_attachments(pending)
+            video_paths = download_video_attachments(pending)
 
         if local_paths:
             magna_ok(console, f"{len(local_paths)} imagen(es) descargada(s) de Jira")
@@ -186,6 +212,9 @@ def _execute_task(
                     desc, tokens_j = describe_image(img_path)
                     jira_images.append((name, desc))
                     magna_ok(console, f"{name} · {tokens_j:,} tokens")
+                    att_id = id_by_filename.get(name)
+                    if att_id:
+                        new_cache_entries[att_id] = {"type": "image", "name": name, "text": desc}
                 except Exception as e:
                     magna_warn(console, f"No se pudo analizar {name}: {e}")
 
@@ -197,6 +226,9 @@ def _execute_task(
                 content = excel_to_text(xls_path)
                 jira_excel.append((name, content))
                 magna_ok(console, f"{name} convertido a texto")
+                att_id = id_by_filename.get(name)
+                if att_id:
+                    new_cache_entries[att_id] = {"type": "excel", "name": name, "text": content}
 
         if video_paths:
             if not os.getenv("GEMINI_API_KEY"):
@@ -211,11 +243,17 @@ def _execute_task(
                             desc, tokens_v = analyze_video(vid_path)
                             jira_videos.append((name, desc))
                             magna_ok(console, f"{name} · {tokens_v:,} tokens")
+                            att_id = id_by_filename.get(name)
+                            if att_id:
+                                new_cache_entries[att_id] = {"type": "video", "name": name, "text": desc}
                         except Exception as e:
                             magna_warn(console, f"No se pudo analizar {name}: {e}")
 
+        if ticket_id and new_cache_entries:
+            save_processed_attachments(ticket_id, new_cache_entries)
+
         non_other = [
-            a for a in jira_data["attachments"]
+            a for a in attachments
             if not a.get("mimeType", "").startswith("image/")
             and a.get("mimeType", "") not in _EXCEL_MIME
             and a.get("mimeType", "") not in _VIDEO_MIME

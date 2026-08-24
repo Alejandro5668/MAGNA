@@ -164,16 +164,17 @@ class InputModal(ModalScreen[str | None]):
     }}
     """
 
-    def __init__(self, prompt: str, placeholder: str = "") -> None:
+    def __init__(self, prompt: str, placeholder: str = "", value: str = "") -> None:
         super().__init__()
         self._prompt = prompt
         self._placeholder = placeholder
+        self._value = value
 
     def compose(self) -> ComposeResult:
         with Container(id="im-box"):
             yield Static("━━━  MAGNA  ━━━", id="im-header")
             yield Label(self._prompt, id="im-prompt")
-            yield Input(placeholder=self._placeholder)
+            yield Input(value=self._value, placeholder=self._placeholder)
             yield Label(
                 f"[bold {_ACCENT}][[↵]][/bold {_ACCENT}] [{_SEC}]confirmar[/{_SEC}]"
                 f"  [{_MUTED}]·[/{_MUTED}]  [bold {_ERROR}][[esc]][/bold {_ERROR}] [{_SEC}]cancelar[/{_SEC}]",
