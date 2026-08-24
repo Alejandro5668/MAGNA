@@ -107,6 +107,50 @@ def fetch_issue(ticket_id: str) -> dict | None:
         return None
 
 
+_MAX_COMMENTS = 20
+
+
+def fetch_comments(ticket_id: str) -> list[dict]:
+    """Trae los últimos comentarios del ticket (más reciente primero via
+    orderBy=-created) y los devuelve en orden cronológico, sin invocar IA."""
+    import httpx
+    url = f"{os.getenv('JIRA_URL')}/rest/api/3/issue/{ticket_id}/comment"
+    params = {"orderBy": "-created", "maxResults": _MAX_COMMENTS}
+    try:
+        resp = httpx.get(url, headers=_headers(), params=params, timeout=10)
+        if resp.status_code != 200:
+            logging.warning("jira.fetch_comments %s — HTTP %d", ticket_id, resp.status_code)
+            return []
+        raw_comments = resp.json().get("comments", [])
+        comments = [
+            {
+                "id": str(c.get("id", "")),
+                "author": (c.get("author") or {}).get("displayName", ""),
+                "created": c.get("created", ""),
+                "body": _adf_to_text(c.get("body")).strip(),
+            }
+            for c in raw_comments
+        ]
+        comments.reverse()  # la API devuelve más nuevo primero; queremos cronológico
+        return comments
+    except Exception as e:
+        logging.warning("jira.fetch_comments %s — %s", ticket_id, e)
+        return []
+
+
+def filter_new_comments(comments: list[dict], last_comment_id: str | None) -> list[dict]:
+    """Delta puro: comentarios posteriores a last_comment_id. Sin watermark
+    (None/vacío) o si el id no aparece en la lista fetcheada, devuelve todos."""
+    if not comments:
+        return []
+    if not last_comment_id:
+        return list(comments)
+    for idx, c in enumerate(comments):
+        if str(c.get("id")) == str(last_comment_id):
+            return comments[idx + 1:]
+    return list(comments)
+
+
 def fetch_my_issues() -> dict:
     """Trae issues asignados al usuario actual, agrupados por estado."""
     import httpx
