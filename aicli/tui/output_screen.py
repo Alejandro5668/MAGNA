@@ -148,15 +148,16 @@ class CommandOutputScreen(ModalScreen[None]):
 
     # ── Input bridge ──────────────────────────────────────────────────────────
 
-    async def _push_input(self, prompt: str, placeholder: str) -> str | None:
+    async def _push_input(self, prompt: str, placeholder: str, default: str = "") -> str | None:
         from aicli.tui.modals import InputModal
-        return await self.app.push_screen_wait(InputModal(prompt, placeholder))
+        return await self.app.push_screen_wait(InputModal(prompt, placeholder, default))
 
-    def request_input(self, prompt: str, placeholder: str = "") -> str | None:
+    def request_input(self, prompt: str, placeholder: str = "", default: str = "") -> str | None:
         """Block caller thread until user responds to an InputModal."""
         if self._loop is None:
-            return input(f"  {prompt}: ").strip() or None
-        return self._run_on_loop(self._push_input(prompt, placeholder))
+            raw = input(f"  {prompt}: ").strip()
+            return raw or default or None
+        return self._run_on_loop(self._push_input(prompt, placeholder, default))
 
     async def _push_confirm(self, prompt: str, default: bool) -> bool:
         from aicli.tui.modals import ConfirmModal
@@ -212,8 +213,8 @@ class TuiConsole:
     def suspend_and_run(self, fn) -> None:
         self._screen.suspend_and_run(fn)
 
-    def request_input(self, prompt: str, placeholder: str = "") -> str | None:
-        return self._screen.request_input(prompt, placeholder)
+    def request_input(self, prompt: str, placeholder: str = "", default: str = "") -> str | None:
+        return self._screen.request_input(prompt, placeholder, default)
 
     def request_confirm(self, prompt: str, default: bool = True) -> bool:
         return self._screen.request_confirm(prompt, default)

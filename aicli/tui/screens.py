@@ -240,11 +240,34 @@ def _ask_image() -> str | None:
     return None
 
 
+def _resume_jira_context(ticket_id: str) -> dict | None:
+    """Trae issue + delta de comentarios nuevos desde Jira para el resume.
+    Devuelve None si Jira no está configurado o el issue no se pudo traer —
+    el resume sigue igual, solo sin datos frescos de Jira."""
+    from aicli.services import jira as jira_mod
+    from aicli.services.tickets import get_jira_cache
+
+    if not jira_mod.is_configured():
+        return None
+
+    issue = jira_mod.fetch_issue(ticket_id)
+    if issue is None:
+        return None
+
+    comments = jira_mod.fetch_comments(ticket_id)
+    cache = get_jira_cache(ticket_id)
+    issue["comments"] = jira_mod.filter_new_comments(comments, cache.get("last_comment_id"))
+    return issue
+
+
 def _run_resume() -> None:
     import questionary
     from rich.console import Console
     from rich.panel import Panel as RichPanel
-    from aicli.services.tickets import load_tickets, format_history, save_active_ticket
+    from aicli.services.tickets import (
+        load_tickets, format_history, save_active_ticket,
+        other_sessions_with_ticket, save_comment_watermark,
+    )
     from aicli.commands.task import _execute_task
     from aicli.tui.theme import print_header
 
@@ -269,6 +292,12 @@ def _run_resume() -> None:
         return
 
     ticket_id = chosen.strip().upper()
+
+    other_pids = other_sessions_with_ticket(ticket_id)
+    if other_pids:
+        pids_txt = ", ".join(str(p) for p in other_pids)
+        console.print(f"[{_WARN}]⚠ {ticket_id} ya está abierto en otra terminal (PID {pids_txt})[/{_WARN}]")
+
     history = format_history(ticket_id, tickets)
     if history:
         console.print()
@@ -278,8 +307,12 @@ def _run_resume() -> None:
             border_style=_ACCENT,
         ))
 
+    jira_data = _resume_jira_context(ticket_id)
+    new_comments = (jira_data or {}).get("comments") or []
+
     console.print()
-    reason = questionary.text("  Motivo de reapertura", style=style).ask()
+    prefill = new_comments[-1]["body"] if new_comments else ""
+    reason = questionary.text("  Motivo de reapertura", default=prefill, style=style).ask()
     if not reason or not reason.strip():
         return
 
@@ -291,7 +324,10 @@ def _run_resume() -> None:
     _execute_task(
         f"[TICKET REABIERTO {ticket_id}] {reason.strip()}",
         clean_file, image, ticket_history=history,
+        ticket_id=ticket_id, jira_data=jira_data,
     )
+    if new_comments:
+        save_comment_watermark(ticket_id, new_comments[-1]["id"])
 
 
 def _dispatch_tui(command: str, inputs: dict, tui_console) -> None:
@@ -390,6 +426,7 @@ def _run_resume_tui(tui_console) -> None:
     from aicli.services.tickets import (
         load_tickets, format_history, save_active_ticket,
         get_ticket_branch, save_ticket_branch,
+        other_sessions_with_ticket, save_comment_watermark,
     )
     from aicli.services import git_utils
     import aicli.commands.task as task_mod
@@ -412,6 +449,11 @@ def _run_resume_tui(tui_console) -> None:
         if not raw:
             return
         ticket_id = raw.upper()
+
+    other_pids = other_sessions_with_ticket(ticket_id)
+    if other_pids:
+        pids_txt = ", ".join(str(p) for p in other_pids)
+        tui_console.print(f"[{_WARN}]⚠ {ticket_id} ya está abierto en otra terminal (PID {pids_txt})[/{_WARN}]")
 
     # ── Branch checkout ───────────────────────────────────────────────────────
     cwd = _Path.cwd()
@@ -464,7 +506,11 @@ def _run_resume_tui(tui_console) -> None:
             border_style=_ACCENT,
         ))
 
-    reason = tui_console.request_input("Motivo de reapertura")
+    jira_data = _resume_jira_context(ticket_id)
+    new_comments = (jira_data or {}).get("comments") or []
+    prefill = new_comments[-1]["body"] if new_comments else ""
+
+    reason = tui_console.request_input("Motivo de reapertura", default=prefill)
     if not reason:
         return
 
@@ -476,8 +522,11 @@ def _run_resume_tui(tui_console) -> None:
             f"[TICKET REABIERTO {ticket_id}] {reason}",
             file_path or None,
             ticket_history=history,
+            ticket_id=ticket_id, jira_data=jira_data,
             suspend_fn=tui_console.suspend_and_run,
         )
+    if new_comments:
+        save_comment_watermark(ticket_id, new_comments[-1]["id"])
 
 
 def _inject(mod, console):
