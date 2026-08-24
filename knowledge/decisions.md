@@ -1594,3 +1594,34 @@ la reapertura, sin quitarle la posibilidad de editarlo o de escribir uno propio.
   registro de ticket activo que `ctx sync` necesita al cerrar la sesión.
 - Prefill de solo los primeros 120 caracteres del comentario: se descartó a favor del texto
   completo, ya que el usuario puede editarlo o borrarlo igual antes de confirmar.
+
+---
+
+## DEC-080 — Roster de agentes de IA documentado + 3 conexiones de contexto sin llamadas nuevas
+
+**Decisión:** Se documenta en `knowledge/agents.md` el inventario completo de las 11 llamadas
+de IA que existen hoy en MAGNA, encuadrado como workflow de routing (no orquestación dinámica,
+por la distinción de Anthropic en "Building Effective Agents"). Además, se conectan 3 huecos de
+contexto identificados en la revisión, sin agregar ninguna llamada de IA nueva:
+1. `_generate_task_brief` (ctx task) ahora corre DESPUÉS de procesar imagen/adjuntos de Jira, y
+   recibe un resumen de esa evidencia — antes el plan se generaba a ciegas de imágenes/video/Excel
+   que terminaban en el mismo contexto igual, pero sin que el plan los considerara.
+2. `_detect_relevant_modules` (ctx task) ahora recibe el contenido de PROYECTO.md como contexto
+   adicional para decidir qué módulos son relevantes — antes solo veía nombre + descripción corta
+   de cada módulo.
+3. `ctx sync` ya no repregunta el número de ticket Jira si `ticket_activo_<pid>.json` ya lo tiene
+   activo — antes preguntaba igual aunque el dato ya estuviera disponible como default.
+
+**Por qué:** Ninguno de los tres huecos requería una llamada de IA nueva ni un framework de
+orquestación — eran conexiones de información ya existente que no llegaba a donde hacía falta.
+La literatura de orquestación de agentes es explícita en que agregar complejidad (orchestrator-
+workers dinámico, frameworks) sin necesidad es contraproducente cuando las subtareas ya son
+conocidas y fijas por comando, que es el caso de MAGNA.
+
+**Alternativas descartadas:**
+- Construir un framework de orquestación (LangGraph, CrewAI) o un "orchestrator" central: MAGNA
+  es un CLI personal de un solo usuario con secuencias fijas por comando — no hay subtareas
+  impredecibles que justifiquen decisión dinámica de un LLM sobre el flujo.
+- Unificar `document_architecture`/`document_zone` en una sola función parametrizada por scope:
+  el alcance es genuinamente distinto (proyecto completo vs. zona puntual); se documenta la
+  similitud en `agents.md` en vez de forzar una abstracción sin una segunda necesidad concreta.

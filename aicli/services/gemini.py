@@ -52,3 +52,23 @@ def analyze_video(path: str) -> tuple[str, int]:
 
     description = response.text.strip()
     return description, len(description) // 4
+
+
+def test_connection() -> tuple[bool, str]:
+    """
+    Valida que GEMINI_API_KEY esté configurada y sea aceptada por la API,
+    sin gastar en análisis de video.
+    """
+    import google.generativeai as genai
+
+    api_key = os.getenv("GEMINI_API_KEY")
+    if not api_key:
+        return False, "GEMINI_API_KEY no configurada en ~/.mycontext/.env"
+
+    try:
+        genai.configure(api_key=api_key)
+        next(iter(genai.list_models()))
+    except Exception as e:
+        return False, str(e)
+
+    return True, "Conexión OK"

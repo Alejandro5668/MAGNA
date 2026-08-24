@@ -334,7 +334,10 @@ def _sync_impl(ask_fn=None, confirm_fn=None):
 
     # Guardar caso en historial
     console.print()
-    if ask_fn:
+    if ticket_prefill:
+        magna_info(console, f"Ticket detectado: {ticket_prefill} (de la sesión activa)")
+        ticket_id_raw = ticket_prefill
+    elif ask_fn:
         ticket_id_raw = ask_fn(
             f"¿Número de ticket Jira? (Enter para omitir)",
             ticket_prefill,
