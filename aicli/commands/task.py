@@ -1,5 +1,6 @@
 import typer
 import json
+import logging
 import os
 import anthropic
 from typing import Annotated, Optional
@@ -18,7 +19,7 @@ console = Console()
 
 
 def _detect_relevant_modules(
-    task_desc: str, modules: list[Module], file: str | None = None
+    task_desc: str, modules: list[Module], file: str | None = None, project_context: str | None = None
 ) -> list[Module]:
     listing_parts = []
     for m in modules:
@@ -35,11 +36,13 @@ def _detect_relevant_modules(
         if file else ""
     )
 
+    project_ctx_block = f"\nContexto del proyecto (convenciones, arquitectura, patrones):\n{project_context}\n" if project_context else ""
+
     prompt = f"""Tenés que identificar qué módulos de un proyecto de software son relevantes
 para una tarea específica de desarrollo.
 
 Tarea del desarrollador: {task_desc}{file_context}
-
+{project_ctx_block}
 Módulos disponibles en el proyecto:
 {listing}
 
@@ -65,7 +68,7 @@ Si no podés filtrar con seguridad, devolvé todos los nombres."""
 
 
 def _generate_task_brief(
-    task_desc: str, modules: list[Module], file: str | None = None
+    task_desc: str, modules: list[Module], file: str | None = None, evidence: str | None = None
 ) -> str:
     listing = "\n".join([f"- {m.name} ({m.file_path}): {m.description}" for m in modules])
 
@@ -74,6 +77,8 @@ def _generate_task_brief(
         if file else ""
     )
 
+    evidence_block = f"\nEvidencia disponible (imágenes/video/Excel ya analizados):\n{evidence}\n" if evidence else ""
+
     prompt = f"""Sos un arquitecto de software senior. Un desarrollador va a trabajar en esta
 tarea con Claude Code como asistente.
 
@@ -81,11 +86,12 @@ Tarea: {task_desc}{file_context}
 
 Módulos del proyecto involucrados:
 {listing}
-
+{evidence_block}
 Generá un plan técnico conciso de máximo 8 líneas que indique:
 - Qué hay que revisar o cambiar, empezando por el archivo específico si se indicó uno
 - En qué orden hacerlo
 - Qué dependencias o efectos secundarios tener en cuenta
+- Si hay evidencia disponible, básate en ella para ser específico sobre el bug o comportamiento a resolver
 
 El plan va a ser la primera cosa que lea Claude Code antes de empezar. Sé específico
 y técnico. Solo el plan, sin introducción ni conclusión."""
@@ -134,8 +140,14 @@ def _execute_task(
     if file:
         magna_info(console, f"Archivo: {file}")
 
+    project_context = None
+    if modules:
+        proyecto_md_path = Path.home() / ".mycontext" / "projects" / str(modules[0].project_id) / "PROYECTO.md"
+        if proyecto_md_path.exists():
+            project_context = proyecto_md_path.read_text(encoding="utf-8", errors="replace")
+
     with magna_status(console, "Analizando tarea..."):
-        relevant = _detect_relevant_modules(task_desc, modules, file)
+        relevant = _detect_relevant_modules(task_desc, modules, file, project_context)
 
     if not relevant:
         relevant = modules
@@ -144,11 +156,6 @@ def _execute_task(
         file_module = next((m for m in modules if m.file_path == file), None)
         if file_module and file_module not in relevant:
             relevant = [file_module] + relevant
-
-    with magna_status(console, "Generando plan de implementación..."):
-        brief = _generate_task_brief(task_desc, relevant, file)
-
-    magna_task_plan(console, relevant, brief)
 
     image_description = None
     if image:
@@ -247,6 +254,7 @@ def _execute_task(
                             if att_id:
                                 new_cache_entries[att_id] = {"type": "video", "name": name, "text": desc}
                         except Exception as e:
+                            logging.error("No se pudo analizar video %s: %s", name, e, exc_info=True)
                             magna_warn(console, f"No se pudo analizar {name}: {e}")
 
         if ticket_id and new_cache_entries:
@@ -260,6 +268,22 @@ def _execute_task(
         ]
         if non_other:
             magna_info(console, f"{len(non_other)} adjunto(s) de otro tipo incluido(s) como metadata")
+
+    evidence_parts: list[str] = []
+    if image_description:
+        evidence_parts.append(f"Imagen de referencia: {image_description}")
+    for name, desc in jira_images:
+        evidence_parts.append(f"Imagen de Jira ({name}): {desc}")
+    for name, desc in jira_excel:
+        evidence_parts.append(f"Excel de Jira ({name}): {desc[:500]}")
+    for name, desc in jira_videos:
+        evidence_parts.append(f"Video de QA ({name}): {desc}")
+    evidence_summary = "\n\n".join(evidence_parts) if evidence_parts else None
+
+    with magna_status(console, "Generando plan de implementación..."):
+        brief = _generate_task_brief(task_desc, relevant, file, evidence_summary)
+
+    magna_task_plan(console, relevant, brief)
 
     context, ctx_warnings = build_context(relevant, project_path=path)
     for w in ctx_warnings:
