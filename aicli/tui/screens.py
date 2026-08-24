@@ -1206,6 +1206,10 @@ class SettingsScreen(Screen):
                 _cfg_option("JIRA_EMAIL"),
                 _cfg_option("JIRA_TOKEN"),
                 _cfg_option("GEMINI_API_KEY"),
+                Option(
+                    Text.assemble(("  ", ""), ("Probar conexión Gemini", _SEC), ("          →", _MUTED)),
+                    id="test:gemini",
+                ),
                 id="cfg-creds",
             )
             yield Rule()
@@ -1282,6 +1286,15 @@ class SettingsScreen(Screen):
                     dest.unlink()
                 self.app.notify(f"Regla eliminada: {fname}", timeout=4)
                 self._rebuild_rules()
+
+        elif opt_id == "test:gemini":
+            from aicli.services.gemini import test_connection
+            ok, msg = test_connection()
+            if ok:
+                self.app.notify(f"Gemini: {msg}", severity="information", timeout=4)
+            else:
+                logging.warning("Test de conexión Gemini falló: %s", msg)
+                self.app.notify(f"Gemini: {msg}", severity="error", timeout=6)
 
         elif opt_id == "logs":
             await self.app.push_screen(LogScreen())
