@@ -4,15 +4,27 @@ from pathlib import Path
 from sqlmodel import Session, select
 from aicli.db.models import Module, ModuleLesson
 from aicli.db import engine
+from aicli.services.qa_protocol import render_qa_protocol
 
 
-def build_context(modules: list[Module], project_path: Path | None = None) -> tuple[str, list[str]]:
+def build_context(
+    modules: list[Module],
+    project_path: Path | None = None,
+    es_bug: bool = False,
+) -> tuple[str, list[str]]:
     """
     Ensambla session_context.md a partir de módulos relevantes.
     Retorna (context_str, warnings) — warnings lista problemas de frescura detectados.
+    es_bug=True antepone el protocolo de verificación QA como primer fragmento.
     """
     warnings: list[str] = []
     fragments: list[str] = []
+
+    # El protocolo QA va antes que las reglas del equipo: una verificación que
+    # Claude pueda despriorizar no sirve
+    if es_bug:
+        project_id = modules[0].project_id if modules else None
+        fragments.append(render_qa_protocol(project_id))
 
     # Team rules come first so Claude treats them as highest-priority constraints
     rules_dir = Path.home() / ".mycontext" / "rules"
