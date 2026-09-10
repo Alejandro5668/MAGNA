@@ -1,0 +1,27 @@
+change: qa-verification-protocol
+artifact_store: hybrid
+execution_mode: auto
+delivery_strategy: single-pr
+review_budget_lines: 400
+dag:
+  proposal: done
+  specs: done
+  design: done
+  tasks: done
+  apply: done
+  verify: done
+  archive: in_progress
+delivery:
+  strategy: single-pr
+  exception: size:exception
+  actual_changed_lines: 435
+  budget_lines: 400
+  accepted_by_user: true
+phases_completed:
+  - explore
+  - proposal
+  - specs
+  - design
+  - tasks
+  - apply
+next_recommended: sdd-verify

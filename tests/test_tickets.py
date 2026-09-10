@@ -220,6 +220,82 @@ class TicketsStorageTestCase(unittest.TestCase):
         self.assertNotIn(stale_pid, result)
         self.assertNotIn(malformed_pid, result)
 
+    # ── 2.1 read_qa_result ──────────────────────────────────────────────────
+
+    def test_read_qa_result_returns_dict_and_deletes_file(self):
+        qa_dir = self.base / "qa_results"
+        qa_dir.mkdir(parents=True, exist_ok=True)
+        (qa_dir / "PROJ-100.json").write_text(
+            json.dumps({"verified": True, "attempts": 2}), encoding="utf-8"
+        )
+
+        result = self.tickets.read_qa_result("proj-100")
+
+        self.assertEqual(result, {"verified": True, "attempts": 2})
+        self.assertFalse((qa_dir / "PROJ-100.json").exists())
+
+    def test_read_qa_result_second_call_returns_none(self):
+        qa_dir = self.base / "qa_results"
+        qa_dir.mkdir(parents=True, exist_ok=True)
+        (qa_dir / "PROJ-100.json").write_text(
+            json.dumps({"verified": True, "attempts": 1}), encoding="utf-8"
+        )
+
+        self.tickets.read_qa_result("PROJ-100")
+        second = self.tickets.read_qa_result("PROJ-100")
+
+        self.assertIsNone(second)
+
+    def test_read_qa_result_corrupt_file_returns_none_and_deletes(self):
+        qa_dir = self.base / "qa_results"
+        qa_dir.mkdir(parents=True, exist_ok=True)
+        corrupt_path = qa_dir / "PROJ-999.json"
+        corrupt_path.write_text("{not json", encoding="utf-8")
+
+        result = self.tickets.read_qa_result("PROJ-999")
+
+        self.assertIsNone(result)
+        self.assertFalse(corrupt_path.exists())
+
+    def test_read_qa_result_missing_file_returns_none_no_directory_created(self):
+        result = self.tickets.read_qa_result("PROJ-404")
+
+        self.assertIsNone(result)
+        self.assertFalse((self.base / "qa_results").exists())
+
+    # ── 2.2 save_round(qa_verified=...) ─────────────────────────────────────
+
+    def test_save_round_qa_verified_true_persisted(self):
+        self.tickets.save_round("PROJ-100", "desc", [], "msg", qa_verified=True)
+
+        data = self.tickets._read_ticket("PROJ-100")
+        self.assertIs(data["rondas"][-1]["qa_verified"], True)
+
+    def test_save_round_qa_verified_default_none(self):
+        self.tickets.save_round("PROJ-200", "desc", [], "msg")
+
+        data = self.tickets._read_ticket("PROJ-200")
+        self.assertIsNone(data["rondas"][-1]["qa_verified"])
+
+    def test_save_round_qa_verified_false_and_history_renders(self):
+        self.tickets.save_round("PROJ-300", "desc", [], "msg", qa_verified=False)
+
+        tickets_loaded = self.tickets.load_tickets()
+        data = tickets_loaded["PROJ-300"]
+        self.assertIs(data["rondas"][-1]["qa_verified"], False)
+        history = self.tickets.format_history("PROJ-300", tickets_loaded)
+        self.assertIsNotNone(history)
+
+    def test_format_history_legacy_round_without_qa_verified_key(self):
+        self.tickets.save_round("PROJ-400", "desc", [], "msg")
+        data = self.tickets._read_ticket("PROJ-400")
+        del data["rondas"][-1]["qa_verified"]
+        self.tickets._write_ticket("PROJ-400", data)
+
+        tickets_loaded = self.tickets.load_tickets()
+        history = self.tickets.format_history("PROJ-400", tickets_loaded)
+        self.assertIsNotNone(history)
+
 
 if __name__ == "__main__":
     unittest.main()
