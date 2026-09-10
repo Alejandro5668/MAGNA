@@ -1,0 +1,35 @@
+schema: spec-driven
+
+context: |
+  Tech stack: Python 3.11, Typer 0.26, Rich 15, SQLModel + SQLite
+  Architecture: CLI (aicli/commands/) + services (aicli/services/) + TUI (aicli/tui/, Textual)
+  Testing: no pytest; two hand-rolled styles coexist — tests/test_commands.py (custom check() smoke harness)
+    and tests/test_tickets.py (stdlib unittest, MYCONTEXT_HOME env redirection for isolation)
+  Style: snake_case, type hints on public functions, Spanish docstrings/user-facing strings,
+    English identifiers, pure functions preferred over classes, no premature abstractions
+
+rules:
+  proposal:
+    - Include rollback plan for risky changes
+    - Cite exact file:line evidence for every affected area
+  specs:
+    - Use Given/When/Then for scenarios
+    - Use RFC 2119 keywords (MUST, SHALL, SHOULD, MAY)
+  design:
+    - Document architecture decisions with rationale
+  tasks:
+    - Group by phase, use hierarchical numbering
+    - Keep tasks completable in one session
+  apply:
+    guidelines:
+      - Follow existing code patterns (aicli/services/builder.py, aicli/services/jira.py)
+      - No new AICLI (Python) dependencies
+      - Never write, install, or commit anything inside a client repo
+    tdd: false
+    test_command: ""
+  verify:
+    test_command: ""
+    build_command: ""
+    coverage_threshold: 0
+  archive:
+    - Warn before merging destructive deltas

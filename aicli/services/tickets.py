@@ -35,6 +35,30 @@ def _ticket_path(ticket_id: str) -> Path:
     return _tickets_dir() / f"{_safe_id(ticket_id)}.json"
 
 
+def _qa_results_dir() -> Path:
+    # Directorio propio: tickets/ lo recorre load_tickets() con glob("*.json")
+    return _base_dir() / "qa_results"
+
+
+def read_qa_result(ticket_id: str) -> dict | None:
+    """Lee el resultado de verificación que dejó la sesión de Claude y lo consume
+    (borra el archivo) para que un sync posterior no lea un resultado viejo.
+    Devuelve None si no existe o si está corrupto."""
+    path = _qa_results_dir() / f"{_safe_id(ticket_id)}.json"
+    if not path.exists():
+        return None
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        data = None
+    finally:
+        try:
+            path.unlink(missing_ok=True)
+        except Exception:
+            pass
+    return data if isinstance(data, dict) else None
+
+
 def _new_ticket(ticket_id: str) -> dict:
     return {
         "descripcion": ticket_id,
@@ -140,6 +164,7 @@ def save_round(
     mensaje_jira: str | None,
     motivo_reapertura: str | None = None,
     memoria: dict | None = None,
+    qa_verified: bool | None = None,
 ) -> None:
     ronda = {
         "fecha": datetime.now().strftime("%Y-%m-%d"),
@@ -147,6 +172,7 @@ def save_round(
         "mensaje_jira": mensaje_jira,
         "motivo_reapertura": motivo_reapertura,
         "memoria": memoria,
+        "qa_verified": qa_verified,
     }
 
     def _mut(data: dict) -> None:
