@@ -314,6 +314,11 @@ STALE_THRESHOLD_SECONDS = 600
 
 _TERMINAL_STATUS_STATES = {"done", "error"}
 
+# Estados que nunca deben marcarse stale: terminales (ya no laten) más
+# awaiting_input (pausado esperando al usuario indefinidamente — eso es
+# comportamiento esperado, no un signo de que el proceso murió).
+_NEVER_STALE_STATES = _TERMINAL_STATUS_STATES | {"awaiting_input"}
+
 
 def qa_evidence_log_path(ticket_id: str) -> Path:
     """Ruta pública al `evidence.log` del ticket — para que el TUI no tenga
@@ -330,7 +335,7 @@ def read_qa_status(ticket_id: str) -> dict | None:
     status = _read_json_or_none(_run_dir(ticket_id) / "status.json")
     if status is None:
         return None
-    if status.get("state") not in _TERMINAL_STATUS_STATES:
+    if status.get("state") not in _NEVER_STALE_STATES:
         heartbeat = status.get("heartbeat") or 0
         if (time.time() - heartbeat) > STALE_THRESHOLD_SECONDS:
             status = {**status, "stale": True}
@@ -347,6 +352,10 @@ def read_qa_badge(ticket_id: str) -> dict | None:
         return None
     if status.get("stale") or status.get("state") == "error":
         return {"ch": "⚠", "col": _BADGE_ERROR, "state": "error"}
+    if status.get("state") == "awaiting_input":
+        # Distinto de "in-progress": el pipeline no está avanzando solo,
+        # está pausado esperando que el usuario responda una pregunta.
+        return {"ch": "⏸", "col": f"bold {_BADGE_ACCENT}", "state": "awaiting-input"}
     if status.get("state") != "done":
         return {"ch": "◔", "col": _BADGE_ACCENT, "state": "in-progress"}
 

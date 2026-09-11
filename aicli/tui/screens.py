@@ -1,6 +1,7 @@
 from __future__ import annotations
 import os
 import logging
+import time
 import traceback
 from pathlib import Path
 
@@ -1120,6 +1121,197 @@ class LogScreen(Screen):
     def on_mount(self) -> None:
         ta = self.query_one("#log-view", TextArea)
         ta.move_cursor(ta.document.end)
+
+
+# ─── QA Detail Screen ─────────────────────────────────────────────────────────
+#
+# Progressive disclosure delante de LogScreen: esta pantalla es el resumen
+# (checklist de stages + eventos), el evidence.log crudo sigue un [l] adentro.
+
+_STAGE_LABELS = (
+    ("repro", "Repro"), ("verify", "Verify"),
+    ("regression", "Regression"), ("corrector", "Corrector"),
+)
+
+# Glyphs por estado derivado de stage — mismos colores semánticos que ya usa
+# el resto de la paleta MAGNA (_OK/_ACCENT/_ERROR/_MUTED, arriba en este
+# archivo), nunca una paleta nueva.
+_STAGE_GLYPH = {
+    "done-pass": ("✓", _OK),
+    "running":   ("◔", _ACCENT),
+    "done-fail": ("✗", _ERROR),
+    "pending":   ("·", _MUTED),
+}
+
+
+def _derive_stage_state(name: str, status: dict, artifact: dict | None, verdict: dict | None) -> str:
+    """Traduce el estado de UN stage a 'done-pass'|'done-fail'|'running'|
+    'pending' — función pura (sin Textual/filesystem), testeable sin montar
+    un App ni un tempdir. `artifact` es el repro.json/verify.json/
+    regression.json ya leído por el llamador (`None` si aún no existe).
+    `corrector` no tiene artefacto propio (aplica vía commits git, no un
+    JSON de stage) — se deriva de verdict.json (attempts/reason)."""
+    current_stage = status.get("stage") or ""
+    non_terminal = status.get("state") not in ("done", "error")
+
+    if name == "corrector":
+        if current_stage.startswith("correction_") and non_terminal:
+            return "running"
+        if not verdict or not verdict.get("attempts"):
+            return "pending"  # nunca hizo falta corregir (o la corrida no llegó ahi)
+        aborted = verdict.get("reason") in ("branch_mismatch_or_detached", "correction_aborted")
+        return "done-fail" if aborted else "done-pass"
+
+    if artifact is not None:
+        result = artifact.get("status")
+        if name == "repro":
+            return "done-fail" if result in ("error", "not_reproduced") else "done-pass"
+        return "done-pass" if result in ("pass", "skipped") else "done-fail"
+
+    if current_stage == name and non_terminal:
+        return "running"
+    return "pending"
+
+
+def qa_stage_checklist(status: dict, repro: dict | None, verify: dict | None,
+                        regression: dict | None, verdict: dict | None) -> list[dict]:
+    """Checklist de los 4 stages del pipeline QA para QaDetailScreen — pura,
+    el llamador ya leyó los artefactos del blackboard (no hace I/O), así es
+    testeable con dicts armados a mano, sin tempdirs."""
+    artifacts = {"repro": repro, "verify": verify, "regression": regression}
+    checklist = []
+    for name, label in _STAGE_LABELS:
+        state = _derive_stage_state(name, status, artifacts.get(name), verdict)
+        ch, col = _STAGE_GLYPH[state]
+        checklist.append({"name": name, "label": label, "state": state, "ch": ch, "col": col})
+    return checklist
+
+
+class QaDetailScreen(ModalScreen[None]):
+    """Resumen/monitoreo de UNA corrida de QA para un ticket — header +
+    checklist de stages + lista de eventos, con auto-refresh cada 3s
+    mientras está abierta (mismo idiom que TicketPanel._poll_qa)."""
+
+    BINDINGS = [
+        Binding("escape", "dismiss", show=False),
+        Binding("l", "open_log", show=False),
+    ]
+
+    DEFAULT_CSS = f"""
+    QaDetailScreen {{
+        align: center middle;
+    }}
+    #qd-box {{
+        background: {_ELEVATED};
+        border: double {_ACCENT};
+        padding: 1 3;
+        width: 86;
+        height: auto;
+        max-height: 42;
+    }}
+    #qd-header {{
+        color: {_ACCENT};
+        text-style: bold;
+        height: 1;
+        margin-bottom: 1;
+    }}
+    #qd-meta {{
+        color: {_SEC};
+        height: 1;
+        margin-bottom: 1;
+    }}
+    #qd-stages {{
+        height: 1;
+        margin-bottom: 1;
+    }}
+    #qd-events {{
+        height: 16;
+        border: solid {_BORDER_A};
+        background: {_ELEVATED};
+    }}
+    #qd-hint {{
+        color: {_MUTED};
+        text-align: right;
+        height: 1;
+        margin-top: 1;
+    }}
+    Rule {{
+        color: {_BORDER};
+        margin: 0 0 1 0;
+    }}
+    """
+
+    def __init__(self, ticket_id: str) -> None:
+        super().__init__()
+        self._ticket_id = ticket_id
+
+    def compose(self) -> ComposeResult:
+        with Container(id="qd-box"):
+            yield Static("", id="qd-header")
+            yield Static("", id="qd-meta")
+            yield Static("", id="qd-stages")
+            yield Rule()
+            yield RichLog(id="qd-events", markup=False, highlight=False, wrap=True)
+            yield Static(
+                f"[bold {_ACCENT}][[l]][/bold {_ACCENT}] [{_SEC}]ver log crudo[/{_SEC}]"
+                f"  [{_MUTED}]·[/{_MUTED}]  [bold {_ERROR}][[esc]][/bold {_ERROR}] [{_SEC}]volver[/{_SEC}]",
+                id="qd-hint", markup=True,
+            )
+
+    def on_mount(self) -> None:
+        self._refresh()
+        self.set_interval(3.0, self._refresh)
+
+    def _refresh(self) -> None:
+        from aicli.services.qa_orchestrator import read_qa_status, _run_dir, _read_json_or_none
+
+        tid = self._ticket_id
+        status = read_qa_status(tid) or {}
+        run_dir = _run_dir(tid)
+        repro = _read_json_or_none(run_dir / "repro.json")
+        verify = _read_json_or_none(run_dir / "verify.json")
+        regression = _read_json_or_none(run_dir / "regression.json")
+        verdict = _read_json_or_none(run_dir / "verdict.json")
+
+        self._render_header(status, verdict)
+        self._render_stages(status, repro, verify, regression, verdict)
+        self._render_events(status.get("events") or [])
+
+    def _render_header(self, status: dict, verdict: dict | None) -> None:
+        attempts = (verdict or {}).get("attempts", status.get("attempt", 0))
+        started = status.get("started_at")
+        elapsed = f"{int(time.time() - started)}s" if started else "—"
+        state = status.get("state", "—")
+        if status.get("stale"):
+            state = f"{state} (stale)"
+        self.query_one("#qd-header", Static).update(f"━━━  QA — {self._ticket_id}  ━━━")
+        self.query_one("#qd-meta", Static).update(
+            f"run_id={status.get('run_id', '—')}  ·  intentos={attempts}  ·  "
+            f"transcurrido={elapsed}  ·  estado={state}"
+        )
+
+    def _render_stages(self, status: dict, repro: dict | None, verify: dict | None,
+                        regression: dict | None, verdict: dict | None) -> None:
+        checklist = qa_stage_checklist(status, repro, verify, regression, verdict)
+        txt = Text()
+        for i, stage in enumerate(checklist):
+            if i:
+                txt.append("   ")
+            txt.append(stage["ch"] + " ", style=stage["col"])
+            txt.append(stage["label"], style=stage["col"])
+        self.query_one("#qd-stages", Static).update(txt)
+
+    def _render_events(self, events: list[dict]) -> None:
+        log = self.query_one("#qd-events", RichLog)
+        log.clear()
+        for ev in events[-100:]:
+            log.write(f"[{ev.get('kind', '')}] {ev.get('msg', '')}")
+
+    def action_open_log(self) -> None:
+        from aicli.services.qa_orchestrator import qa_evidence_log_path
+
+        log_path = qa_evidence_log_path(self._ticket_id)
+        self.app.push_screen(LogScreen(log_path=log_path, title=f"QA — {self._ticket_id}"))
 
 
 # ─── Settings Screen ──────────────────────────────────────────────────────────
