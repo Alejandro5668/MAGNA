@@ -19,6 +19,7 @@ mantiene deliberadamente simple: bare `-p`, sin `--output-format`.
 import os
 import platform
 import subprocess
+import threading
 from pathlib import Path
 
 from aicli.services.caller import _find_claude_windows
@@ -240,28 +241,84 @@ edites ningún otro archivo.
     return _write_prompt(run_dir, f"correction_{attempt}", content)
 
 
-def invoke_stage(prompt_path: Path, cwd: Path, timeout: int = STAGE_TIMEOUT_SECONDS) -> str:
+def invoke_stage(
+    prompt_path: Path,
+    cwd: Path,
+    *,
+    run_dir: Path,
+    stage: str,
+    timeout: int = STAGE_TIMEOUT_SECONDS,
+) -> str:
     """Invoca `claude -p` headless apuntando al archivo de prompt (nunca el
     contenido completo por argv). Retorna stdout crudo; el llamador es
     responsable de parsearlo vía `qa_orchestrator._parse_agent_json()`.
     Nunca `shell=True`; siempre list-argv.
 
+    Streaming en vivo: la salida se lee línea por línea a medida que llega y
+    se vuelca a `run_dir/live/<stage>.log` (truncado al arrancar — un intento
+    nuevo del stage nunca debe empezar mostrando el log en vivo de un intento
+    viejo), además de acumularse en memoria para el retorno de siempre. Eso
+    es lo que `QaDetailScreen` tailea mientras el stage está corriendo.
+
+    stderr va a DEVNULL a propósito, no a un segundo pipe: ya se descartaba
+    antes (solo `.stdout` se usaba) y leer dos pipes en simultáneo sin
+    deadlockear necesita threads/selectors que esto no necesita para lo que
+    de verdad se usa.
+
     El proceso `qa-run` que llama a esto corre detached y sin consola propia
     (`_popen_kwargs()` en qa_orchestrator.py) — sin `CREATE_NO_WINDOW` acá
     también, Windows le abre una consola nueva a `claude` de la nada (visible,
-    en negro porque `capture_output=True` manda la salida a pipes, no a esa
-    ventana) por cada etapa del pipeline."""
+    en negro porque antes `capture_output=True` mandaba la salida a pipes, no
+    a esa ventana) por cada etapa del pipeline."""
     claude = _find_claude_windows() if platform.system() == "Windows" else None
     exe = str(claude) if claude else "claude"
     message = f"Read {prompt_path} and follow it exactly. Output ONLY the JSON object."
     creationflags = subprocess.CREATE_NO_WINDOW if platform.system() == "Windows" else 0
-    result = subprocess.run(
-        [exe, "-p", message],
+    argv = [exe, "-p", message]
+
+    live_dir = run_dir / "live"
+    live_dir.mkdir(parents=True, exist_ok=True)
+    live_path = live_dir / f"{stage}.log"
+
+    proc = subprocess.Popen(
+        argv,
         cwd=str(cwd),
-        capture_output=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
         text=True,
+        bufsize=1,
         shell=False,
-        timeout=timeout,
         creationflags=creationflags,
     )
-    return result.stdout
+
+    # Timer separado solo para matar el proceso si se pasa del timeout —
+    # no es lectura concurrente de pipes, es la única forma de no bloquear
+    # `for line in proc.stdout` indefinidamente si el proceso no imprime
+    # nada más pero tampoco termina.
+    timed_out = threading.Event()
+
+    def _kill_on_timeout() -> None:
+        timed_out.set()
+        proc.kill()
+
+    timer = threading.Timer(timeout, _kill_on_timeout)
+    timer.daemon = True
+    timer.start()
+    try:
+        chunks: list[str] = []
+        with open(live_path, "w", encoding="utf-8") as live_file:
+            for line in proc.stdout:
+                chunks.append(line)
+                live_file.write(line)
+                live_file.flush()
+        proc.wait()
+    finally:
+        timer.cancel()
+
+    if timed_out.is_set():
+        # Igual que el contrato anterior (subprocess.run con timeout=...):
+        # el stdout acumulado se descarta, el llamador ya sabe escribir un
+        # resultado de stage-timeout sin necesitarlo.
+        raise subprocess.TimeoutExpired(argv, timeout)
+
+    return "".join(chunks)
