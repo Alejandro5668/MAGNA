@@ -285,10 +285,7 @@ def _execute_task(
 
     magna_task_plan(console, relevant, brief)
 
-    from aicli.services.qa_protocol import is_bug_task
-    es_bug = is_bug_task(task_desc, jira_data)
-
-    context, ctx_warnings = build_context(relevant, project_path=path, es_bug=es_bug)
+    context, ctx_warnings = build_context(relevant, project_path=path)
     for w in ctx_warnings:
         magna_warn(console, w)
 

@@ -215,129 +215,13 @@ def test_services():
     from aicli.services.caller import launch_claude
     from aicli.services.activity import log_activity
     from aicli.services.indexer import NON_CODE_EXTENSIONS, get_tree
-    assert build_context is not None  # cobertura real de comportamiento vive en 5b
+    assert callable(build_context)
     assert callable(launch_claude)
     assert callable(log_activity)
     assert callable(get_tree)
     assert isinstance(NON_CODE_EXTENSIONS, (set, frozenset))
 
 check("services: builder, caller, activity, indexer importan", test_services)
-
-
-# ─── 5b. QA Verification Protocol ──────────────────────────────────────────────
-
-def test_is_bug_task_reopen_marker():
-    from aicli.services.qa_protocol import is_bug_task
-    assert is_bug_task("[TICKET REABIERTO ABC-123] no carga el listado") is True
-
-check("qa_protocol: is_bug_task detecta el marcador de reapertura", test_is_bug_task_reopen_marker)
-
-
-def test_is_bug_task_reopen_marker_case_insensitive():
-    from aicli.services.qa_protocol import is_bug_task
-    assert is_bug_task("[ticket reabierto abc-123] revisar") is True
-
-check(
-    "qa_protocol: is_bug_task detecta reapertura case-insensitive sin keyword en el motivo",
-    test_is_bug_task_reopen_marker_case_insensitive,
-)
-
-
-def test_is_bug_task_accent_folded_keyword():
-    from aicli.services.qa_protocol import is_bug_task
-    assert is_bug_task("Corregir el cálculo del total") is True
-
-check("qa_protocol: is_bug_task detecta keyword con acento (corregir)", test_is_bug_task_accent_folded_keyword)
-
-
-def test_is_bug_task_no_keyword():
-    from aicli.services.qa_protocol import is_bug_task
-    assert is_bug_task("Migrar el módulo de reportes a la nueva API") is False
-
-check("qa_protocol: is_bug_task devuelve False sin keywords de bug", test_is_bug_task_no_keyword)
-
-
-def test_is_bug_task_jira_summary_only():
-    from aicli.services.qa_protocol import is_bug_task
-    jira_data = {"summary": "Error al guardar", "description": ""}
-    assert is_bug_task("Agregar filtro por fecha", jira_data) is True
-
-check("qa_protocol: is_bug_task detecta keyword solo en el summary de Jira", test_is_bug_task_jira_summary_only)
-
-
-def test_is_bug_task_jira_none_negative_control():
-    from aicli.services.qa_protocol import is_bug_task
-    assert is_bug_task("Agregar filtro por fecha", None) is False
-
-check(
-    "qa_protocol: is_bug_task sin jira_data no infiere bug (control negativo)",
-    test_is_bug_task_jira_none_negative_control,
-)
-
-
-def test_is_bug_task_word_boundary_debugger():
-    from aicli.services.qa_protocol import is_bug_task
-    assert is_bug_task("Refactor del debugger interno") is False
-
-check("qa_protocol: is_bug_task respeta límites de palabra (debugger != bug)", test_is_bug_task_word_boundary_debugger)
-
-
-def test_is_bug_task_empty_and_malformed_jira():
-    from aicli.services.qa_protocol import is_bug_task
-    assert is_bug_task("", None) is False
-    assert is_bug_task("x", {"summary": None}) is False
-
-check(
-    "qa_protocol: is_bug_task tolera texto vacío y jira_data malformado sin excepción",
-    test_is_bug_task_empty_and_malformed_jira,
-)
-
-
-def test_build_context_es_bug_false_no_protocol():
-    from aicli.services.builder import build_context
-    context, warnings = build_context([], es_bug=False)
-    assert "Protocolo de verificación QA" not in context
-    assert isinstance(warnings, list)
-
-check("builder: build_context(es_bug=False) no incluye el protocolo QA", test_build_context_es_bug_false_no_protocol)
-
-
-def test_build_context_es_bug_true_includes_protocol():
-    from aicli.services.builder import build_context
-    context, warnings = build_context([], es_bug=True)
-    assert "Protocolo de verificación QA" in context
-    assert "claude-in-chrome" in context
-    assert "qa_results" in context
-    assert isinstance(warnings, list)
-
-check(
-    "builder: build_context(es_bug=True) incluye el protocolo QA completo",
-    test_build_context_es_bug_true_includes_protocol,
-)
-
-
-def test_build_context_es_bug_true_protocol_first():
-    from aicli.services.builder import build_context
-    context, _ = build_context([], es_bug=True)
-    assert context.startswith("# Protocolo de verificación QA")
-
-check(
-    "builder: build_context(es_bug=True) antepone el protocolo QA como primer fragmento",
-    test_build_context_es_bug_true_protocol_first,
-)
-
-
-def test_build_context_default_unaffected():
-    from aicli.services.builder import build_context
-    context_default, warnings_default = build_context([])
-    context_false, warnings_false = build_context([], es_bug=False)
-    assert context_default == context_false
-    assert warnings_default == warnings_false
-
-check(
-    "builder: build_context sin es_bug es idéntico a es_bug=False (default preservado)",
-    test_build_context_default_unaffected,
-)
 
 
 def test_activity_log():

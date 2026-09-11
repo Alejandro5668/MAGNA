@@ -15,7 +15,7 @@ from aicli.db import engine
 from aicli.db.models import Project, Module, ModuleLesson
 from aicli.services.indexer import analyze_file_deep, generate_case_summary, NON_CODE_EXTENSIONS, _write_md_atomic
 from aicli.services.stack_profile import get_profile
-from aicli.services.tickets import load_tickets, save_round, format_history, read_active_ticket, clear_active_ticket, read_qa_result
+from aicli.services.tickets import load_tickets, save_round, format_history, read_active_ticket, clear_active_ticket
 from aicli.tui.theme import (
     magna_ok, magna_warn, magna_error, magna_info, magna_status, magna_panel,
     ACCENT, SECTION, BORDER, Q_STYLE_ARGS,
@@ -389,11 +389,6 @@ def _sync_impl(ask_fn=None, confirm_fn=None):
             else:
                 description = ticket_id
 
-            qa_result = read_qa_result(ticket_id)
-            qa_verified = None
-            if qa_result is not None and isinstance(qa_result.get("verified"), bool):
-                qa_verified = qa_result["verified"]
-
             save_round(
                 ticket_id=ticket_id,
                 description=description,
@@ -401,7 +396,6 @@ def _sync_impl(ask_fn=None, confirm_fn=None):
                 mensaje_jira=jira_msg,
                 motivo_reapertura=reason_prefill,
                 memoria=case_memory,
-                qa_verified=qa_verified,
             )
 
             # Persistir lecciones por módulo tocado
