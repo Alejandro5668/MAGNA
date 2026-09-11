@@ -1440,5 +1440,116 @@ class CorrectionLoopThreatMatrixIntegrationTestCase(unittest.TestCase):
         self.assertEqual(before, after)
 
 
+class QaNotifyMechanismRuntimeIntegrationTestCase(unittest.IsolatedAsyncioTestCase):
+    """Fase 8 (fix de verify-report — CRITICAL) — hasta esta clase, el
+    mecanismo de notify de `qa-correction-cycle`/`qa-status-surface` estaba
+    confirmado solo por inspección de código: `_advance()`/`_finalize()`
+    (qa_runner.py) nunca se habían ejercitado escribiendo eventos reales en
+    `status.json`, y `TicketPanel._poll_qa()` (widgets.py) nunca había
+    llamado a `self.app.notify()` de verdad — solo la función pura
+    `_unseen_events()` estaba testeada, con listas armadas a mano. Este test
+    dirige `run_pipeline()` a través de 2 intentos de corrección REALES (con
+    commits git reales en un repo desechable) y luego alimenta el
+    `status.json` resultante a `TicketPanel._poll_qa()` montado en una App de
+    Textual real, confirmando que `app.notify()` se invoca genuinamente para
+    cada evento no visto — cerrando el CRITICAL y el WARNING de
+    verify-report.md sobre composición de múltiples commits reales."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        os.environ["MYCONTEXT_HOME"] = self._tmp.name
+        import aicli.services.qa_orchestrator as qa_orchestrator
+        importlib.reload(qa_orchestrator)
+        self.qa = qa_orchestrator
+        import aicli.services.qa_runner as qa_runner
+        importlib.reload(qa_runner)
+        self.runner = qa_runner
+
+        self.repo = Path(self._tmp.name) / "repo"
+        _init_repo(self.repo)
+        (self.repo / "tracked.py").write_text("original\n", encoding="utf-8")
+        _run_git(["add", "tracked.py"], self.repo)
+        _run_git(["commit", "-m", "initial"], self.repo)
+        self.branch = _run_git(["rev-parse", "--abbrev-ref", "HEAD"], self.repo).stdout.strip()
+
+        self.ticket_id = "PROJ-960"
+        self.run_dir = self.qa._run_dir(self.ticket_id)
+        self.run_id = "R-NOTIFY-1"
+        status = self.qa._new_status(self.run_id, self.ticket_id, str(self.repo), self.branch)
+        self.status_path = self.run_dir / "status.json"
+        self.qa._write_json_atomic(self.status_path, status)
+
+    def tearDown(self):
+        os.environ.pop("MYCONTEXT_HOME", None)
+        self._tmp.cleanup()
+
+    def _correction_with_real_edit(self, **kwargs):
+        """Simula lo que haría el corrector real (editar el archivo tocado)
+        antes de delegar en el `run_correction_attempt` REAL — así cada
+        intento produce un diff no vacio y por lo tanto un commit real y
+        distinto, en vez de un `no_changes`."""
+        (self.repo / "tracked.py").write_text(f"corrected attempt {kwargs['attempt']}\n", encoding="utf-8")
+        return self.runner.run_correction_attempt(**kwargs)
+
+    async def test_pipeline_writes_real_events_and_poll_qa_notifies_from_them(self):
+        repro_fn = Mock(return_value={"schema": self.qa.REPRO_SCHEMA, "status": "reproduced"})
+        verify_fn = Mock(return_value={"schema": self.qa.VERIFY_SCHEMA, "status": "fail", "checks": []})
+        regression_fn = Mock()
+
+        # ── 1) run_pipeline REAL a través de 2 intentos de correccion REALES ──
+        with patch.object(self.runner.qa_prompts, "invoke_stage",
+                           return_value='{"status": "applied", "motivo": "correccion real de prueba"}'):
+            verdict = self.runner.run_pipeline(
+                ticket_id=self.ticket_id, project_path=self.repo, run_dir=self.run_dir,
+                run_id=self.run_id, status_path=self.status_path,
+                files=["tracked.py"], branch=self.branch,
+                repro_fn=repro_fn, verify_fn=verify_fn,
+                regression_fn=regression_fn, correction_fn=self._correction_with_real_edit,
+            )
+
+        self.assertEqual(verdict["verdict"], "manual_review")
+        self.assertFalse(verdict["qa_verified"])
+        self.assertEqual(verdict["attempts"], self.runner.MAX_CORRECTION_ATTEMPTS)
+        self.assertEqual(len(verdict["commits"]), 2)
+        self.assertNotEqual(verdict["commits"][0], verdict["commits"][1])
+        self.assertEqual(_commit_count(self.repo), 3)  # initial + 2 real correction commits
+        regression_fn.assert_not_called()  # verify never "pass" → regression never runs
+
+        status = json.loads(self.status_path.read_text(encoding="utf-8"))
+        self.assertEqual(len(status["events"]), 3)
+        kinds = [e["kind"] for e in status["events"]]
+        self.assertEqual(kinds, ["correction", "correction", "terminal"])
+        self.assertIn("Iniciando correccion 1/2", status["events"][0]["msg"])
+        self.assertIn("Iniciando correccion 2/2", status["events"][1]["msg"])
+        self.assertIn("Verdict: manual_review", status["events"][2]["msg"])
+
+        # ── 2) TicketPanel._poll_qa() REAL, montado en una App de Textual real ──
+        from textual.app import App, ComposeResult
+        from aicli.tui.widgets import TicketPanel
+
+        class _PollHarnessApp(App):
+            def compose(self) -> ComposeResult:
+                yield TicketPanel()
+
+        app = _PollHarnessApp()
+        async with app.run_test():
+            panel = app.query_one(TicketPanel)
+            panel._tickets = [{"id": self.ticket_id, "summary": "x", "_rounds": 0, "_active": False}]
+
+            with patch.object(app, "notify") as mock_notify:
+                panel._poll_qa()
+
+                self.assertEqual(mock_notify.call_count, 3)
+                messages = [call.args[0] for call in mock_notify.call_args_list]
+                self.assertTrue(any("Iniciando correccion 1/2" in m for m in messages))
+                self.assertTrue(any("Iniciando correccion 2/2" in m for m in messages))
+                self.assertTrue(any("Verdict: manual_review" in m for m in messages))
+                self.assertTrue(all(m.startswith(f"{self.ticket_id}: ") for m in messages))
+
+                # re-poll con el mismo status.json: ningun evento nuevo → notify no vuelve a llamarse
+                panel._poll_qa()
+                self.assertEqual(mock_notify.call_count, 3)
+
+
 if __name__ == "__main__":
     unittest.main()
