@@ -14,7 +14,11 @@ from sqlmodel import Session, select
 from aicli.db import engine
 from aicli.db.models import Project, Module, ModuleLesson
 from aicli.services.indexer import analyze_file_deep, generate_case_summary, NON_CODE_EXTENSIONS, _write_md_atomic
-from aicli.services.tickets import load_tickets, save_round, format_history, read_active_ticket, clear_active_ticket, read_qa_result
+from aicli.services.tickets import (
+    load_tickets, save_round, format_history, read_active_ticket, clear_active_ticket,
+    get_ticket_branch,
+)
+from aicli.services.qa_orchestrator import trigger_qa
 from aicli.tui.theme import (
     magna_ok, magna_warn, magna_error, magna_info, magna_status, magna_panel,
     ACCENT, SECTION, BORDER, Q_STYLE_ARGS,
@@ -121,6 +125,24 @@ def _changed_files(path: Path) -> set[str]:
         changed = _run(["git", "diff", "HEAD~1", "--name-only"])
 
     return changed
+
+
+def _trigger_qa_guarded(ticket_id: str, path: Path, files: list[str]) -> None:
+    """Punto de disparo único del pipeline de QA automático (Requirement:
+    Non-Blocking Trigger). `trigger_qa()` ya nunca propaga una excepción por
+    sí misma (una falla de lanzamiento se registra en status.json y retorna
+    None) — este try/except extra cubre además cualquier falla ANTES de
+    llegar a ese try interno (import, lookup de branch, etc.), garantizando
+    que `ctx sync` jamás se vea afectado por el pipeline de QA."""
+    try:
+        trigger_qa(
+            ticket_id=ticket_id,
+            project_path=path,
+            files=files,
+            branch=get_ticket_branch(ticket_id),
+        )
+    except Exception:
+        pass
 
 
 def _check_php_syntax(path: Path, files: set[str]) -> list[str]:
@@ -387,11 +409,6 @@ def _sync_impl(ask_fn=None, confirm_fn=None):
             else:
                 description = ticket_id
 
-            qa_result = read_qa_result(ticket_id)
-            qa_verified = None
-            if qa_result is not None and isinstance(qa_result.get("verified"), bool):
-                qa_verified = qa_result["verified"]
-
             save_round(
                 ticket_id=ticket_id,
                 description=description,
@@ -399,7 +416,6 @@ def _sync_impl(ask_fn=None, confirm_fn=None):
                 mensaje_jira=jira_msg,
                 motivo_reapertura=reason_prefill,
                 memoria=case_memory,
-                qa_verified=qa_verified,
             )
 
             # Persistir lecciones por módulo tocado
@@ -420,5 +436,6 @@ def _sync_impl(ask_fn=None, confirm_fn=None):
                         session.commit()
 
             clear_active_ticket()
+            _trigger_qa_guarded(ticket_id, path, list(existing_files))
             magna_ok(console, f"Ronda {round_num} guardada para {ticket_id}")
 
