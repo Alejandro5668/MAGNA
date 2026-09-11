@@ -32,15 +32,15 @@ MAX_RETRIES = 4
 INITIAL_WAIT = 60
 
 MODEL_BY_OPERATION = {
-    "architecture":   "claude-sonnet-4-6",          # document_architecture — razonamiento estructural
-    "file_deep":      "claude-sonnet-4-6",           # analyze_file_deep — documentación profunda
-    "zone":           "claude-sonnet-4-6",           # document_zone — documentación de zona
-    "module_content": "claude-sonnet-4-6",           # generate_module_content — doc inicial
-    "project_md":     "claude-opus-4-8",             # generate_project_md — inferir arquitectura completa
+    "architecture":   "claude-sonnet-5",             # document_architecture — razonamiento estructural
+    "file_deep":      "claude-sonnet-5",             # analyze_file_deep — documentación profunda
+    "zone":           "claude-sonnet-5",             # document_zone — documentación de zona
+    "module_content": "claude-sonnet-5",             # generate_module_content — doc inicial
+    "project_md":     "claude-sonnet-5",             # generate_project_md — inferir arquitectura completa
     "role":           "claude-haiku-4-5-20251001",   # generate_role_md — template rellenado
     "case_summary":   "claude-haiku-4-5-20251001",   # generate_case_summary — JSON formato fijo
     "task_brief":     "claude-haiku-4-5-20251001",   # _generate_task_brief — síntesis 8 líneas
-    "image":          "claude-sonnet-4-6",           # describe_image — requiere visión multimodal
+    "image":          "claude-sonnet-5",             # describe_image — requiere visión multimodal
 }
 
 

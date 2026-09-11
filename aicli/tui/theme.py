@@ -156,7 +156,7 @@ def magna_task_plan(console: Console, modules: list, brief: str) -> None:
     console.print(Panel(
         content,
         title=f"[bold {ACCENT}]◆  Plan de implementación[/bold {ACCENT}]",
-        subtitle=f"[{_MUTED}]claude-sonnet-4-6  ·  extended thinking[/{_MUTED}]",
+        subtitle=f"[{_MUTED}]claude-sonnet-5  ·  extended thinking[/{_MUTED}]",
         border_style=ACCENT,
         padding=(0, 1),
     ))
