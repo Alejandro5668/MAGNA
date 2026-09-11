@@ -39,6 +39,18 @@ _PRIO_BADGE = {
 }
 
 
+def _unseen_events(events: list[dict], last_seen_seq: int) -> list[dict]:
+    """Eventos de status.json con seq > last_seen_seq, en orden — función pura
+    (sin dependencia de Textual/App) para que `_poll_qa` sea testeable sin
+    montar un App real. Cubre tanto los eventos `kind:"correction"` como el
+    `kind:"terminal"` final (Requirement: Completion Notification — un solo
+    mecanismo de polling satisface ambos requisitos de notify())."""
+    return sorted(
+        (e for e in events if e.get("seq", 0) > last_seen_seq),
+        key=lambda e: e["seq"],
+    )
+
+
 class TicketPanel(Widget):
     """Panel derecho — lista plana de tickets Jira asignados."""
 
@@ -100,6 +112,7 @@ class TicketPanel(Widget):
     def __init__(self) -> None:
         super().__init__()
         self._tickets: list[dict] = []
+        self._qa_seen_seq: dict[str, int] = {}
 
     def compose(self) -> ComposeResult:
         yield Static("  TICKETS", id="tp-header", markup=False)
@@ -107,12 +120,13 @@ class TicketPanel(Widget):
         yield Rule(id="tp-divider")
         yield Static("", id="tp-desc", markup=False)
         yield Static(
-            f"  [[↵]] iniciar tarea  ·  [[r]] refrescar",
+            f"  [[↵]] iniciar tarea  ·  [[r]] refrescar  ·  [[e]] evidencia",
             id="tp-foot", markup=True,
         )
 
     def on_mount(self) -> None:
         self._fetch()
+        self.set_interval(5.0, self._poll_qa)
 
     @work(thread=True, exclusive=True)
     def _fetch(self) -> None:
@@ -139,12 +153,15 @@ class TicketPanel(Widget):
 
         flat.sort(key=lambda x: _PRIO_ORDER.get(x.get("priority", ""), 99))
 
+        from aicli.services.qa_orchestrator import read_qa_badge
+
         local = load_tickets()
         active_data = read_active_ticket()
         active_tid = active_data["ticket_id"] if active_data else None
         for t in flat:
             t["_rounds"] = len(local.get(t["id"], {}).get("rondas", []))
             t["_active"] = (t["id"] == active_tid)
+            t["_qa"] = read_qa_badge(t["id"])
 
         if not flat:
             self.app.call_from_thread(self._set_desc, "Sin tickets asignados en curso.")
@@ -180,6 +197,9 @@ class TicketPanel(Widget):
         txt.append(summary, style=_SEC)
         if t["_rounds"]:
             txt.append(f"  ⟳×{t['_rounds']}", style=_MUTED)
+        qa = t.get("_qa")            # {"ch": "✓", "col": _OK, "state": "passed"} | None
+        if qa:
+            txt.append("  " + qa["ch"], style=qa["col"])
         return txt
 
     def _update_desc(self, index: int) -> None:
@@ -213,3 +233,63 @@ class TicketPanel(Widget):
         if event.key == "r":
             self._fetch()
             event.stop()
+        elif event.key == "e":
+            self._open_evidence()
+            event.stop()
+
+    def _poll_qa(self) -> None:
+        """`set_interval(5.0, ...)` — corre en el hilo del event loop de
+        Textual (no un worker), por eso puede llamar `self.app.notify()`
+        directo, sin `call_from_thread` (design decision 6). Traduce cada
+        evento no visto de `status.json` (kind:"correction" o "terminal") en
+        un toast real y refresca el badge de la fila si cambió."""
+        if not self._tickets:
+            return
+        from aicli.services.qa_orchestrator import read_qa_status, read_qa_badge
+
+        try:
+            lv = self.query_one("#tp-list", ListView)
+        except Exception:
+            return
+
+        for idx, t in enumerate(self._tickets):
+            tid = t["id"]
+            status = read_qa_status(tid)
+            if status is None:
+                continue
+
+            last_seen = self._qa_seen_seq.get(tid, 0)
+            new_events = _unseen_events(status.get("events") or [], last_seen)
+            for ev in new_events:
+                self.app.notify(f"{tid}: {ev.get('msg', '')}", timeout=6)
+            if new_events:
+                self._qa_seen_seq[tid] = new_events[-1]["seq"]
+
+            badge = read_qa_badge(tid)
+            if badge != t.get("_qa"):
+                t["_qa"] = badge
+                try:
+                    item = lv.children[idx]
+                    item.query_one(Static).update(self._row(t))
+                except Exception:
+                    pass
+
+    def _open_evidence(self) -> None:
+        """[e] — abre `evidence.log` del ticket resaltado en un `LogScreen`
+        (Requirement: Evidence Viewable on Demand)."""
+        if not self._tickets:
+            return
+        try:
+            lv = self.query_one("#tp-list", ListView)
+            idx = lv.index or 0
+        except Exception:
+            idx = 0
+        if idx >= len(self._tickets):
+            return
+
+        tid = self._tickets[idx]["id"]
+        from aicli.services.qa_orchestrator import qa_evidence_log_path
+        from aicli.tui.screens import LogScreen
+
+        log_path = qa_evidence_log_path(tid)
+        self.app.push_screen(LogScreen(log_path=log_path, title=f"QA — {tid}"))

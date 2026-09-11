@@ -727,5 +727,829 @@ class QaRunnerPipelineTestCase(unittest.TestCase):
         self.assertFalse((self.run_dir / "verdict.json").exists())
 
 
+class QaStatusSurfaceTestCase(unittest.TestCase):
+    """Fase 7 — read_qa_status/read_qa_badge, funciones puras que alimentan el
+    badge de TicketPanel._row() y la superficie de estado del TUI. Cobertura
+    completa de staleness con reloj congelado queda para la Fase 8 (PR5) —
+    esta unidad cubre los estados que Fase 7 consume directamente."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        os.environ["MYCONTEXT_HOME"] = self._tmp.name
+        import aicli.services.qa_orchestrator as qa_orchestrator
+        importlib.reload(qa_orchestrator)
+        self.qa = qa_orchestrator
+        self.base = Path(self._tmp.name)
+
+    def tearDown(self):
+        os.environ.pop("MYCONTEXT_HOME", None)
+        self._tmp.cleanup()
+
+    def _write_status(self, ticket_id: str, **overrides) -> Path:
+        run_dir = self.qa._run_dir(ticket_id)
+        status = self.qa._new_status("R1", ticket_id, str(self.base), None)
+        status.update(overrides)
+        self.qa._write_json_atomic(run_dir / "status.json", status)
+        return run_dir
+
+    def test_read_qa_status_returns_none_when_no_run_yet(self):
+        self.assertIsNone(self.qa.read_qa_status("PROJ-950"))
+
+    def test_read_qa_badge_none_when_no_run_yet(self):
+        self.assertIsNone(self.qa.read_qa_badge("PROJ-950"))
+
+    def test_read_qa_badge_in_progress_for_non_terminal_state(self):
+        self._write_status("PROJ-951", state="verify", heartbeat=time.time())
+        badge = self.qa.read_qa_badge("PROJ-951")
+        self.assertEqual(badge, {"ch": "◔", "col": self.qa._BADGE_ACCENT, "state": "in-progress"})
+
+    def test_read_qa_badge_passed_reads_verdict_json(self):
+        run_dir = self._write_status("PROJ-952", state="done")
+        self.qa._write_json_atomic(run_dir / "verdict.json", {"verdict": "passed", "qa_verified": True})
+        badge = self.qa.read_qa_badge("PROJ-952")
+        self.assertEqual(badge, {"ch": "✓", "col": self.qa._BADGE_OK, "state": "passed"})
+
+    def test_read_qa_badge_manual_review(self):
+        run_dir = self._write_status("PROJ-953", state="done")
+        self.qa._write_json_atomic(run_dir / "verdict.json", {"verdict": "manual_review", "qa_verified": False})
+        badge = self.qa.read_qa_badge("PROJ-953")
+        self.assertEqual(badge["state"], "manual-review")
+        self.assertEqual(badge["ch"], "!")
+
+    def test_read_qa_badge_doubtful(self):
+        run_dir = self._write_status("PROJ-954", state="done")
+        self.qa._write_json_atomic(run_dir / "verdict.json", {"verdict": "dudoso", "qa_verified": False})
+        badge = self.qa.read_qa_badge("PROJ-954")
+        self.assertEqual(badge, {"ch": "?", "col": self.qa._BADGE_WARN, "state": "doubtful"})
+
+    def test_read_qa_badge_error_state(self):
+        self._write_status("PROJ-955", state="error", reason="launch_failed")
+        badge = self.qa.read_qa_badge("PROJ-955")
+        self.assertEqual(badge, {"ch": "⚠", "col": self.qa._BADGE_ERROR, "state": "error"})
+
+    def test_read_qa_status_marks_stale_when_heartbeat_old_and_non_terminal(self):
+        self._write_status("PROJ-956", state="verify", heartbeat=time.time() - 700)
+        status = self.qa.read_qa_status("PROJ-956")
+        self.assertTrue(status.get("stale"))
+
+    def test_read_qa_status_not_stale_when_heartbeat_recent(self):
+        self._write_status("PROJ-957", state="verify", heartbeat=time.time())
+        status = self.qa.read_qa_status("PROJ-957")
+        self.assertFalse(status.get("stale", False))
+
+    def test_read_qa_badge_stale_shows_error_badge(self):
+        self._write_status("PROJ-958", state="verify", heartbeat=time.time() - 700)
+        badge = self.qa.read_qa_badge("PROJ-958")
+        self.assertEqual(badge["state"], "error")
+
+    def test_qa_evidence_log_path_matches_run_dir(self):
+        run_dir = self.qa._run_dir("PROJ-959")
+        self.assertEqual(self.qa.qa_evidence_log_path("PROJ-959"), run_dir / "evidence.log")
+
+
+class QaEvidenceLogTestCase(unittest.TestCase):
+    """Fase 7 (dependencia de aggregator) — evidence.log legible por humanos,
+    consumido por LogScreen. Requirement: Evidence Viewable on Demand."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.run_dir = Path(self._tmp.name) / "run"
+        self.run_dir.mkdir(parents=True, exist_ok=True)
+        import aicli.services.qa_runner as qa_runner
+        importlib.reload(qa_runner)
+        self.runner = qa_runner
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def test_write_evidence_log_produces_human_readable_digest(self):
+        repro = {"status": "reproduced", "expected": "boton verde", "actual": "boton rojo"}
+        verify = {"status": "pass", "checks": [{"name": "color", "result": "pass", "detail": ""}]}
+        regression = {"status": "skipped", "total": 0, "passed": 0, "failed": 0, "failures": []}
+        verdict = {
+            "verdict": "passed", "qa_verified": True, "reason": "verify_pass_regression_ok",
+            "attempts": 0, "commits": [],
+        }
+
+        self.runner._write_evidence_log(self.run_dir, repro, verify, regression, verdict)
+
+        content = (self.run_dir / "evidence.log").read_text(encoding="utf-8")
+        self.assertIn("passed", content)
+        self.assertIn("boton rojo", content)
+        self.assertIn("color: pass", content)
+
+    def test_write_evidence_log_lists_correction_commits(self):
+        repro = {"status": "reproduced"}
+        verify = {"status": "pass", "checks": []}
+        regression = {"status": "skipped"}
+        verdict = {
+            "verdict": "passed", "qa_verified": True, "reason": "verify_pass_regression_ok",
+            "attempts": 1, "commits": ["fix(qa-auto): correccion automatica 1/2 - boton"],
+        }
+        self.runner._write_evidence_log(self.run_dir, repro, verify, regression, verdict)
+        content = (self.run_dir / "evidence.log").read_text(encoding="utf-8")
+        self.assertIn("fix(qa-auto): correccion automatica 1/2 - boton", content)
+
+
+class QaPipelineEvidenceIntegrationTestCase(unittest.TestCase):
+    """Fase 7 — confirma que run_pipeline (Fase 5) ahora también deja
+    evidence.log en cada camino terminal, no solo verdict.json."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        os.environ["MYCONTEXT_HOME"] = self._tmp.name
+        import aicli.services.qa_orchestrator as qa_orchestrator
+        importlib.reload(qa_orchestrator)
+        self.qa = qa_orchestrator
+        import aicli.services.qa_runner as qa_runner
+        importlib.reload(qa_runner)
+        self.runner = qa_runner
+        self.base = Path(self._tmp.name)
+
+    def tearDown(self):
+        os.environ.pop("MYCONTEXT_HOME", None)
+        self._tmp.cleanup()
+
+    def test_pipeline_writes_evidence_log_on_happy_path(self):
+        run_id = "R1"
+        run_dir = self.qa._run_dir("PROJ-940")
+        status = self.qa._new_status(run_id, "PROJ-940", str(self.base), None)
+        status_path = run_dir / "status.json"
+        self.qa._write_json_atomic(status_path, status)
+
+        repro_fn = Mock(return_value={"schema": self.qa.REPRO_SCHEMA, "status": "reproduced"})
+        verify_fn = Mock(return_value={"schema": self.qa.VERIFY_SCHEMA, "status": "pass", "checks": []})
+        regression_fn = Mock(return_value={"schema": self.qa.REGRESSION_SCHEMA, "status": "skipped"})
+
+        self.runner.run_pipeline(
+            ticket_id="PROJ-940", project_path=self.base, run_dir=run_dir,
+            run_id=run_id, status_path=status_path,
+            repro_fn=repro_fn, verify_fn=verify_fn, regression_fn=regression_fn,
+            correction_fn=Mock(),
+        )
+        self.assertTrue((run_dir / "evidence.log").exists())
+
+    def test_pipeline_writes_evidence_log_on_not_reproduced_early_exit(self):
+        run_id = "R2"
+        run_dir = self.qa._run_dir("PROJ-941")
+        status = self.qa._new_status(run_id, "PROJ-941", str(self.base), None)
+        status_path = run_dir / "status.json"
+        self.qa._write_json_atomic(status_path, status)
+
+        repro_fn = Mock(return_value={"schema": self.qa.REPRO_SCHEMA, "status": "not_reproduced"})
+
+        self.runner.run_pipeline(
+            ticket_id="PROJ-941", project_path=self.base, run_dir=run_dir,
+            run_id=run_id, status_path=status_path,
+            repro_fn=repro_fn, verify_fn=Mock(), regression_fn=Mock(), correction_fn=Mock(),
+        )
+        self.assertTrue((run_dir / "evidence.log").exists())
+
+
+class SyncTriggerTestCase(unittest.TestCase):
+    """Fase 6 — el único call site de trigger_qa() en `_sync_impl`, no debe
+    bloquear ni propagar excepciones (Requirement: Non-Blocking Trigger)."""
+
+    def test_trigger_qa_guarded_calls_trigger_qa_with_expected_args(self):
+        from aicli.commands import sync as sync_mod
+        with patch.object(sync_mod, "trigger_qa") as mock_trigger, \
+             patch.object(sync_mod, "get_ticket_branch", return_value="fix/PROJ-1"):
+            sync_mod._trigger_qa_guarded("PROJ-1", Path("/some/project"), ["a.py"])
+        mock_trigger.assert_called_once_with(
+            ticket_id="PROJ-1", project_path=Path("/some/project"),
+            files=["a.py"], branch="fix/PROJ-1",
+        )
+
+    def test_trigger_qa_guarded_never_raises_when_trigger_qa_blows_up(self):
+        from aicli.commands import sync as sync_mod
+        with patch.object(sync_mod, "trigger_qa", side_effect=RuntimeError("boom")), \
+             patch.object(sync_mod, "get_ticket_branch", return_value=None):
+            sync_mod._trigger_qa_guarded("PROJ-2", Path("/x"), [])  # no debe lanzar
+
+    def test_sync_impl_calls_guarded_trigger_after_clear_active_ticket(self):
+        import inspect
+        from aicli.commands import sync as sync_mod
+        src = inspect.getsource(sync_mod._sync_impl)
+        idx_clear = src.index("clear_active_ticket()")
+        idx_trigger = src.index("_trigger_qa_guarded(")
+        self.assertGreater(idx_trigger, idx_clear)
+        # debe estar dentro del bloque `if save:` — ambas líneas comparten
+        # la misma indentación de 12 espacios en el cuerpo de ese bloque.
+        self.assertIn("            _trigger_qa_guarded(", src)
+
+
+class TicketPanelBadgeTestCase(unittest.TestCase):
+    """Fase 7.1 — badge symbol+color en _row(); función pura, no requiere
+    un App de Textual montado."""
+
+    def setUp(self):
+        from aicli.tui.widgets import TicketPanel
+        self.panel = TicketPanel()
+
+    def test_row_appends_badge_when_qa_present(self):
+        t = {
+            "id": "PROJ-1", "summary": "algo", "_rounds": 0, "_active": False,
+            "_qa": {"ch": "✓", "col": "#4ADE80", "state": "passed"},
+        }
+        text = self.panel._row(t)
+        self.assertIn("✓", text.plain)
+
+    def test_row_omits_badge_when_qa_absent(self):
+        t = {"id": "PROJ-2", "summary": "algo", "_rounds": 0, "_active": False}
+        text = self.panel._row(t)
+        for ch in ("✓", "✗", "?", "!", "⚠", "◔"):
+            self.assertNotIn(ch, text.plain)
+
+    def test_row_badge_symbol_present_never_colour_alone(self):
+        t = {
+            "id": "PROJ-3", "summary": "algo", "_rounds": 2, "_active": False,
+            "_qa": {"ch": "!", "col": "bold #FBBF24", "state": "manual-review"},
+        }
+        text = self.panel._row(t)
+        self.assertIn("!", text.plain)
+
+
+class QaEventPollingTestCase(unittest.TestCase):
+    """Fase 7.2 — traducción de events[] no vistos a notificaciones; función
+    pura (`_unseen_events`) extraída de `_poll_qa` para ser testeable sin un
+    App de Textual montado."""
+
+    def test_unseen_events_returns_only_higher_seq_in_order(self):
+        from aicli.tui.widgets import _unseen_events
+        events = [{"seq": 1, "msg": "a"}, {"seq": 3, "msg": "c"}, {"seq": 2, "msg": "b"}]
+        result = _unseen_events(events, last_seen_seq=1)
+        self.assertEqual([e["seq"] for e in result], [2, 3])
+
+    def test_unseen_events_empty_when_all_seen(self):
+        from aicli.tui.widgets import _unseen_events
+        events = [{"seq": 1, "msg": "a"}]
+        self.assertEqual(_unseen_events(events, last_seen_seq=5), [])
+
+    def test_unseen_events_empty_list_input(self):
+        from aicli.tui.widgets import _unseen_events
+        self.assertEqual(_unseen_events([], last_seen_seq=0), [])
+
+
+class LogScreenTestCase(unittest.TestCase):
+    """Fase 7.4 — LogScreen(log_path=None, title=...) keyword-defaulted; el
+    call site existente (screens.py, SettingsScreen) sigue funcionando con
+    los valores por defecto."""
+
+    def test_log_screen_defaults_match_prior_hardcoded_call_site(self):
+        from aicli.tui.screens import LogScreen
+        from textual.widgets import Static
+        screen = LogScreen()
+        widgets = list(screen.compose())
+        header = next(w for w in widgets if isinstance(w, Static))
+        self.assertIn("magna.log", str(header.render()))
+        self.assertIn("MAGNA — Logs", str(header.render()))
+
+    def test_log_screen_accepts_custom_log_path_and_title(self):
+        from aicli.tui.screens import LogScreen
+        from textual.widgets import Static, TextArea
+        tmp = tempfile.TemporaryDirectory()
+        try:
+            log_path = Path(tmp.name) / "evidence.log"
+            log_path.write_text("contenido de evidencia QA", encoding="utf-8")
+            screen = LogScreen(log_path=log_path, title="QA — PROJ-1")
+            widgets = list(screen.compose())
+            header = next(w for w in widgets if isinstance(w, Static))
+            self.assertIn("QA — PROJ-1", str(header.render()))
+            text_area = next(w for w in widgets if isinstance(w, TextArea))
+            self.assertIn("contenido de evidencia QA", text_area.text)
+        finally:
+            tmp.cleanup()
+
+    def test_log_screen_missing_log_path_shows_placeholder(self):
+        from aicli.tui.screens import LogScreen
+        from textual.widgets import TextArea
+        tmp = tempfile.TemporaryDirectory()
+        try:
+            missing = Path(tmp.name) / "nope.log"
+            screen = LogScreen(log_path=missing, title="QA — PROJ-2")
+            widgets = list(screen.compose())
+            text_area = next(w for w in widgets if isinstance(w, TextArea))
+            self.assertIn("sin logs", text_area.text)
+        finally:
+            tmp.cleanup()
+
+
+class AggregateTruthTableTestCase(unittest.TestCase):
+    """Fase 8.1 — tabla de verdad completa de `qa_runner.aggregate()`,
+    incluyendo los caminos de stage error (que es exactamente donde un
+    timeout normalizado por `_stage_timeout_result` termina — ver
+    QaRunnerStageTimeoutTestCase más abajo, design.md: 'Any stage error/
+    timeout ⇒ error'). Las unidades 1-4 solo cubrieron pass/dudoso/manual_
+    review como efecto colateral de sus RED tests de pipeline (5.4/5.5); esta
+    clase testea `aggregate()` directamente, combinacion por combinacion."""
+
+    def setUp(self):
+        import aicli.services.qa_runner as qa_runner
+        importlib.reload(qa_runner)
+        self.runner = qa_runner
+
+    @staticmethod
+    def _stage(schema: str, status):
+        return {"schema": schema, "status": status}
+
+    def _repro(self, status):
+        return self._stage("qa.repro/1", status)
+
+    def _verify(self, status):
+        return self._stage("qa.verify/1", status)
+
+    def _regression(self, status):
+        return self._stage("qa.regression/1", status)
+
+    def test_repro_not_reproduced_is_dudoso_regardless_of_other_stages(self):
+        verdict = self.runner.aggregate(
+            repro=self._repro("not_reproduced"), verify=self._verify("pass"),
+            regression=self._regression("pass"), attempts=0, commits=[],
+        )
+        self.assertEqual(verdict["verdict"], "dudoso")
+        self.assertFalse(verdict["qa_verified"])
+        self.assertEqual(verdict["reason"], "repro_not_reproduced")
+
+    def test_repro_error_is_error(self):
+        verdict = self.runner.aggregate(
+            repro=self._repro("error"), verify=self._verify(None),
+            regression=self._regression(None), attempts=0, commits=[],
+        )
+        self.assertEqual(verdict["verdict"], "error")
+        self.assertFalse(verdict["qa_verified"])
+        self.assertEqual(verdict["reason"], "repro_stage_error")
+
+    def test_verify_error_is_error(self):
+        verdict = self.runner.aggregate(
+            repro=self._repro("reproduced"), verify=self._verify("error"),
+            regression=self._regression(None), attempts=0, commits=[],
+        )
+        self.assertEqual(verdict["verdict"], "error")
+        self.assertFalse(verdict["qa_verified"])
+        self.assertEqual(verdict["reason"], "stage_error")
+
+    def test_regression_error_is_error_even_if_verify_passes(self):
+        verdict = self.runner.aggregate(
+            repro=self._repro("reproduced"), verify=self._verify("pass"),
+            regression=self._regression("error"), attempts=0, commits=[],
+        )
+        self.assertEqual(verdict["verdict"], "error")
+        self.assertFalse(verdict["qa_verified"])
+
+    def test_verify_pass_regression_pass_is_passed(self):
+        verdict = self.runner.aggregate(
+            repro=self._repro("reproduced"), verify=self._verify("pass"),
+            regression=self._regression("pass"), attempts=0, commits=[],
+        )
+        self.assertEqual(verdict["verdict"], "passed")
+        self.assertTrue(verdict["qa_verified"])
+
+    def test_verify_pass_regression_skipped_is_passed(self):
+        verdict = self.runner.aggregate(
+            repro=self._repro("reproduced"), verify=self._verify("pass"),
+            regression=self._regression("skipped"), attempts=0, commits=[],
+        )
+        self.assertEqual(verdict["verdict"], "passed")
+        self.assertTrue(verdict["qa_verified"])
+
+    def test_verify_pass_regression_fail_below_cap_is_failed_not_passed(self):
+        verdict = self.runner.aggregate(
+            repro=self._repro("reproduced"), verify=self._verify("pass"),
+            regression=self._regression("fail"), attempts=0, commits=[],
+        )
+        self.assertEqual(verdict["verdict"], "failed")
+        self.assertFalse(verdict["qa_verified"])
+
+    def test_verify_pass_regression_fail_at_cap_is_manual_review(self):
+        verdict = self.runner.aggregate(
+            repro=self._repro("reproduced"), verify=self._verify("pass"),
+            regression=self._regression("fail"), attempts=self.runner.MAX_CORRECTION_ATTEMPTS, commits=[],
+        )
+        self.assertEqual(verdict["verdict"], "manual_review")
+        self.assertFalse(verdict["qa_verified"])
+
+    def test_verify_fail_below_cap_is_failed(self):
+        verdict = self.runner.aggregate(
+            repro=self._repro("reproduced"), verify=self._verify("fail"),
+            regression=self._regression(None), attempts=self.runner.MAX_CORRECTION_ATTEMPTS - 1, commits=[],
+        )
+        self.assertEqual(verdict["verdict"], "failed")
+        self.assertFalse(verdict["qa_verified"])
+
+    def test_verify_fail_at_cap_is_manual_review(self):
+        verdict = self.runner.aggregate(
+            repro=self._repro("reproduced"), verify=self._verify("fail"),
+            regression=self._regression(None), attempts=self.runner.MAX_CORRECTION_ATTEMPTS, commits=[],
+        )
+        self.assertEqual(verdict["verdict"], "manual_review")
+        self.assertFalse(verdict["qa_verified"])
+
+    def test_verdict_stages_dict_reflects_each_stage_status(self):
+        verdict = self.runner.aggregate(
+            repro=self._repro("reproduced"), verify=self._verify("pass"),
+            regression=self._regression("skipped"), attempts=0, commits=[],
+        )
+        self.assertEqual(
+            verdict["stages"], {"repro": "reproduced", "verify": "pass", "regression": "skipped"},
+        )
+
+    def test_verdict_carries_attempts_and_commits_through(self):
+        commits = ["fix(qa-auto): correccion automatica 1/2 - x"]
+        verdict = self.runner.aggregate(
+            repro=self._repro("reproduced"), verify=self._verify("pass"),
+            regression=self._regression("skipped"), attempts=1, commits=commits,
+        )
+        self.assertEqual(verdict["attempts"], 1)
+        self.assertEqual(verdict["commits"], commits)
+
+
+class QaRunnerStageTimeoutTestCase(unittest.TestCase):
+    """Fase 8.1 (extension) — un `subprocess.TimeoutExpired` durante repro o
+    verify nunca debe propagar y tumbar el pipeline: design.md dice
+    explicitamente 'Any stage error/timeout ⇒ error'. Se normaliza al mismo
+    status:"error" que ya usa el parseo JSON inválido, ANTES de llegar al
+    agregador — así los tests de AggregateTruthTableTestCase de arriba ya
+    cubren el destino final de un timeout sin necesitar un status "timeout"
+    literal en el esquema."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.run_dir = Path(self._tmp.name) / "run"
+        self.project_path = Path(self._tmp.name) / "project"
+        self.project_path.mkdir(parents=True, exist_ok=True)
+        os.environ.pop("MAGNA_E2E_REPO", None)
+        import aicli.services.qa_runner as qa_runner
+        importlib.reload(qa_runner)
+        self.runner = qa_runner
+
+    def tearDown(self):
+        os.environ.pop("MAGNA_E2E_REPO", None)
+        self._tmp.cleanup()
+
+    def test_run_repro_stage_timeout_is_stage_error_never_raises(self):
+        timeout_exc = subprocess.TimeoutExpired(cmd=["claude", "-p", "..."], timeout=600)
+        with patch.object(self.runner.qa_prompts, "invoke_stage", side_effect=timeout_exc):
+            result = self.runner.run_repro_stage(self.run_dir, self.project_path, "PROJ-1", "hist")
+        self.assertEqual(result["status"], "error")
+        data = json.loads((self.run_dir / "repro.json").read_text(encoding="utf-8"))
+        self.assertEqual(data["status"], "error")
+
+    def test_run_verify_stage_timeout_is_stage_error_never_raises(self):
+        timeout_exc = subprocess.TimeoutExpired(cmd=["claude", "-p", "..."], timeout=600)
+        with patch.object(self.runner.qa_prompts, "invoke_stage", side_effect=timeout_exc):
+            result = self.runner.run_verify_stage(self.run_dir, self.project_path, "PROJ-1", "hist")
+        self.assertEqual(result["status"], "error")
+        data = json.loads((self.run_dir / "verify.json").read_text(encoding="utf-8"))
+        self.assertEqual(data["status"], "error")
+
+    def test_run_regression_stage_timeout_is_stage_error_already_handled(self):
+        # La regla es distinta: run_regression_stage ya envuelve TODO su
+        # subprocess.run en un except Exception genérico desde la Fase 5/PR3
+        # (no es un gap nuevo) — este test confirma esa cobertura preexistente
+        # explícitamente, no reintroduce lógica.
+        os.environ["MAGNA_E2E_REPO"] = str(self.project_path)
+        timeout_exc = subprocess.TimeoutExpired(cmd=["npx", "playwright", "test"], timeout=600)
+        with patch.object(self.runner.subprocess, "run", side_effect=timeout_exc):
+            result = self.runner.run_regression_stage(self.run_dir, self.project_path)
+        self.assertEqual(result["status"], "error")
+        data = json.loads((self.run_dir / "regression.json").read_text(encoding="utf-8"))
+        self.assertEqual(data["status"], "error")
+
+
+class FrozenClockStalenessTestCase(unittest.TestCase):
+    """Fase 8.2 — `read_qa_status()`'s `heartbeat > 600s` staleness check,
+    con un reloj congelado (`time.time` monkeypatcheado) en vez de depender de
+    un sleep real de 600s. Cubre los bordes exactos del umbral, no solo un
+    valor "bien adentro" del rango como PR4's cobertura original."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        os.environ["MYCONTEXT_HOME"] = self._tmp.name
+        import aicli.services.qa_orchestrator as qa_orchestrator
+        importlib.reload(qa_orchestrator)
+        self.qa = qa_orchestrator
+        self.base = Path(self._tmp.name)
+
+    def tearDown(self):
+        os.environ.pop("MYCONTEXT_HOME", None)
+        self._tmp.cleanup()
+
+    def _write_status_with_heartbeat(self, ticket_id: str, heartbeat: float, state: str = "verify") -> None:
+        run_dir = self.qa._run_dir(ticket_id)
+        status = self.qa._new_status("R1", ticket_id, str(self.base), None)
+        status["state"] = state
+        status["heartbeat"] = heartbeat
+        self.qa._write_json_atomic(run_dir / "status.json", status)
+
+    def test_stale_just_over_threshold_with_frozen_clock(self):
+        frozen_now = 1_000_000.0
+        self._write_status_with_heartbeat("PROJ-960", heartbeat=frozen_now - 601)
+        with patch.object(self.qa.time, "time", return_value=frozen_now):
+            status = self.qa.read_qa_status("PROJ-960")
+        self.assertTrue(status.get("stale"))
+
+    def test_not_stale_exactly_at_threshold_with_frozen_clock(self):
+        frozen_now = 1_000_000.0
+        self._write_status_with_heartbeat("PROJ-961", heartbeat=frozen_now - 600)
+        with patch.object(self.qa.time, "time", return_value=frozen_now):
+            status = self.qa.read_qa_status("PROJ-961")
+        self.assertFalse(status.get("stale", False))
+
+    def test_not_stale_just_under_threshold_with_frozen_clock(self):
+        frozen_now = 1_000_000.0
+        self._write_status_with_heartbeat("PROJ-962", heartbeat=frozen_now - 599)
+        with patch.object(self.qa.time, "time", return_value=frozen_now):
+            status = self.qa.read_qa_status("PROJ-962")
+        self.assertFalse(status.get("stale", False))
+
+    def test_frozen_clock_terminal_state_never_marked_stale_even_if_very_old(self):
+        frozen_now = 1_000_000.0
+        self._write_status_with_heartbeat("PROJ-963", heartbeat=frozen_now - 10_000, state="done")
+        with patch.object(self.qa.time, "time", return_value=frozen_now):
+            status = self.qa.read_qa_status("PROJ-963")
+        self.assertFalse(status.get("stale", False))
+
+    def test_frozen_clock_badge_reflects_stale_as_error(self):
+        frozen_now = 1_000_000.0
+        self._write_status_with_heartbeat("PROJ-964", heartbeat=frozen_now - 601)
+        with patch.object(self.qa.time, "time", return_value=frozen_now):
+            badge = self.qa.read_qa_badge("PROJ-964")
+        self.assertEqual(badge["state"], "error")
+
+
+class BlackboardSupersedeIntegrationTestCase(unittest.TestCase):
+    """Fase 8.3 — integración: una nueva `ctx sync` (trigger_qa) mientras la
+    corrida previa del mismo ticket sigue in-progress descarta los artefactos
+    parciales de la corrida vieja y arranca limpio (nunca los mezcla); si la
+    corrida vieja de todos modos intenta finalizar (proceso detached que aún
+    no notó el supersede), jamás puede escribir sobre el estado de la nueva."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        os.environ["MYCONTEXT_HOME"] = self._tmp.name
+        import aicli.services.qa_orchestrator as qa_orchestrator
+        importlib.reload(qa_orchestrator)
+        self.qa = qa_orchestrator
+        import aicli.services.qa_runner as qa_runner
+        importlib.reload(qa_runner)
+        self.runner = qa_runner
+        self.base = Path(self._tmp.name)
+        popen_patcher = patch(
+            "aicli.services.qa_orchestrator.subprocess.Popen", return_value=Mock(pid=999),
+        )
+        popen_patcher.start()
+        self.addCleanup(popen_patcher.stop)
+
+    def tearDown(self):
+        os.environ.pop("MYCONTEXT_HOME", None)
+        self._tmp.cleanup()
+
+    def test_resync_mid_run_discards_partials_and_old_run_cannot_finalize(self):
+        run_dir = self.qa._run_dir("PROJ-980")
+        old_run_id = self.qa.trigger_qa(
+            ticket_id="PROJ-980", project_path=self.base, files=["a.py"],
+        )
+        self.assertIsNotNone(old_run_id)
+
+        # simula progreso in-flight de la corrida vieja (todavia no terminal)
+        self.qa._write_json_atomic(
+            run_dir / "repro.json", {"schema": self.qa.REPRO_SCHEMA, "status": "reproduced"},
+        )
+        self.qa._write_json_atomic(
+            run_dir / "verify.json", {"schema": self.qa.VERIFY_SCHEMA, "status": "fail"},
+        )
+        old_status_before_resync = json.loads((run_dir / "status.json").read_text(encoding="utf-8"))
+        self.assertEqual(old_status_before_resync["state"], "pending")
+
+        new_run_id = self.qa.trigger_qa(
+            ticket_id="PROJ-980", project_path=self.base, files=["a.py"],
+        )
+        self.assertIsNotNone(new_run_id)
+        self.assertNotEqual(old_run_id, new_run_id)
+        self.assertFalse((run_dir / "repro.json").exists())
+        self.assertFalse((run_dir / "verify.json").exists())
+
+        new_status = json.loads((run_dir / "status.json").read_text(encoding="utf-8"))
+        self.assertEqual(new_status["run_id"], new_run_id)
+        self.assertEqual(new_status["state"], "pending")
+
+        # la corrida vieja, si de todos modos corre el pipeline (proceso
+        # detached que aún no notó el supersede), debe abortar sin tocar nada
+        status_path = run_dir / "status.json"
+        verdict = self.runner.run_pipeline(
+            ticket_id="PROJ-980", project_path=self.base, run_dir=run_dir,
+            run_id=old_run_id, status_path=status_path,
+            repro_fn=Mock(return_value={"schema": self.qa.REPRO_SCHEMA, "status": "reproduced"}),
+            verify_fn=Mock(), regression_fn=Mock(), correction_fn=Mock(),
+        )
+        self.assertIsNone(verdict)
+        self.assertFalse((run_dir / "verdict.json").exists())
+
+        untouched = json.loads(status_path.read_text(encoding="utf-8"))
+        self.assertEqual(untouched, new_status)
+
+
+class SyncTriggerLaunchFailureIntegrationTestCase(unittest.TestCase):
+    """Fase 8.4 — integración end-to-end: `Popen` real lanza `OSError` a
+    través del call site real de `sync.py` (`trigger_qa` SIN mockear a sí
+    misma); confirma que ni `_trigger_qa_guarded` ni `trigger_qa` dejan
+    escapar la excepción y que `status.json` queda con
+    `state:"error", reason:"launch_failed"`. `_base_dir()`/`_run_dir()` leen
+    `MYCONTEXT_HOME` en cada llamada (nunca cacheado), así que no hace falta
+    recargar ningún módulo para que este test quede aislado del filesystem
+    real."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        os.environ["MYCONTEXT_HOME"] = self._tmp.name
+        from aicli.commands import sync as sync_mod
+        from aicli.services import qa_orchestrator as qa_orch
+        self.sync_mod = sync_mod
+        self.qa = qa_orch
+        self.base = Path(self._tmp.name)
+
+    def tearDown(self):
+        os.environ.pop("MYCONTEXT_HOME", None)
+        self._tmp.cleanup()
+
+    def test_sync_trigger_guarded_survives_real_popen_oserror(self):
+        with patch("aicli.services.qa_orchestrator.subprocess.Popen", side_effect=OSError("boom")):
+            self.sync_mod._trigger_qa_guarded("PROJ-970", self.base, ["a.py"])  # no debe lanzar
+
+        status_path = self.qa._run_dir("PROJ-970") / "status.json"
+        data = json.loads(status_path.read_text(encoding="utf-8"))
+        self.assertEqual(data["state"], "error")
+        self.assertEqual(data["reason"], "launch_failed")
+
+
+class CorrectionLoopThreatMatrixIntegrationTestCase(unittest.TestCase):
+    """Fase 8 (extension solicitada explícitamente para esta unidad) — el
+    threat-matrix de git ya está probado sobre `_git()` aislado
+    (GitDenylistTestCase, PR1) y sobre `run_correction_attempt` para
+    branch-mismatch + pathspec-scoped commit (QaRunnerCorrectionTestCase,
+    PR1). Esta clase confirma dos casos que faltaban EN EL CONTEXTO real del
+    ciclo de corrección: HEAD desacoplado (detached) y que un push real jamás
+    ocurre incluso cuando `run_correction_attempt` sí hace un commit local."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.run_dir = Path(self._tmp.name) / "run"
+        self.repo = Path(self._tmp.name) / "repo"
+        _init_repo(self.repo)
+        (self.repo / "tracked.py").write_text("original\n", encoding="utf-8")
+        _run_git(["add", "tracked.py"], self.repo)
+        _run_git(["commit", "-m", "initial"], self.repo)
+        import aicli.services.qa_runner as qa_runner
+        importlib.reload(qa_runner)
+        self.runner = qa_runner
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def test_correction_attempt_aborts_on_detached_head(self):
+        _run_git(["checkout", "--detach", "HEAD"], self.repo)
+        result = self.runner.run_correction_attempt(
+            run_dir=self.run_dir, project_path=self.repo, ticket_id="PROJ-1",
+            attempt=1, archivos_tocados=["tracked.py"],
+            failure_reason="motivo", branch="fix/PROJ-1",
+        )
+        self.assertEqual(result["status"], "aborted")
+        self.assertIsNone(result["commit"])
+        self.assertEqual(_commit_count(self.repo), 1)
+
+    def test_correction_attempt_leaves_real_origin_untouched(self):
+        origin = Path(self.repo).parent / "origin.git"
+        origin.mkdir(parents=True, exist_ok=True)
+        _run_git(["init", "--bare"], origin)
+        current_branch = _run_git(["rev-parse", "--abbrev-ref", "HEAD"], self.repo).stdout.strip()
+        _run_git(["remote", "add", "origin", str(origin)], self.repo)
+        _run_git(["push", "origin", f"HEAD:refs/heads/{current_branch}"], self.repo)
+        before = _run_git(["ls-remote", str(origin)], self.repo).stdout
+
+        (self.repo / "tracked.py").write_text("corrected via correction loop\n", encoding="utf-8")
+        with patch.object(self.runner.qa_prompts, "invoke_stage", return_value='{"status": "applied", "motivo": "fix"}'):
+            result = self.runner.run_correction_attempt(
+                run_dir=self.run_dir, project_path=self.repo, ticket_id="PROJ-1",
+                attempt=1, archivos_tocados=["tracked.py"],
+                failure_reason="motivo", branch=current_branch,
+            )
+
+        self.assertEqual(result["status"], "applied")
+        self.assertEqual(_commit_count(self.repo), 2)
+        after = _run_git(["ls-remote", str(origin)], self.repo).stdout
+        self.assertEqual(before, after)
+
+
+class QaNotifyMechanismRuntimeIntegrationTestCase(unittest.IsolatedAsyncioTestCase):
+    """Fase 8 (fix de verify-report — CRITICAL) — hasta esta clase, el
+    mecanismo de notify de `qa-correction-cycle`/`qa-status-surface` estaba
+    confirmado solo por inspección de código: `_advance()`/`_finalize()`
+    (qa_runner.py) nunca se habían ejercitado escribiendo eventos reales en
+    `status.json`, y `TicketPanel._poll_qa()` (widgets.py) nunca había
+    llamado a `self.app.notify()` de verdad — solo la función pura
+    `_unseen_events()` estaba testeada, con listas armadas a mano. Este test
+    dirige `run_pipeline()` a través de 2 intentos de corrección REALES (con
+    commits git reales en un repo desechable) y luego alimenta el
+    `status.json` resultante a `TicketPanel._poll_qa()` montado en una App de
+    Textual real, confirmando que `app.notify()` se invoca genuinamente para
+    cada evento no visto — cerrando el CRITICAL y el WARNING de
+    verify-report.md sobre composición de múltiples commits reales."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        os.environ["MYCONTEXT_HOME"] = self._tmp.name
+        import aicli.services.qa_orchestrator as qa_orchestrator
+        importlib.reload(qa_orchestrator)
+        self.qa = qa_orchestrator
+        import aicli.services.qa_runner as qa_runner
+        importlib.reload(qa_runner)
+        self.runner = qa_runner
+
+        self.repo = Path(self._tmp.name) / "repo"
+        _init_repo(self.repo)
+        (self.repo / "tracked.py").write_text("original\n", encoding="utf-8")
+        _run_git(["add", "tracked.py"], self.repo)
+        _run_git(["commit", "-m", "initial"], self.repo)
+        self.branch = _run_git(["rev-parse", "--abbrev-ref", "HEAD"], self.repo).stdout.strip()
+
+        self.ticket_id = "PROJ-960"
+        self.run_dir = self.qa._run_dir(self.ticket_id)
+        self.run_id = "R-NOTIFY-1"
+        status = self.qa._new_status(self.run_id, self.ticket_id, str(self.repo), self.branch)
+        self.status_path = self.run_dir / "status.json"
+        self.qa._write_json_atomic(self.status_path, status)
+
+    def tearDown(self):
+        os.environ.pop("MYCONTEXT_HOME", None)
+        self._tmp.cleanup()
+
+    def _correction_with_real_edit(self, **kwargs):
+        """Simula lo que haría el corrector real (editar el archivo tocado)
+        antes de delegar en el `run_correction_attempt` REAL — así cada
+        intento produce un diff no vacio y por lo tanto un commit real y
+        distinto, en vez de un `no_changes`."""
+        (self.repo / "tracked.py").write_text(f"corrected attempt {kwargs['attempt']}\n", encoding="utf-8")
+        return self.runner.run_correction_attempt(**kwargs)
+
+    async def test_pipeline_writes_real_events_and_poll_qa_notifies_from_them(self):
+        repro_fn = Mock(return_value={"schema": self.qa.REPRO_SCHEMA, "status": "reproduced"})
+        verify_fn = Mock(return_value={"schema": self.qa.VERIFY_SCHEMA, "status": "fail", "checks": []})
+        regression_fn = Mock()
+
+        # ── 1) run_pipeline REAL a través de 2 intentos de correccion REALES ──
+        with patch.object(self.runner.qa_prompts, "invoke_stage",
+                           return_value='{"status": "applied", "motivo": "correccion real de prueba"}'):
+            verdict = self.runner.run_pipeline(
+                ticket_id=self.ticket_id, project_path=self.repo, run_dir=self.run_dir,
+                run_id=self.run_id, status_path=self.status_path,
+                files=["tracked.py"], branch=self.branch,
+                repro_fn=repro_fn, verify_fn=verify_fn,
+                regression_fn=regression_fn, correction_fn=self._correction_with_real_edit,
+            )
+
+        self.assertEqual(verdict["verdict"], "manual_review")
+        self.assertFalse(verdict["qa_verified"])
+        self.assertEqual(verdict["attempts"], self.runner.MAX_CORRECTION_ATTEMPTS)
+        self.assertEqual(len(verdict["commits"]), 2)
+        self.assertNotEqual(verdict["commits"][0], verdict["commits"][1])
+        self.assertEqual(_commit_count(self.repo), 3)  # initial + 2 real correction commits
+        regression_fn.assert_not_called()  # verify never "pass" → regression never runs
+
+        status = json.loads(self.status_path.read_text(encoding="utf-8"))
+        self.assertEqual(len(status["events"]), 3)
+        kinds = [e["kind"] for e in status["events"]]
+        self.assertEqual(kinds, ["correction", "correction", "terminal"])
+        self.assertIn("Iniciando correccion 1/2", status["events"][0]["msg"])
+        self.assertIn("Iniciando correccion 2/2", status["events"][1]["msg"])
+        self.assertIn("Verdict: manual_review", status["events"][2]["msg"])
+
+        # ── 2) TicketPanel._poll_qa() REAL, montado en una App de Textual real ──
+        from textual.app import App, ComposeResult
+        from aicli.tui.widgets import TicketPanel
+
+        class _PollHarnessApp(App):
+            def compose(self) -> ComposeResult:
+                yield TicketPanel()
+
+        app = _PollHarnessApp()
+        async with app.run_test():
+            panel = app.query_one(TicketPanel)
+            panel._tickets = [{"id": self.ticket_id, "summary": "x", "_rounds": 0, "_active": False}]
+
+            with patch.object(app, "notify") as mock_notify:
+                panel._poll_qa()
+
+                self.assertEqual(mock_notify.call_count, 3)
+                messages = [call.args[0] for call in mock_notify.call_args_list]
+                self.assertTrue(any("Iniciando correccion 1/2" in m for m in messages))
+                self.assertTrue(any("Iniciando correccion 2/2" in m for m in messages))
+                self.assertTrue(any("Verdict: manual_review" in m for m in messages))
+                self.assertTrue(all(m.startswith(f"{self.ticket_id}: ") for m in messages))
+
+                # re-poll con el mismo status.json: ningun evento nuevo → notify no vuelve a llamarse
+                panel._poll_qa()
+                self.assertEqual(mock_notify.call_count, 3)
+
+
 if __name__ == "__main__":
     unittest.main()
