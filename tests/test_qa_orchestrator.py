@@ -407,7 +407,7 @@ class LaunchTestCase(unittest.TestCase):
 
 
 class QaRunEntrypointTestCase(unittest.TestCase):
-    """Fase 3 — comando oculto `qa-run`: heartbeat mínimo + supersede cooperativo."""
+    """Fase 3 (supersede al arrancar) + Fase 5 (wiring real a qa_runner.run_pipeline)."""
 
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
@@ -435,17 +435,296 @@ class QaRunEntrypointTestCase(unittest.TestCase):
         after = json.loads((run_dir / "status.json").read_text(encoding="utf-8"))
         self.assertEqual(before, after)
 
-    def test_qa_run_writes_heartbeats_and_finishes_done(self):
+    def test_qa_run_delegates_to_run_pipeline_when_run_id_still_current(self):
+        # Fase 5: qa_run() ya no maneja stages/heartbeats por sí mismo — le
+        # delega toda la orquestación a qa_runner.run_pipeline(). Este test
+        # confirma el wiring (args correctos), no la lógica interna del
+        # pipeline (cubierta por QaRunnerPipelineTestCase).
         run_dir = self.qa._run_dir("PROJ-921")
-        status = self.qa._new_status("R1", "PROJ-921", str(self.base), None)
+        status = self.qa._new_status("R1", "PROJ-921", str(self.base), "fix/PROJ-921")
         self.qa._write_json_atomic(run_dir / "status.json", status)
 
-        self.qa_cmd.qa_run(ticket_id="PROJ-921", project_path=str(self.base), run_id="R1")
+        with patch.object(self.qa_cmd.qa_runner, "run_pipeline") as mock_pipeline, \
+             patch.object(self.qa_cmd.qa_runner, "ticket_history_text", return_value="hist"), \
+             patch.object(self.qa_cmd.qa_runner, "latest_touched_files", return_value=["a.py"]):
+            self.qa_cmd.qa_run(ticket_id="PROJ-921", project_path=str(self.base), run_id="R1")
 
-        final = json.loads((run_dir / "status.json").read_text(encoding="utf-8"))
-        self.assertEqual(final["state"], "done")
-        self.assertEqual(final["run_id"], "R1")
-        self.assertGreater(final["heartbeat"], status["heartbeat"])
+        mock_pipeline.assert_called_once()
+        _, kwargs = mock_pipeline.call_args
+        self.assertEqual(kwargs["ticket_id"], "PROJ-921")
+        self.assertEqual(kwargs["run_id"], "R1")
+        self.assertEqual(kwargs["run_dir"], run_dir)
+        self.assertEqual(kwargs["status_path"], run_dir / "status.json")
+        self.assertEqual(kwargs["ticket_history"], "hist")
+        self.assertEqual(kwargs["files"], ["a.py"])
+        self.assertEqual(kwargs["branch"], "fix/PROJ-921")
+
+
+class QaPromptsTestCase(unittest.TestCase):
+    """Fase 4 — prompts de stage + helper de invocación headless."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.run_dir = Path(self._tmp.name) / "run"
+        import aicli.services.qa_prompts as qa_prompts
+        importlib.reload(qa_prompts)
+        self.qp = qa_prompts
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    # ── 4.1 — Requirement: Repro Stage Isolation ─────────────────────────────
+
+    def test_repro_prompt_never_mentions_fix_diff_or_commit(self):
+        path = self.qp.build_repro_prompt(self.run_dir, "PROJ-1", "historial de ejemplo")
+        content = path.read_text(encoding="utf-8").lower()
+        self.assertNotIn("diff", content)
+        self.assertNotIn("commit", content)
+        self.assertIn("qa.repro/1", content)
+        self.assertIn("not_reproduced", content)
+
+    # ── 4.2 — Requirement: Verify Stage Contract ─────────────────────────────
+
+    def test_verify_prompt_requires_browser_and_read_only_db(self):
+        path = self.qp.build_verify_prompt(self.run_dir, "PROJ-1", "historial")
+        content = path.read_text(encoding="utf-8").lower()
+        self.assertIn("navegador", content)
+        self.assertIn("solo lectura", content)
+        self.assertIn("qa.verify/1", content)
+
+    # ── 4.3 — Requirement: File Scoping for Corrections ──────────────────────
+
+    def test_corrector_prompt_inlines_checklist_and_scopes_to_touched_files(self):
+        path = self.qp.build_corrector_prompt(
+            self.run_dir, "PROJ-1", attempt=1, max_attempts=2,
+            archivos_tocados=["foo.py", "bar.py"],
+            git_diff="- old\n+ new", failure_reason="verify fail: boton roto",
+        )
+        content = path.read_text(encoding="utf-8")
+        self.assertIn("checklist de seguridad", content.lower())
+        self.assertIn("git push", content)
+        self.assertIn("foo.py", content)
+        self.assertIn("bar.py", content)
+        self.assertIn("intento 1/2", content.lower())
+        self.assertNotIn("baz.py", content)
+
+    # ── 4.4 — headless invocation helper ─────────────────────────────────────
+
+    def test_invoke_stage_calls_bare_dash_p_with_no_extra_flags(self):
+        prompt_path = self.run_dir / "prompts" / "repro.md"
+        prompt_path.parent.mkdir(parents=True, exist_ok=True)
+        prompt_path.write_text("contenido", encoding="utf-8")
+
+        fake_result = Mock(stdout='{"status": "reproduced"}')
+        with patch.object(self.qp, "_find_claude_windows", return_value=None), \
+             patch.object(self.qp.subprocess, "run", return_value=fake_result) as mock_run:
+            out = self.qp.invoke_stage(prompt_path, self.run_dir, timeout=5)
+
+        self.assertEqual(out, '{"status": "reproduced"}')
+        mock_run.assert_called_once()
+        args, kwargs = mock_run.call_args
+        argv = args[0]
+        self.assertEqual(argv[0], "claude")
+        self.assertEqual(argv[1], "-p")
+        self.assertNotIn("--output-format", argv)
+        self.assertNotIn("--permission-mode", argv)
+        self.assertEqual(kwargs["shell"], False)
+        self.assertEqual(kwargs["timeout"], 5)
+
+
+class QaRunnerStageTestCase(unittest.TestCase):
+    """Fase 5.1 — funciones de stage individuales (repro/verify/regression)."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.run_dir = Path(self._tmp.name) / "run"
+        self.project_path = Path(self._tmp.name) / "project"
+        self.project_path.mkdir(parents=True, exist_ok=True)
+        os.environ.pop("MAGNA_E2E_REPO", None)
+        import aicli.services.qa_runner as qa_runner
+        importlib.reload(qa_runner)
+        self.runner = qa_runner
+
+    def tearDown(self):
+        os.environ.pop("MAGNA_E2E_REPO", None)
+        self._tmp.cleanup()
+
+    def test_run_repro_stage_writes_repro_json_from_agent_output(self):
+        with patch.object(self.runner.qa_prompts, "invoke_stage", return_value='{"status": "reproduced", "steps": []}'):
+            result = self.runner.run_repro_stage(self.run_dir, self.project_path, "PROJ-1", "hist")
+        self.assertEqual(result["status"], "reproduced")
+        data = json.loads((self.run_dir / "repro.json").read_text(encoding="utf-8"))
+        self.assertEqual(data["status"], "reproduced")
+
+    def test_run_repro_stage_unparseable_output_is_stage_error(self):
+        with patch.object(self.runner.qa_prompts, "invoke_stage", return_value="no es json"):
+            result = self.runner.run_repro_stage(self.run_dir, self.project_path, "PROJ-1", "hist")
+        self.assertEqual(result["status"], "error")
+        self.assertTrue((self.run_dir / "raw" / "repro.txt").exists())
+
+    def test_run_verify_stage_writes_verify_json(self):
+        with patch.object(self.runner.qa_prompts, "invoke_stage", return_value='{"status": "pass", "checks": []}'):
+            result = self.runner.run_verify_stage(self.run_dir, self.project_path, "PROJ-1", "hist")
+        self.assertEqual(result["status"], "pass")
+        data = json.loads((self.run_dir / "verify.json").read_text(encoding="utf-8"))
+        self.assertEqual(data["status"], "pass")
+
+    def test_run_regression_stage_skipped_without_e2e_repo_env(self):
+        result = self.runner.run_regression_stage(self.run_dir, self.project_path)
+        self.assertEqual(result["status"], "skipped")
+        data = json.loads((self.run_dir / "regression.json").read_text(encoding="utf-8"))
+        self.assertEqual(data["status"], "skipped")
+
+
+class QaRunnerCorrectionTestCase(unittest.TestCase):
+    """Fase 5.3 — ciclo de corrección: file scoping + branch pre-flight."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.run_dir = Path(self._tmp.name) / "run"
+        self.repo = Path(self._tmp.name) / "repo"
+        _init_repo(self.repo)
+        (self.repo / "tracked.py").write_text("original\n", encoding="utf-8")
+        _run_git(["add", "tracked.py"], self.repo)
+        _run_git(["commit", "-m", "initial"], self.repo)
+        import aicli.services.qa_runner as qa_runner
+        importlib.reload(qa_runner)
+        self.runner = qa_runner
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def test_correction_attempt_aborts_on_branch_mismatch(self):
+        _run_git(["checkout", "-b", "some-other-branch"], self.repo)
+        result = self.runner.run_correction_attempt(
+            run_dir=self.run_dir, project_path=self.repo, ticket_id="PROJ-1",
+            attempt=1, archivos_tocados=["tracked.py"],
+            failure_reason="motivo", branch="fix/PROJ-1",
+        )
+        self.assertEqual(result["status"], "aborted")
+        self.assertIsNone(result["commit"])
+        self.assertEqual(_commit_count(self.repo), 1)
+
+    def test_correction_attempt_commits_only_touched_files(self):
+        current_branch = _run_git(["rev-parse", "--abbrev-ref", "HEAD"], self.repo).stdout.strip()
+        (self.repo / "tracked.py").write_text("corrected\n", encoding="utf-8")
+        (self.repo / "unrelated.py").write_text("developer's own work\n", encoding="utf-8")
+
+        with patch.object(self.runner.qa_prompts, "invoke_stage", return_value='{"status": "applied", "motivo": "boton arreglado"}'):
+            result = self.runner.run_correction_attempt(
+                run_dir=self.run_dir, project_path=self.repo, ticket_id="PROJ-1",
+                attempt=1, archivos_tocados=["tracked.py"],
+                failure_reason="boton roto", branch=current_branch,
+            )
+
+        self.assertEqual(result["status"], "applied")
+        self.assertIn("correccion automatica 1/2", result["commit"])
+        self.assertEqual(_commit_count(self.repo), 2)
+        status = _run_git(["status", "--porcelain"], self.repo).stdout
+        unrelated_lines = [l for l in status.splitlines() if "unrelated.py" in l]
+        self.assertEqual(len(unrelated_lines), 1)
+        self.assertTrue(unrelated_lines[0].startswith("??"))
+
+
+class QaRunnerPipelineTestCase(unittest.TestCase):
+    """Fase 5.1/5.2/5.3 — orquestación completa con stage fns inyectadas."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        os.environ["MYCONTEXT_HOME"] = self._tmp.name
+        import aicli.services.qa_orchestrator as qa_orchestrator
+        importlib.reload(qa_orchestrator)
+        self.qa = qa_orchestrator
+        import aicli.services.qa_runner as qa_runner
+        importlib.reload(qa_runner)
+        self.runner = qa_runner
+        self.base = Path(self._tmp.name)
+        self.run_id = "R1"
+        self.run_dir = self.qa._run_dir("PROJ-930")
+        status = self.qa._new_status(self.run_id, "PROJ-930", str(self.base), "fix/PROJ-930")
+        self.status_path = self.run_dir / "status.json"
+        self.qa._write_json_atomic(self.status_path, status)
+
+    def tearDown(self):
+        os.environ.pop("MYCONTEXT_HOME", None)
+        self._tmp.cleanup()
+
+    # ── 5.4 — RED: not_reproduced never starts correction ────────────────────
+
+    def test_pipeline_not_reproduced_never_starts_correction(self):
+        repro_fn = Mock(return_value={"schema": self.qa.REPRO_SCHEMA, "status": "not_reproduced"})
+        verify_fn = Mock()
+        correction_fn = Mock()
+
+        verdict = self.runner.run_pipeline(
+            ticket_id="PROJ-930", project_path=self.base, run_dir=self.run_dir,
+            run_id=self.run_id, status_path=self.status_path,
+            repro_fn=repro_fn, verify_fn=verify_fn,
+            regression_fn=Mock(), correction_fn=correction_fn,
+        )
+
+        self.assertEqual(verdict["verdict"], "dudoso")
+        self.assertFalse(verdict["qa_verified"])
+        verify_fn.assert_not_called()
+        correction_fn.assert_not_called()
+
+    # ── 5.5 — RED: cap exhausted → manual_review, no 3rd attempt ─────────────
+
+    def test_pipeline_correction_cap_exhausted_reaches_manual_review(self):
+        repro_fn = Mock(return_value={"schema": self.qa.REPRO_SCHEMA, "status": "reproduced"})
+        verify_fn = Mock(return_value={"schema": self.qa.VERIFY_SCHEMA, "status": "fail", "checks": []})
+        regression_fn = Mock(return_value={"schema": self.qa.REGRESSION_SCHEMA, "status": "skipped"})
+        correction_fn = Mock(return_value={"status": "applied", "commit": "fix(qa-auto): x"})
+
+        verdict = self.runner.run_pipeline(
+            ticket_id="PROJ-930", project_path=self.base, run_dir=self.run_dir,
+            run_id=self.run_id, status_path=self.status_path,
+            repro_fn=repro_fn, verify_fn=verify_fn,
+            regression_fn=regression_fn, correction_fn=correction_fn,
+        )
+
+        self.assertEqual(verdict["verdict"], "manual_review")
+        self.assertFalse(verdict["qa_verified"])
+        self.assertEqual(correction_fn.call_count, self.runner.MAX_CORRECTION_ATTEMPTS)
+        self.assertNotIn("blocked", verdict["verdict"])
+        self.assertNotIn("reverted", verdict["verdict"])
+
+    # ── sanity: happy path passes without correction ─────────────────────────
+
+    def test_pipeline_verify_pass_regression_skipped_is_passed(self):
+        repro_fn = Mock(return_value={"schema": self.qa.REPRO_SCHEMA, "status": "reproduced"})
+        verify_fn = Mock(return_value={"schema": self.qa.VERIFY_SCHEMA, "status": "pass", "checks": []})
+        regression_fn = Mock(return_value={"schema": self.qa.REGRESSION_SCHEMA, "status": "skipped"})
+        correction_fn = Mock()
+
+        verdict = self.runner.run_pipeline(
+            ticket_id="PROJ-930", project_path=self.base, run_dir=self.run_dir,
+            run_id=self.run_id, status_path=self.status_path,
+            repro_fn=repro_fn, verify_fn=verify_fn,
+            regression_fn=regression_fn, correction_fn=correction_fn,
+        )
+
+        self.assertEqual(verdict["verdict"], "passed")
+        self.assertTrue(verdict["qa_verified"])
+        correction_fn.assert_not_called()
+
+    # ── supersede: a newer run_id must abort this pipeline mid-flight ────────
+
+    def test_pipeline_aborts_when_superseded_mid_run(self):
+        def _supersede_and_reproduce(*args, **kwargs):
+            newer = self.qa._new_status("R2", "PROJ-930", str(self.base), "fix/PROJ-930")
+            self.qa._write_json_atomic(self.status_path, newer)
+            return {"schema": self.qa.REPRO_SCHEMA, "status": "reproduced"}
+
+        verdict = self.runner.run_pipeline(
+            ticket_id="PROJ-930", project_path=self.base, run_dir=self.run_dir,
+            run_id=self.run_id, status_path=self.status_path,
+            repro_fn=_supersede_and_reproduce, verify_fn=Mock(), regression_fn=Mock(),
+            correction_fn=Mock(),
+        )
+
+        self.assertIsNone(verdict)
+        self.assertFalse((self.run_dir / "verdict.json").exists())
 
 
 if __name__ == "__main__":
