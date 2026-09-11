@@ -137,6 +137,38 @@ def _qa_run_argv(ticket_id: str, project_path: Path, run_id: str) -> list[str]:
     return [*prefix, "--project-path", str(project_path), "--run-id", run_id, ticket_id]
 
 
+def _launch_qa_run(
+    run_dir: Path, status: dict, status_path: Path,
+    ticket_id: str, project_path: Path, run_id: str,
+) -> str | None:
+    """Lanza el proceso OS detached de re-entrada a `qa-run` — factorizado de
+    `trigger_qa()` para que `resume_qa()` (reanudación tras `needs_input`)
+    reuse exactamente la misma mecánica de lanzamiento, en vez de duplicarla.
+    Nunca propaga una excepción: una falla se refleja en `status.json` como
+    `state:"error", reason:"launch_failed"` y retorna None."""
+    argv = _qa_run_argv(ticket_id, project_path, run_id)
+    try:
+        with open(run_dir / "run.log", "a", encoding="utf-8") as log:
+            proc = subprocess.Popen(
+                argv,
+                cwd=str(project_path),
+                stdin=subprocess.DEVNULL,
+                stdout=log,
+                stderr=subprocess.STDOUT,
+                close_fds=True,
+                **_popen_kwargs(),
+            )
+    except Exception:
+        status["state"] = "error"
+        status["reason"] = "launch_failed"
+        _write_json_atomic(status_path, status)
+        return None
+
+    status["pid"] = proc.pid
+    _write_json_atomic(status_path, status)
+    return run_id
+
+
 def _popen_kwargs() -> dict:
     """kwargs de detach validados por el spike S3: en Windows,
     DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW; en otras
@@ -187,29 +219,66 @@ def trigger_qa(
     status_path = run_dir / "status.json"
     _write_json_atomic(status_path, status)
 
-    argv = _qa_run_argv(ticket_id, project_path, run_id)
+    return _launch_qa_run(run_dir, status, status_path, ticket_id, project_path, run_id)
 
-    try:
-        with open(run_dir / "run.log", "a", encoding="utf-8") as log:
-            proc = subprocess.Popen(
-                argv,
-                cwd=str(project_path),
-                stdin=subprocess.DEVNULL,
-                stdout=log,
-                stderr=subprocess.STDOUT,
-                close_fds=True,
-                **_popen_kwargs(),
-            )
-    except Exception:
-        status["state"] = "error"
-        status["reason"] = "launch_failed"
-        _write_json_atomic(status_path, status)
-        return None
 
-    status["pid"] = proc.pid
+# ── needs_input: respuesta del usuario + reanudación ─────────────────────────
+
+def write_qa_answer(ticket_id: str, value: str) -> None:
+    """Escribe `run_dir/answer.json` con la respuesta del usuario a un
+    `needs_input` pendiente. El próximo `build_verify_prompt`/
+    `build_corrector_prompt` la consume (lee y borra) en el resume
+    subsiguiente — llamar ANTES de `resume_qa()`."""
+    run_dir = _run_dir(ticket_id)
+    _write_json_atomic(run_dir / "answer.json", {"value": value})
+
+
+def resume_qa(ticket_id: str, project_path: Path) -> None:
+    """Reanuda una corrida en pausa (`status.state == "awaiting_input"`) tras
+    que el usuario respondió (se asume que `write_qa_answer()` ya escribió
+    `answer.json` antes de esta llamada). No-op si no hay ninguna corrida, o
+    si la corrida existente no está esperando una respuesta — nunca arranca
+    una corrida nueva ni levanta una excepción.
+
+    Reusa el mismo `run_id` de la corrida pausada (así el supersede
+    cooperativo de `qa_cmd.qa_run()` sigue aceptando este proceso), resetea
+    los artefactos de stage de la corrida anterior igual que un `trigger_qa()`
+    nuevo (pero preserva `answer.json`, ya escrito por el llamador) y agrega
+    —nunca reemplaza— un evento nuevo al historial `events[]` existente.
+
+    Deliberadamente NO hace resume parcial/checkpointed: repro → verify →
+    regression se vuelven a correr enteros, ahora con la respuesta disponible
+    para que el stage que la necesitaba no vuelva a preguntar (ver brief —
+    over-engineering un checkpoint no vale la pena para este caso, poco
+    frecuente, con stages rápidos)."""
+    run_dir = _run_dir(ticket_id)
+    status_path = run_dir / "status.json"
+    status = _read_json_or_none(status_path)
+    if status is None or status.get("state") != "awaiting_input":
+        return
+
+    run_id = status["run_id"]
+    events = status.get("events") or []
+    seq = (events[-1]["seq"] + 1) if events else 1
+    events = [*events, {
+        "seq": seq, "ts": time.time(), "kind": "resume",
+        "msg": "Reanudado tras respuesta del usuario",
+    }]
+
+    _reset_blackboard(run_dir)
+
+    status = {
+        **status,
+        "state": "pending",
+        "stage": None,
+        "pid": None,
+        "heartbeat": time.time(),
+        "events": events,
+    }
+    status.pop("question", None)
     _write_json_atomic(status_path, status)
 
-    return run_id
+    _launch_qa_run(run_dir, status, status_path, ticket_id, project_path, run_id)
 
 
 # ── Parseo defensivo de JSON de agentes ──────────────────────────────────────
