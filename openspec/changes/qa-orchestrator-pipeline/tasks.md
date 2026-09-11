@@ -18,6 +18,10 @@ Chain strategy: pending
 
 `single-pr` normally maps straight to `size:exception`, but ~1050 est. lines is >2.5x budget — surfaced, not defaulted. Orchestrator must ask: (a) accept `size:exception` as one PR, or (b) `feature-branch-chain` via the 5 units below.
 
+**PR3 actual (surfaced, not silently exceeded)**: diff vs. PR2 = 880 insertions / 46 deletions ≈ 926 changed lines — 2x+ the 400-line budget for a single slice; explicitly the pre-flagged "biggest of the 5" unit, no scope was cut to force it under budget.
+
+**PR4 actual**: diff vs. PR3 = 552 insertions / 19 deletions ≈ 571 changed lines across 7 files — over the 400-line budget. Breakdown: ~248 lines production code (sync.py, qa_orchestrator.py, qa_runner.py, widgets.py, screens.py) + 307 lines of new tests in `test_qa_orchestrator.py` + 16 lines of tasks.md checkbox updates. No scope was cut and no `size:exception` was requested — flagged here per instructions for the reviewer, same transparency precedent as PR3, since Phase 6+7 was assigned as one deliverable slice under the already-resolved feature-branch-chain strategy.
+
 ### Suggested Work Units
 
 | Unit | Goal | Likely PR | Focused test command | Runtime harness | Rollback boundary |
