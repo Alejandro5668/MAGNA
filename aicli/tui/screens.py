@@ -69,11 +69,13 @@ _MUTED    = "#5E6A94"   # text.muted
 
 
 _ENV_LABELS: dict[str, str] = {
-    "ANTHROPIC_API_KEY": "Anthropic API Key",
-    "JIRA_URL":          "Jira URL",
-    "JIRA_EMAIL":        "Jira Email",
-    "JIRA_TOKEN":        "Jira Token",
-    "GEMINI_API_KEY":    "Gemini API Key",
+    "ANTHROPIC_API_KEY":  "Anthropic API Key",
+    "JIRA_URL":           "Jira URL",
+    "JIRA_EMAIL":         "Jira Email",
+    "JIRA_TOKEN":         "Jira Token",
+    "GEMINI_API_KEY":     "Gemini API Key",
+    "MAGNA_QA_DEFAULT_DB": "BD de pruebas por defecto",
+    "MAGNA_QA_APP_URL":   "URL de entorno de pruebas",
 }
 
 
@@ -1210,6 +1212,8 @@ class SettingsScreen(Screen):
                 _cfg_option("JIRA_EMAIL"),
                 _cfg_option("JIRA_TOKEN"),
                 _cfg_option("GEMINI_API_KEY"),
+                _cfg_option("MAGNA_QA_DEFAULT_DB"),
+                _cfg_option("MAGNA_QA_APP_URL"),
                 Option(
                     Text.assemble(("  ", ""), ("Probar conexión Gemini", _SEC), ("          →", _MUTED)),
                     id="test:gemini",

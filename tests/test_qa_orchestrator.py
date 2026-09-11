@@ -471,6 +471,8 @@ class QaPromptsTestCase(unittest.TestCase):
         self.qp = qa_prompts
 
     def tearDown(self):
+        os.environ.pop("MAGNA_QA_DEFAULT_DB", None)
+        os.environ.pop("MAGNA_QA_APP_URL", None)
         self._tmp.cleanup()
 
     # ── 4.1 — Requirement: Repro Stage Isolation ─────────────────────────────
@@ -530,6 +532,91 @@ class QaPromptsTestCase(unittest.TestCase):
         self.assertNotIn("--permission-mode", argv)
         self.assertEqual(kwargs["shell"], False)
         self.assertEqual(kwargs["timeout"], 5)
+
+    # ── needs_input escape hatch — extensión no-SDD ──────────────────────────
+
+    def test_verify_prompt_documents_needs_input_and_two_tier_db_rule(self):
+        path = self.qp.build_verify_prompt(self.run_dir, "PROJ-1", "historial")
+        content = path.read_text(encoding="utf-8").lower()
+        self.assertIn("needs_input", content)
+        self.assertIn("solo lectura", content)
+        self.assertIn("sin excepción", content)
+        self.assertIn("libertad total de lectura", content)
+
+    def test_corrector_prompt_documents_needs_input_and_two_tier_db_rule(self):
+        path = self.qp.build_corrector_prompt(
+            self.run_dir, "PROJ-1", attempt=1, max_attempts=2,
+            archivos_tocados=["foo.py"], git_diff="", failure_reason="motivo",
+        )
+        content = path.read_text(encoding="utf-8").lower()
+        self.assertIn("needs_input", content)
+        self.assertIn("solo lectura", content)
+        self.assertIn("sin excepción", content)
+        self.assertIn("libertad total de lectura", content)
+
+    def test_repro_prompt_has_no_needs_input_field(self):
+        # repro no necesita DB/URL — fuera de alcance (ver brief).
+        path = self.qp.build_repro_prompt(self.run_dir, "PROJ-1", "historial")
+        content = path.read_text(encoding="utf-8")
+        self.assertNotIn("needs_input", content)
+
+    def test_verify_prompt_interpolates_configured_default_db_and_url(self):
+        os.environ["MAGNA_QA_DEFAULT_DB"] = "postgres://local/test_db"
+        os.environ["MAGNA_QA_APP_URL"] = "http://localhost:4000"
+        path = self.qp.build_verify_prompt(self.run_dir, "PROJ-1", "historial")
+        content = path.read_text(encoding="utf-8")
+        self.assertIn("postgres://local/test_db", content)
+        self.assertIn("http://localhost:4000", content)
+
+    def test_verify_prompt_shows_unconfigured_placeholder_when_env_unset(self):
+        os.environ.pop("MAGNA_QA_DEFAULT_DB", None)
+        os.environ.pop("MAGNA_QA_APP_URL", None)
+        path = self.qp.build_verify_prompt(self.run_dir, "PROJ-1", "historial")
+        content = path.read_text(encoding="utf-8")
+        self.assertIn("(no configurada)", content)
+
+    def test_corrector_prompt_interpolates_configured_default_db_and_url(self):
+        os.environ["MAGNA_QA_DEFAULT_DB"] = "postgres://local/test_db"
+        os.environ["MAGNA_QA_APP_URL"] = "http://localhost:4000"
+        path = self.qp.build_corrector_prompt(
+            self.run_dir, "PROJ-1", attempt=1, max_attempts=2,
+            archivos_tocados=["foo.py"], git_diff="", failure_reason="motivo",
+        )
+        content = path.read_text(encoding="utf-8")
+        self.assertIn("postgres://local/test_db", content)
+        self.assertIn("http://localhost:4000", content)
+
+    def test_verify_prompt_consumes_and_deletes_answer_file(self):
+        answer_path = self.run_dir / "answer.json"
+        answer_path.parent.mkdir(parents=True, exist_ok=True)
+        answer_path.write_text(json.dumps({"value": "cliente_acme_backup"}), encoding="utf-8")
+
+        path = self.qp.build_verify_prompt(self.run_dir, "PROJ-1", "historial")
+
+        content = path.read_text(encoding="utf-8")
+        self.assertIn("cliente_acme_backup", content)
+        self.assertIn("ya respondió esto", content.lower())
+        self.assertFalse(answer_path.exists())
+
+    def test_corrector_prompt_consumes_and_deletes_answer_file(self):
+        answer_path = self.run_dir / "answer.json"
+        answer_path.parent.mkdir(parents=True, exist_ok=True)
+        answer_path.write_text(json.dumps({"value": "usar staging"}), encoding="utf-8")
+
+        path = self.qp.build_corrector_prompt(
+            self.run_dir, "PROJ-1", attempt=1, max_attempts=2,
+            archivos_tocados=["foo.py"], git_diff="", failure_reason="motivo",
+        )
+
+        content = path.read_text(encoding="utf-8")
+        self.assertIn("usar staging", content)
+        self.assertIn("ya respondió esto", content.lower())
+        self.assertFalse(answer_path.exists())
+
+    def test_verify_prompt_without_answer_file_has_no_answer_mention(self):
+        path = self.qp.build_verify_prompt(self.run_dir, "PROJ-1", "historial")
+        content = path.read_text(encoding="utf-8").lower()
+        self.assertNotIn("ya respondió esto", content)
 
 
 class QaRunnerStageTestCase(unittest.TestCase):
@@ -624,6 +711,26 @@ class QaRunnerCorrectionTestCase(unittest.TestCase):
         unrelated_lines = [l for l in status.splitlines() if "unrelated.py" in l]
         self.assertEqual(len(unrelated_lines), 1)
         self.assertTrue(unrelated_lines[0].startswith("??"))
+
+    # ── needs_input escape hatch — extensión no-SDD ──────────────────────────
+
+    def test_correction_attempt_needs_input_returns_awaiting_input_without_committing(self):
+        current_branch = _run_git(["rev-parse", "--abbrev-ref", "HEAD"], self.repo).stdout.strip()
+        before = _commit_count(self.repo)
+        question = {"kind": "select", "prompt": "¿Qué base usar?", "options": ["a", "b"]}
+        agent_json = json.dumps({"status": "applied", "motivo": "x", "needs_input": question})
+
+        with patch.object(self.runner.qa_prompts, "invoke_stage", return_value=agent_json):
+            result = self.runner.run_correction_attempt(
+                run_dir=self.run_dir, project_path=self.repo, ticket_id="PROJ-1",
+                attempt=1, archivos_tocados=["tracked.py"],
+                failure_reason="motivo", branch=current_branch,
+            )
+
+        self.assertEqual(result["status"], "awaiting_input")
+        self.assertIsNone(result["commit"])
+        self.assertEqual(result["needs_input"], question)
+        self.assertEqual(_commit_count(self.repo), before)
 
 
 class QaRunnerPipelineTestCase(unittest.TestCase):
@@ -726,6 +833,53 @@ class QaRunnerPipelineTestCase(unittest.TestCase):
         self.assertIsNone(verdict)
         self.assertFalse((self.run_dir / "verdict.json").exists())
 
+    # ── needs_input escape hatch — extensión no-SDD ──────────────────────────
+
+    def test_pipeline_verify_needs_input_writes_awaiting_input_status_not_verdict(self):
+        question = {"kind": "text", "prompt": "¿Qué URL usar?", "options": None}
+        repro_fn = Mock(return_value={"schema": self.qa.REPRO_SCHEMA, "status": "reproduced"})
+        verify_fn = Mock(return_value={
+            "schema": self.qa.VERIFY_SCHEMA, "status": "fail", "checks": [], "needs_input": question,
+        })
+        regression_fn = Mock()
+        correction_fn = Mock()
+
+        result = self.runner.run_pipeline(
+            ticket_id="PROJ-930", project_path=self.base, run_dir=self.run_dir,
+            run_id=self.run_id, status_path=self.status_path,
+            repro_fn=repro_fn, verify_fn=verify_fn,
+            regression_fn=regression_fn, correction_fn=correction_fn,
+        )
+
+        regression_fn.assert_not_called()
+        correction_fn.assert_not_called()
+        self.assertFalse((self.run_dir / "verdict.json").exists())
+
+        status = json.loads(self.status_path.read_text(encoding="utf-8"))
+        self.assertEqual(status["state"], "awaiting_input")
+        self.assertEqual(status["question"], question)
+        self.assertEqual(result["state"], "awaiting_input")
+
+    def test_pipeline_correction_needs_input_writes_awaiting_input_status(self):
+        question = {"kind": "select", "prompt": "¿Qué backup de cliente?", "options": ["acme", "beta"]}
+        repro_fn = Mock(return_value={"schema": self.qa.REPRO_SCHEMA, "status": "reproduced"})
+        verify_fn = Mock(return_value={"schema": self.qa.VERIFY_SCHEMA, "status": "fail", "checks": []})
+        regression_fn = Mock()
+        correction_fn = Mock(return_value={"status": "awaiting_input", "commit": None, "needs_input": question})
+
+        result = self.runner.run_pipeline(
+            ticket_id="PROJ-930", project_path=self.base, run_dir=self.run_dir,
+            run_id=self.run_id, status_path=self.status_path,
+            repro_fn=repro_fn, verify_fn=verify_fn,
+            regression_fn=regression_fn, correction_fn=correction_fn,
+        )
+
+        self.assertFalse((self.run_dir / "verdict.json").exists())
+        status = json.loads(self.status_path.read_text(encoding="utf-8"))
+        self.assertEqual(status["state"], "awaiting_input")
+        self.assertEqual(status["question"], question)
+        self.assertEqual(result["state"], "awaiting_input")
+
 
 class QaStatusSurfaceTestCase(unittest.TestCase):
     """Fase 7 — read_qa_status/read_qa_badge, funciones puras que alimentan el
@@ -805,6 +959,107 @@ class QaStatusSurfaceTestCase(unittest.TestCase):
     def test_qa_evidence_log_path_matches_run_dir(self):
         run_dir = self.qa._run_dir("PROJ-959")
         self.assertEqual(self.qa.qa_evidence_log_path("PROJ-959"), run_dir / "evidence.log")
+
+
+class QaAnswerResumeTestCase(unittest.TestCase):
+    """Extensión no-SDD — needs_input: write_qa_answer/resume_qa."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        os.environ["MYCONTEXT_HOME"] = self._tmp.name
+        import aicli.services.qa_orchestrator as qa_orchestrator
+        importlib.reload(qa_orchestrator)
+        self.qa = qa_orchestrator
+        self.base = Path(self._tmp.name)
+        popen_patcher = patch(
+            "aicli.services.qa_orchestrator.subprocess.Popen",
+            return_value=Mock(pid=4321),
+        )
+        self.mock_popen = popen_patcher.start()
+        self.addCleanup(popen_patcher.stop)
+
+    def tearDown(self):
+        os.environ.pop("MYCONTEXT_HOME", None)
+        self._tmp.cleanup()
+
+    def _write_awaiting_status(self, ticket_id: str, run_id: str = "R1", **overrides) -> Path:
+        run_dir = self.qa._run_dir(ticket_id)
+        status = self.qa._new_status(run_id, ticket_id, str(self.base), None)
+        status["state"] = "awaiting_input"
+        status["question"] = {"kind": "text", "prompt": "?", "options": None}
+        status.update(overrides)
+        self.qa._write_json_atomic(run_dir / "status.json", status)
+        return run_dir
+
+    def test_write_qa_answer_writes_value_json(self):
+        self.qa.write_qa_answer("PROJ-970", "postgres_local")
+        answer_path = self.qa._run_dir("PROJ-970") / "answer.json"
+        data = json.loads(answer_path.read_text(encoding="utf-8"))
+        self.assertEqual(data, {"value": "postgres_local"})
+
+    def test_resume_qa_noop_when_no_status_at_all(self):
+        self.qa.resume_qa("PROJ-971", self.base)
+        self.mock_popen.assert_not_called()
+        self.assertFalse((self.qa._run_dir("PROJ-971") / "status.json").exists())
+
+    def test_resume_qa_noop_when_not_awaiting_input(self):
+        run_dir = self.qa._run_dir("PROJ-972")
+        status = self.qa._new_status("R1", "PROJ-972", str(self.base), None)
+        status["state"] = "verify"
+        self.qa._write_json_atomic(run_dir / "status.json", status)
+
+        self.qa.resume_qa("PROJ-972", self.base)
+
+        self.mock_popen.assert_not_called()
+        after = json.loads((run_dir / "status.json").read_text(encoding="utf-8"))
+        self.assertEqual(after["state"], "verify")
+
+    def test_resume_qa_reuses_same_run_id_and_appends_event(self):
+        run_dir = self._write_awaiting_status("PROJ-973", run_id="ORIGINAL-RUN")
+
+        self.qa.resume_qa("PROJ-973", self.base)
+
+        status = json.loads((run_dir / "status.json").read_text(encoding="utf-8"))
+        self.assertEqual(status["run_id"], "ORIGINAL-RUN")
+        self.assertEqual(status["state"], "pending")
+        self.assertEqual(len(status["events"]), 1)
+        self.assertEqual(status["events"][0]["kind"], "resume")
+
+    def test_resume_qa_appends_to_existing_events_not_replace(self):
+        run_dir = self._write_awaiting_status("PROJ-974", events=[
+            {"seq": 1, "ts": time.time(), "kind": "correction", "msg": "intento previo"},
+        ])
+
+        self.qa.resume_qa("PROJ-974", self.base)
+
+        status = json.loads((run_dir / "status.json").read_text(encoding="utf-8"))
+        self.assertEqual(len(status["events"]), 2)
+        self.assertEqual(status["events"][0]["kind"], "correction")
+        self.assertEqual(status["events"][1]["kind"], "resume")
+
+    def test_resume_qa_resets_stage_files_but_keeps_answer_json(self):
+        run_dir = self._write_awaiting_status("PROJ-975")
+        (run_dir / "verify.json").write_text('{"schema": "qa.verify/1"}', encoding="utf-8")
+        (run_dir / "verdict.json").write_text('{"schema": "qa.verdict/1"}', encoding="utf-8")
+        answer_path = run_dir / "answer.json"
+        answer_path.write_text('{"value": "x"}', encoding="utf-8")
+
+        self.qa.resume_qa("PROJ-975", self.base)
+
+        self.assertFalse((run_dir / "verify.json").exists())
+        self.assertFalse((run_dir / "verdict.json").exists())
+        self.assertTrue(answer_path.exists())
+
+    def test_resume_qa_launches_detached_process_with_reused_run_id(self):
+        self._write_awaiting_status("PROJ-976", run_id="ORIGINAL-RUN")
+
+        self.qa.resume_qa("PROJ-976", self.base)
+
+        self.mock_popen.assert_called_once()
+        args, _ = self.mock_popen.call_args
+        argv = args[0]
+        self.assertIn("PROJ-976", argv)
+        self.assertIn("ORIGINAL-RUN", argv)
 
 
 class QaEvidenceLogTestCase(unittest.TestCase):
