@@ -1187,6 +1187,45 @@ def qa_stage_checklist(status: dict, repro: dict | None, verify: dict | None,
     return checklist
 
 
+_LIVE_TAIL_LINES = 30
+
+
+def qa_live_stage(status: dict, repro: dict | None, verify: dict | None,
+                   regression: dict | None) -> str | None:
+    """Determina qué stage está corriendo AHORA MISMO — mismo criterio que ya
+    usa `_derive_stage_state` para el checklist: `status['stage']` es el
+    activo hasta que su propio artefacto JSON aparece (repro/verify/
+    regression) o, para el corrector (que no tiene JSON propio, corrige vía
+    commits), hasta que el pipeline avanza a otro stage. Pura — sin I/O,
+    testeable con dicts armados a mano.
+
+    Retorna el nombre de archivo del log en vivo bajo `run_dir/live/` (p.ej.
+    "verify" o "correction_1"), o `None` si no hay ningún stage corriendo
+    ahora mismo que valga la pena tailear."""
+    stage = status.get("stage")
+    if not stage:
+        return None
+    if status.get("state") in ("done", "error"):
+        return None
+    artifact_by_stage = {"repro": repro, "verify": verify, "regression": regression}
+    if stage in artifact_by_stage and artifact_by_stage[stage] is not None:
+        return None  # ya hay resultado escrito — dejó de ser "en vivo"
+    return stage
+
+
+def _read_live_tail(live_path: Path, max_lines: int = _LIVE_TAIL_LINES) -> list[str]:
+    """Lee las últimas `max_lines` líneas de un log en vivo — lectura plana
+    en cada poll, sin libs de tailing (el archivo es local y se lee cada
+    pocos segundos, no un stream de alta frecuencia)."""
+    if not live_path.exists():
+        return []
+    try:
+        text = live_path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return []
+    return text.splitlines()[-max_lines:]
+
+
 class QaDetailScreen(ModalScreen[None]):
     """Resumen/monitoreo de UNA corrida de QA para un ticket — header +
     checklist de stages + lista de eventos, con auto-refresh cada 3s
@@ -1275,7 +1314,10 @@ class QaDetailScreen(ModalScreen[None]):
 
         self._render_header(status, verdict)
         self._render_stages(status, repro, verify, regression, verdict)
-        self._render_events(status.get("events") or [])
+
+        live_stage = qa_live_stage(status, repro, verify, regression)
+        live_lines = _read_live_tail(run_dir / "live" / f"{live_stage}.log") if live_stage else []
+        self._render_events(status.get("events") or [], live_stage, live_lines)
 
     def _render_header(self, status: dict, verdict: dict | None) -> None:
         attempts = (verdict or {}).get("attempts", status.get("attempt", 0))
@@ -1301,11 +1343,16 @@ class QaDetailScreen(ModalScreen[None]):
             txt.append(stage["label"], style=stage["col"])
         self.query_one("#qd-stages", Static).update(txt)
 
-    def _render_events(self, events: list[dict]) -> None:
+    def _render_events(self, events: list[dict], live_stage: str | None,
+                        live_lines: list[str]) -> None:
         log = self.query_one("#qd-events", RichLog)
         log.clear()
         for ev in events[-100:]:
             log.write(f"[{ev.get('kind', '')}] {ev.get('msg', '')}")
+        if live_stage and live_lines:
+            log.write(f"── en vivo: {live_stage} ──")
+            for line in live_lines:
+                log.write(line)
 
     def action_open_log(self) -> None:
         from aicli.services.qa_orchestrator import qa_evidence_log_path

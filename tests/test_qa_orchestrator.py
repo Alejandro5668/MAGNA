@@ -15,6 +15,7 @@ import os
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import unittest
 from pathlib import Path
@@ -460,6 +461,46 @@ class QaRunEntrypointTestCase(unittest.TestCase):
         self.assertEqual(kwargs["branch"], "fix/PROJ-921")
 
 
+class _FakeProc:
+    """Doble minimalista de subprocess.Popen para invoke_stage — expone
+    `.stdout` (iterable de líneas ya listas), `.wait()` y `.kill()`, sin
+    spawnear ningún proceso real."""
+
+    def __init__(self, lines):
+        self.stdout = iter(lines)
+        self.waited = False
+        self.killed = False
+
+    def wait(self):
+        self.waited = True
+
+    def kill(self):
+        self.killed = True
+
+
+class _FakeHangingProc:
+    """Simula un proceso que imprime una línea y después cuelga (nunca más
+    output, nunca termina solo) — usado para probar que invoke_stage lo mata
+    y levanta TimeoutExpired en vez de bloquear para siempre."""
+
+    def __init__(self):
+        self._kill_event = threading.Event()
+        self.killed = False
+        self.stdout = self._lines()
+
+    def _lines(self):
+        yield "arrancando\n"
+        self._kill_event.wait()
+        return
+
+    def kill(self):
+        self.killed = True
+        self._kill_event.set()
+
+    def wait(self):
+        pass
+
+
 class QaPromptsTestCase(unittest.TestCase):
     """Fase 4 — prompts de stage + helper de invocación headless."""
 
@@ -517,21 +558,75 @@ class QaPromptsTestCase(unittest.TestCase):
         prompt_path.parent.mkdir(parents=True, exist_ok=True)
         prompt_path.write_text("contenido", encoding="utf-8")
 
-        fake_result = Mock(stdout='{"status": "reproduced"}')
+        fake_proc = _FakeProc(['{"status": "reproduced"}'])
         with patch.object(self.qp, "_find_claude_windows", return_value=None), \
-             patch.object(self.qp.subprocess, "run", return_value=fake_result) as mock_run:
-            out = self.qp.invoke_stage(prompt_path, self.run_dir, timeout=5)
+             patch.object(self.qp.subprocess, "Popen", return_value=fake_proc) as mock_popen:
+            out = self.qp.invoke_stage(
+                prompt_path, self.run_dir, run_dir=self.run_dir, stage="repro", timeout=5,
+            )
 
         self.assertEqual(out, '{"status": "reproduced"}')
-        mock_run.assert_called_once()
-        args, kwargs = mock_run.call_args
+        mock_popen.assert_called_once()
+        args, kwargs = mock_popen.call_args
         argv = args[0]
         self.assertEqual(argv[0], "claude")
         self.assertEqual(argv[1], "-p")
         self.assertNotIn("--output-format", argv)
         self.assertNotIn("--permission-mode", argv)
         self.assertEqual(kwargs["shell"], False)
-        self.assertEqual(kwargs["timeout"], 5)
+        self.assertEqual(kwargs["stdout"], subprocess.PIPE)
+        self.assertEqual(kwargs["stderr"], subprocess.DEVNULL)
+        self.assertTrue(fake_proc.waited)
+
+    # ── streaming a run_dir/live/<stage>.log — extensión no-SDD ──────────────
+
+    def test_invoke_stage_streams_lines_to_live_log_progressively(self):
+        prompt_path = self.run_dir / "prompts" / "verify.md"
+        prompt_path.parent.mkdir(parents=True, exist_ok=True)
+        prompt_path.write_text("contenido", encoding="utf-8")
+
+        lines = ["linea 1\n", "linea 2\n", '{"status": "pass"}\n']
+        with patch.object(self.qp, "_find_claude_windows", return_value=None), \
+             patch.object(self.qp.subprocess, "Popen", return_value=_FakeProc(lines)):
+            out = self.qp.invoke_stage(
+                prompt_path, self.run_dir, run_dir=self.run_dir, stage="verify", timeout=5,
+            )
+
+        self.assertEqual(out, "".join(lines))
+        live_path = self.run_dir / "live" / "verify.log"
+        self.assertEqual(live_path.read_text(encoding="utf-8"), "".join(lines))
+
+    def test_invoke_stage_truncates_live_log_on_fresh_call(self):
+        prompt_path = self.run_dir / "prompts" / "verify.md"
+        prompt_path.parent.mkdir(parents=True, exist_ok=True)
+        prompt_path.write_text("contenido", encoding="utf-8")
+
+        with patch.object(self.qp, "_find_claude_windows", return_value=None), \
+             patch.object(self.qp.subprocess, "Popen", return_value=_FakeProc(["intento viejo y largo\n"])):
+            self.qp.invoke_stage(prompt_path, self.run_dir, run_dir=self.run_dir, stage="verify", timeout=5)
+
+        with patch.object(self.qp, "_find_claude_windows", return_value=None), \
+             patch.object(self.qp.subprocess, "Popen", return_value=_FakeProc(["nuevo\n"])):
+            self.qp.invoke_stage(prompt_path, self.run_dir, run_dir=self.run_dir, stage="verify", timeout=5)
+
+        content = (self.run_dir / "live" / "verify.log").read_text(encoding="utf-8")
+        self.assertEqual(content, "nuevo\n")
+        self.assertNotIn("viejo", content)
+
+    def test_invoke_stage_timeout_kills_process_and_raises(self):
+        prompt_path = self.run_dir / "prompts" / "repro.md"
+        prompt_path.parent.mkdir(parents=True, exist_ok=True)
+        prompt_path.write_text("contenido", encoding="utf-8")
+
+        fake_proc = _FakeHangingProc()
+        with patch.object(self.qp, "_find_claude_windows", return_value=None), \
+             patch.object(self.qp.subprocess, "Popen", return_value=fake_proc):
+            with self.assertRaises(subprocess.TimeoutExpired):
+                self.qp.invoke_stage(
+                    prompt_path, self.run_dir, run_dir=self.run_dir, stage="repro", timeout=0.05,
+                )
+
+        self.assertTrue(fake_proc.killed)
 
     # ── needs_input escape hatch — extensión no-SDD ──────────────────────────
 
@@ -1550,6 +1645,150 @@ class QaStageChecklistTestCase(unittest.TestCase):
                                         regression=None, verdict=verdict)
         by_name = {c["name"]: c for c in checklist}
         self.assertEqual(by_name["corrector"]["state"], "done-fail")
+
+
+class QaLiveStageTestCase(unittest.TestCase):
+    """QaDetailScreen — `qa_live_stage`: qué stage tailear en vivo, y cuándo
+    dejar de tratarlo como "en vivo". Pura — mismo estilo que
+    QaStageChecklistTestCase, dicts armados a mano, sin tempdirs ni I/O."""
+
+    def test_no_active_stage_returns_none(self):
+        from aicli.tui.screens import qa_live_stage
+        status = {"state": "pending", "stage": None}
+        self.assertIsNone(qa_live_stage(status, repro=None, verify=None, regression=None))
+
+    def test_repro_running_without_artifact_is_live(self):
+        from aicli.tui.screens import qa_live_stage
+        status = {"state": "repro", "stage": "repro"}
+        self.assertEqual(
+            qa_live_stage(status, repro=None, verify=None, regression=None), "repro",
+        )
+
+    def test_repro_stops_being_live_once_its_json_result_exists(self):
+        from aicli.tui.screens import qa_live_stage
+        status = {"state": "repro", "stage": "repro"}
+        self.assertIsNone(
+            qa_live_stage(status, repro={"status": "reproduced"}, verify=None, regression=None),
+        )
+
+    def test_verify_running_without_artifact_is_live(self):
+        from aicli.tui.screens import qa_live_stage
+        status = {"state": "verify", "stage": "verify"}
+        result = qa_live_stage(status, repro={"status": "reproduced"}, verify=None, regression=None)
+        self.assertEqual(result, "verify")
+
+    def test_verify_stops_being_live_once_verify_json_exists(self):
+        from aicli.tui.screens import qa_live_stage
+        status = {"state": "verify", "stage": "verify"}
+        result = qa_live_stage(
+            status, repro={"status": "reproduced"}, verify={"status": "pass"}, regression=None,
+        )
+        self.assertIsNone(result)
+
+    def test_corrector_attempt_is_live_since_it_has_no_own_json_artifact(self):
+        from aicli.tui.screens import qa_live_stage
+        status = {"state": "correcting", "stage": "correction_1"}
+        result = qa_live_stage(
+            status, repro={"status": "reproduced"}, verify={"status": "fail"}, regression=None,
+        )
+        self.assertEqual(result, "correction_1")
+
+    def test_corrector_stops_being_live_once_pipeline_moves_past_it(self):
+        # Tras un intento de corrección, el pipeline reintenta verify — el
+        # `stage` activo ya cambió, así que el log de la corrección anterior
+        # deja de tailearse (aunque nunca tuvo JSON propio).
+        from aicli.tui.screens import qa_live_stage
+        status = {"state": "verify", "stage": "verify"}
+        result = qa_live_stage(
+            status, repro={"status": "reproduced"}, verify=None, regression=None,
+        )
+        self.assertEqual(result, "verify")
+
+    def test_terminal_state_never_reports_a_live_stage(self):
+        from aicli.tui.screens import qa_live_stage
+        status = {"state": "done", "stage": "verdict"}
+        self.assertIsNone(qa_live_stage(status, repro=None, verify=None, regression=None))
+
+        status = {"state": "error", "stage": "verify"}
+        self.assertIsNone(qa_live_stage(status, repro=None, verify=None, regression=None))
+
+
+class QaDetailScreenLiveTailIntegrationTestCase(unittest.IsolatedAsyncioTestCase):
+    """QaDetailScreen — confirma que la pantalla realmente renderiza el tail
+    del log en vivo del stage activo (no solo que la lógica pura lo elige
+    bien). Mismo harness Textual real (`App.run_test()`) que
+    QaAwaitingInputModalGuardTestCase, usado acá solo porque hace falta un
+    render real — la selección del stage en sí ya está cubierta por
+    QaLiveStageTestCase sin montar nada."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        os.environ["MYCONTEXT_HOME"] = self._tmp.name
+        import aicli.services.qa_orchestrator as qa_orchestrator
+        importlib.reload(qa_orchestrator)
+        self.qa = qa_orchestrator
+
+    def tearDown(self):
+        os.environ.pop("MYCONTEXT_HOME", None)
+        self._tmp.cleanup()
+
+    async def test_renders_live_tail_for_currently_running_stage(self):
+        from textual.app import App, ComposeResult
+        from aicli.tui.screens import QaDetailScreen
+
+        ticket_id = "PROJ-LIVE-1"
+        run_dir = self.qa._run_dir(ticket_id)
+        status = self.qa._new_status("R1", ticket_id, str(Path(self._tmp.name)), None)
+        status["state"] = "verify"
+        status["stage"] = "verify"
+        self.qa._write_json_atomic(run_dir / "status.json", status)
+        live_dir = run_dir / "live"
+        live_dir.mkdir(parents=True, exist_ok=True)
+        (live_dir / "verify.log").write_text(
+            "navegando a /login\nclick en boton\n", encoding="utf-8",
+        )
+
+        class _Harness(App):
+            def compose(self) -> ComposeResult:
+                return iter(())
+
+        app = _Harness()
+        async with app.run_test() as pilot:
+            await app.push_screen(QaDetailScreen(ticket_id))
+            await pilot.pause()
+            log = app.screen.query_one("#qd-events")
+            rendered = "\n".join(strip.text for strip in log.lines)
+            self.assertIn("en vivo: verify", rendered)
+            self.assertIn("navegando a /login", rendered)
+            self.assertIn("click en boton", rendered)
+
+    async def test_no_live_tail_section_once_stage_has_finished(self):
+        from textual.app import App, ComposeResult
+        from aicli.tui.screens import QaDetailScreen
+
+        ticket_id = "PROJ-LIVE-2"
+        run_dir = self.qa._run_dir(ticket_id)
+        status = self.qa._new_status("R1", ticket_id, str(Path(self._tmp.name)), None)
+        status["state"] = "done"
+        status["stage"] = "verdict"
+        self.qa._write_json_atomic(run_dir / "status.json", status)
+        self.qa._write_json_atomic(run_dir / "verify.json", {"status": "pass", "checks": []})
+        live_dir = run_dir / "live"
+        live_dir.mkdir(parents=True, exist_ok=True)
+        (live_dir / "verify.log").write_text("esto ya es historia\n", encoding="utf-8")
+
+        class _Harness(App):
+            def compose(self) -> ComposeResult:
+                return iter(())
+
+        app = _Harness()
+        async with app.run_test() as pilot:
+            await app.push_screen(QaDetailScreen(ticket_id))
+            await pilot.pause()
+            log = app.screen.query_one("#qd-events")
+            rendered = "\n".join(strip.text for strip in log.lines)
+            self.assertNotIn("en vivo", rendered)
+            self.assertNotIn("esto ya es historia", rendered)
 
 
 class LogScreenTestCase(unittest.TestCase):

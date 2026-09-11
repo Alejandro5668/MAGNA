@@ -60,7 +60,7 @@ def run_repro_stage(run_dir: Path, project_path: Path, ticket_id: str, ticket_hi
     prompt_path = qa_prompts.build_repro_prompt(run_dir, ticket_id, ticket_history)
     defaults = {"steps": [], "expected": None, "actual": None, "evidence": [], "notes": None}
     try:
-        stdout = qa_prompts.invoke_stage(prompt_path, project_path)
+        stdout = qa_prompts.invoke_stage(prompt_path, project_path, run_dir=run_dir, stage="repro")
     except subprocess.TimeoutExpired:
         return _stage_timeout_result(run_dir, "repro", REPRO_SCHEMA, defaults)
     return _finalize_stage_json(run_dir, "repro", REPRO_SCHEMA, stdout, defaults)
@@ -72,7 +72,7 @@ def run_verify_stage(run_dir: Path, project_path: Path, ticket_id: str, ticket_h
     prompt_path = qa_prompts.build_verify_prompt(run_dir, ticket_id, ticket_history)
     defaults = {"checks": [], "evidence": [], "db_reads": [], "needs_input": None}
     try:
-        stdout = qa_prompts.invoke_stage(prompt_path, project_path)
+        stdout = qa_prompts.invoke_stage(prompt_path, project_path, run_dir=run_dir, stage="verify")
     except subprocess.TimeoutExpired:
         return _stage_timeout_result(run_dir, "verify", VERIFY_SCHEMA, defaults)
     return _finalize_stage_json(run_dir, "verify", VERIFY_SCHEMA, stdout, defaults)
@@ -191,7 +191,9 @@ def run_correction_attempt(
         run_dir, ticket_id, attempt, MAX_CORRECTION_ATTEMPTS,
         archivos_tocados, git_diff, failure_reason,
     )
-    stdout = qa_prompts.invoke_stage(prompt_path, project_path)
+    stdout = qa_prompts.invoke_stage(
+        prompt_path, project_path, run_dir=run_dir, stage=f"correction_{attempt}",
+    )
     data = _parse_agent_json(stdout)
     if data is None or data.get("status") == "error":
         raw_dir = run_dir / "raw"
