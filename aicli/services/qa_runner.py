@@ -265,11 +265,50 @@ def _advance(status_path: Path, status: dict, *, state: str | None = None,
     return status
 
 
-def _finalize(status_path: Path, run_id: str, run_dir: Path, verdict: dict) -> dict | None:
+def _write_evidence_log(run_dir: Path, repro: dict, verify: dict, regression: dict, verdict: dict) -> None:
+    """Digest plano y legible por humanos del resultado del pipeline —
+    Requirement: Evidence Viewable on Demand. `LogScreen` lo muestra tal cual,
+    sin necesitar renderizar JSON (ver design.md, sección File Changes)."""
+    lines = [
+        f"Veredicto: {verdict.get('verdict')} (qa_verified={verdict.get('qa_verified')})",
+        f"Motivo: {verdict.get('reason')}",
+        f"Intentos de correccion: {verdict.get('attempts', 0)}",
+        "",
+        f"[Repro] status={repro.get('status')}",
+    ]
+    if repro.get("expected") or repro.get("actual"):
+        lines.append(f"  esperado: {repro.get('expected')}")
+        lines.append(f"  actual:   {repro.get('actual')}")
+    if repro.get("notes"):
+        lines.append(f"  notas: {repro.get('notes')}")
+
+    lines += ["", f"[Verify] status={verify.get('status')}"]
+    for check in verify.get("checks") or []:
+        lines.append(f"  - {check.get('name')}: {check.get('result')} ({check.get('detail') or ''})")
+
+    lines += ["", f"[Regression] status={regression.get('status')}"]
+    if regression.get("total"):
+        lines.append(
+            f"  total={regression.get('total')} passed={regression.get('passed')} "
+            f"failed={regression.get('failed')}"
+        )
+    for failure in regression.get("failures") or []:
+        lines.append(f"  - {failure.get('test')}: {failure.get('message')}")
+
+    if verdict.get("commits"):
+        lines += ["", "Commits de correccion:"]
+        lines += [f"  - {c}" for c in verdict["commits"]]
+
+    (run_dir / "evidence.log").write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def _finalize(status_path: Path, run_id: str, run_dir: Path, verdict: dict, *,
+              repro: dict, verify: dict, regression: dict) -> dict | None:
     status = _still_current(status_path, run_id)
     if status is None:
         return None
     _write_json_atomic(run_dir / "verdict.json", verdict)
+    _write_evidence_log(run_dir, repro, verify, regression, verdict)
     terminal_state = "error" if verdict["verdict"] == "error" else "done"
     _advance(
         status_path, status, state=terminal_state, stage="verdict",
@@ -309,11 +348,15 @@ def run_pipeline(
     repro = repro_fn(run_dir, project_path, ticket_id, ticket_history)
 
     if repro.get("status") in ("not_reproduced", "error"):
+        verify_empty, regression_empty = {"status": None}, {"status": None}
         verdict = aggregate(
-            repro=repro, verify={"status": None}, regression={"status": None},
+            repro=repro, verify=verify_empty, regression=regression_empty,
             attempts=0, commits=[],
         )
-        return _finalize(status_path, run_id, run_dir, verdict)
+        return _finalize(
+            status_path, run_id, run_dir, verdict,
+            repro=repro, verify=verify_empty, regression=regression_empty,
+        )
 
     status = _still_current(status_path, run_id)
     if status is None:
@@ -342,7 +385,10 @@ def run_pipeline(
 
         verdict = aggregate(repro=repro, verify=verify, regression=regression, attempts=attempt, commits=commits)
         if verdict["verdict"] != "failed":
-            return _finalize(status_path, run_id, run_dir, verdict)
+            return _finalize(
+                status_path, run_id, run_dir, verdict,
+                repro=repro, verify=verify, regression=regression,
+            )
 
         attempt += 1
         failure_reason = verify.get("error") or _first_failed_detail(verify) or "verificacion fallida"
@@ -368,5 +414,8 @@ def run_pipeline(
                 attempts=MAX_CORRECTION_ATTEMPTS, commits=commits,
             )
             verdict["reason"] = result.get("reason", "correction_aborted")
-            return _finalize(status_path, run_id, run_dir, verdict)
+            return _finalize(
+                status_path, run_id, run_dir, verdict,
+                repro=repro, verify=verify, regression=regression,
+            )
         # loop: re-verifica con el estado post-correccion

@@ -228,6 +228,74 @@ def _parse_agent_json(text: str) -> dict | None:
     return data if isinstance(data, dict) else None
 
 
+# ── Lectura de estado + badge para la superficie del TUI (Fase 7) ───────────
+#
+# Colores duplicados literalmente de la paleta MAGNA (aicli/tui/widgets.py:
+# _ACCENT/_OK/_WARN/_ERROR) en vez de importados: este módulo es un service,
+# nunca debe depender de aicli.tui (evita import circular — widgets.py SÍ
+# importa qa_orchestrator, nunca al revés).
+_BADGE_ACCENT = "#FFB703"
+_BADGE_OK = "#4ADE80"
+_BADGE_WARN = "#FBBF24"
+_BADGE_ERROR = "#F87171"
+
+# heartbeat > este umbral en un estado no-terminal ⇒ la corrida se considera
+# stale (proceso probablemente murió sin escribir el estado final).
+STALE_THRESHOLD_SECONDS = 600
+
+_TERMINAL_STATUS_STATES = {"done", "error"}
+
+
+def qa_evidence_log_path(ticket_id: str) -> Path:
+    """Ruta pública al `evidence.log` del ticket — para que el TUI no tenga
+    que alcanzar el helper privado `_run_dir` desde otro módulo (Requirement:
+    Evidence Viewable on Demand)."""
+    return _run_dir(ticket_id) / "evidence.log"
+
+
+def read_qa_status(ticket_id: str) -> dict | None:
+    """Lee status.json del blackboard del ticket, aplicando staleness: un
+    estado no-terminal cuyo heartbeat lleva más de STALE_THRESHOLD_SECONDS sin
+    refrescarse se marca `stale: True` (el proceso probablemente murió sin
+    escribir un estado final). Retorna None si nunca hubo una corrida."""
+    status = _read_json_or_none(_run_dir(ticket_id) / "status.json")
+    if status is None:
+        return None
+    if status.get("state") not in _TERMINAL_STATUS_STATES:
+        heartbeat = status.get("heartbeat") or 0
+        if (time.time() - heartbeat) > STALE_THRESHOLD_SECONDS:
+            status = {**status, "stale": True}
+    return status
+
+
+def read_qa_badge(ticket_id: str) -> dict | None:
+    """Traduce el estado del blackboard a un badge `{"ch","col","state"}` para
+    `TicketPanel._row()` — vocabulario exacto de qa-status-surface/spec.md:
+    none (retorna None) / in-progress / pass / fail / doubtful / manual-review
+    / error. Símbolo Y color siempre juntos — nunca color solo."""
+    status = read_qa_status(ticket_id)
+    if status is None:
+        return None
+    if status.get("stale") or status.get("state") == "error":
+        return {"ch": "⚠", "col": _BADGE_ERROR, "state": "error"}
+    if status.get("state") != "done":
+        return {"ch": "◔", "col": _BADGE_ACCENT, "state": "in-progress"}
+
+    verdict = _read_json_or_none(_run_dir(ticket_id) / "verdict.json")
+    verdict_name = (verdict or {}).get("verdict")
+    if verdict_name == "passed":
+        return {"ch": "✓", "col": _BADGE_OK, "state": "passed"}
+    if verdict_name == "manual_review":
+        return {"ch": "!", "col": f"bold {_BADGE_WARN}", "state": "manual-review"}
+    if verdict_name == "dudoso":
+        return {"ch": "?", "col": _BADGE_WARN, "state": "doubtful"}
+    if verdict_name == "failed":
+        return {"ch": "✗", "col": _BADGE_ERROR, "state": "failed"}
+    # state="done" pero verdict.json ilegible/ausente — no debería pasar en
+    # operación normal, pero nunca debe mostrarse como "passed" por defecto.
+    return {"ch": "⚠", "col": _BADGE_ERROR, "state": "error"}
+
+
 # ── Git seguro para el ciclo de corrección ───────────────────────────────────
 
 def _git(args: list[str], cwd: Path) -> subprocess.CompletedProcess:

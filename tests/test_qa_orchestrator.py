@@ -727,5 +727,312 @@ class QaRunnerPipelineTestCase(unittest.TestCase):
         self.assertFalse((self.run_dir / "verdict.json").exists())
 
 
+class QaStatusSurfaceTestCase(unittest.TestCase):
+    """Fase 7 — read_qa_status/read_qa_badge, funciones puras que alimentan el
+    badge de TicketPanel._row() y la superficie de estado del TUI. Cobertura
+    completa de staleness con reloj congelado queda para la Fase 8 (PR5) —
+    esta unidad cubre los estados que Fase 7 consume directamente."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        os.environ["MYCONTEXT_HOME"] = self._tmp.name
+        import aicli.services.qa_orchestrator as qa_orchestrator
+        importlib.reload(qa_orchestrator)
+        self.qa = qa_orchestrator
+        self.base = Path(self._tmp.name)
+
+    def tearDown(self):
+        os.environ.pop("MYCONTEXT_HOME", None)
+        self._tmp.cleanup()
+
+    def _write_status(self, ticket_id: str, **overrides) -> Path:
+        run_dir = self.qa._run_dir(ticket_id)
+        status = self.qa._new_status("R1", ticket_id, str(self.base), None)
+        status.update(overrides)
+        self.qa._write_json_atomic(run_dir / "status.json", status)
+        return run_dir
+
+    def test_read_qa_status_returns_none_when_no_run_yet(self):
+        self.assertIsNone(self.qa.read_qa_status("PROJ-950"))
+
+    def test_read_qa_badge_none_when_no_run_yet(self):
+        self.assertIsNone(self.qa.read_qa_badge("PROJ-950"))
+
+    def test_read_qa_badge_in_progress_for_non_terminal_state(self):
+        self._write_status("PROJ-951", state="verify", heartbeat=time.time())
+        badge = self.qa.read_qa_badge("PROJ-951")
+        self.assertEqual(badge, {"ch": "◔", "col": self.qa._BADGE_ACCENT, "state": "in-progress"})
+
+    def test_read_qa_badge_passed_reads_verdict_json(self):
+        run_dir = self._write_status("PROJ-952", state="done")
+        self.qa._write_json_atomic(run_dir / "verdict.json", {"verdict": "passed", "qa_verified": True})
+        badge = self.qa.read_qa_badge("PROJ-952")
+        self.assertEqual(badge, {"ch": "✓", "col": self.qa._BADGE_OK, "state": "passed"})
+
+    def test_read_qa_badge_manual_review(self):
+        run_dir = self._write_status("PROJ-953", state="done")
+        self.qa._write_json_atomic(run_dir / "verdict.json", {"verdict": "manual_review", "qa_verified": False})
+        badge = self.qa.read_qa_badge("PROJ-953")
+        self.assertEqual(badge["state"], "manual-review")
+        self.assertEqual(badge["ch"], "!")
+
+    def test_read_qa_badge_doubtful(self):
+        run_dir = self._write_status("PROJ-954", state="done")
+        self.qa._write_json_atomic(run_dir / "verdict.json", {"verdict": "dudoso", "qa_verified": False})
+        badge = self.qa.read_qa_badge("PROJ-954")
+        self.assertEqual(badge, {"ch": "?", "col": self.qa._BADGE_WARN, "state": "doubtful"})
+
+    def test_read_qa_badge_error_state(self):
+        self._write_status("PROJ-955", state="error", reason="launch_failed")
+        badge = self.qa.read_qa_badge("PROJ-955")
+        self.assertEqual(badge, {"ch": "⚠", "col": self.qa._BADGE_ERROR, "state": "error"})
+
+    def test_read_qa_status_marks_stale_when_heartbeat_old_and_non_terminal(self):
+        self._write_status("PROJ-956", state="verify", heartbeat=time.time() - 700)
+        status = self.qa.read_qa_status("PROJ-956")
+        self.assertTrue(status.get("stale"))
+
+    def test_read_qa_status_not_stale_when_heartbeat_recent(self):
+        self._write_status("PROJ-957", state="verify", heartbeat=time.time())
+        status = self.qa.read_qa_status("PROJ-957")
+        self.assertFalse(status.get("stale", False))
+
+    def test_read_qa_badge_stale_shows_error_badge(self):
+        self._write_status("PROJ-958", state="verify", heartbeat=time.time() - 700)
+        badge = self.qa.read_qa_badge("PROJ-958")
+        self.assertEqual(badge["state"], "error")
+
+    def test_qa_evidence_log_path_matches_run_dir(self):
+        run_dir = self.qa._run_dir("PROJ-959")
+        self.assertEqual(self.qa.qa_evidence_log_path("PROJ-959"), run_dir / "evidence.log")
+
+
+class QaEvidenceLogTestCase(unittest.TestCase):
+    """Fase 7 (dependencia de aggregator) — evidence.log legible por humanos,
+    consumido por LogScreen. Requirement: Evidence Viewable on Demand."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.run_dir = Path(self._tmp.name) / "run"
+        self.run_dir.mkdir(parents=True, exist_ok=True)
+        import aicli.services.qa_runner as qa_runner
+        importlib.reload(qa_runner)
+        self.runner = qa_runner
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def test_write_evidence_log_produces_human_readable_digest(self):
+        repro = {"status": "reproduced", "expected": "boton verde", "actual": "boton rojo"}
+        verify = {"status": "pass", "checks": [{"name": "color", "result": "pass", "detail": ""}]}
+        regression = {"status": "skipped", "total": 0, "passed": 0, "failed": 0, "failures": []}
+        verdict = {
+            "verdict": "passed", "qa_verified": True, "reason": "verify_pass_regression_ok",
+            "attempts": 0, "commits": [],
+        }
+
+        self.runner._write_evidence_log(self.run_dir, repro, verify, regression, verdict)
+
+        content = (self.run_dir / "evidence.log").read_text(encoding="utf-8")
+        self.assertIn("passed", content)
+        self.assertIn("boton rojo", content)
+        self.assertIn("color: pass", content)
+
+    def test_write_evidence_log_lists_correction_commits(self):
+        repro = {"status": "reproduced"}
+        verify = {"status": "pass", "checks": []}
+        regression = {"status": "skipped"}
+        verdict = {
+            "verdict": "passed", "qa_verified": True, "reason": "verify_pass_regression_ok",
+            "attempts": 1, "commits": ["fix(qa-auto): correccion automatica 1/2 - boton"],
+        }
+        self.runner._write_evidence_log(self.run_dir, repro, verify, regression, verdict)
+        content = (self.run_dir / "evidence.log").read_text(encoding="utf-8")
+        self.assertIn("fix(qa-auto): correccion automatica 1/2 - boton", content)
+
+
+class QaPipelineEvidenceIntegrationTestCase(unittest.TestCase):
+    """Fase 7 — confirma que run_pipeline (Fase 5) ahora también deja
+    evidence.log en cada camino terminal, no solo verdict.json."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        os.environ["MYCONTEXT_HOME"] = self._tmp.name
+        import aicli.services.qa_orchestrator as qa_orchestrator
+        importlib.reload(qa_orchestrator)
+        self.qa = qa_orchestrator
+        import aicli.services.qa_runner as qa_runner
+        importlib.reload(qa_runner)
+        self.runner = qa_runner
+        self.base = Path(self._tmp.name)
+
+    def tearDown(self):
+        os.environ.pop("MYCONTEXT_HOME", None)
+        self._tmp.cleanup()
+
+    def test_pipeline_writes_evidence_log_on_happy_path(self):
+        run_id = "R1"
+        run_dir = self.qa._run_dir("PROJ-940")
+        status = self.qa._new_status(run_id, "PROJ-940", str(self.base), None)
+        status_path = run_dir / "status.json"
+        self.qa._write_json_atomic(status_path, status)
+
+        repro_fn = Mock(return_value={"schema": self.qa.REPRO_SCHEMA, "status": "reproduced"})
+        verify_fn = Mock(return_value={"schema": self.qa.VERIFY_SCHEMA, "status": "pass", "checks": []})
+        regression_fn = Mock(return_value={"schema": self.qa.REGRESSION_SCHEMA, "status": "skipped"})
+
+        self.runner.run_pipeline(
+            ticket_id="PROJ-940", project_path=self.base, run_dir=run_dir,
+            run_id=run_id, status_path=status_path,
+            repro_fn=repro_fn, verify_fn=verify_fn, regression_fn=regression_fn,
+            correction_fn=Mock(),
+        )
+        self.assertTrue((run_dir / "evidence.log").exists())
+
+    def test_pipeline_writes_evidence_log_on_not_reproduced_early_exit(self):
+        run_id = "R2"
+        run_dir = self.qa._run_dir("PROJ-941")
+        status = self.qa._new_status(run_id, "PROJ-941", str(self.base), None)
+        status_path = run_dir / "status.json"
+        self.qa._write_json_atomic(status_path, status)
+
+        repro_fn = Mock(return_value={"schema": self.qa.REPRO_SCHEMA, "status": "not_reproduced"})
+
+        self.runner.run_pipeline(
+            ticket_id="PROJ-941", project_path=self.base, run_dir=run_dir,
+            run_id=run_id, status_path=status_path,
+            repro_fn=repro_fn, verify_fn=Mock(), regression_fn=Mock(), correction_fn=Mock(),
+        )
+        self.assertTrue((run_dir / "evidence.log").exists())
+
+
+class SyncTriggerTestCase(unittest.TestCase):
+    """Fase 6 — el único call site de trigger_qa() en `_sync_impl`, no debe
+    bloquear ni propagar excepciones (Requirement: Non-Blocking Trigger)."""
+
+    def test_trigger_qa_guarded_calls_trigger_qa_with_expected_args(self):
+        from aicli.commands import sync as sync_mod
+        with patch.object(sync_mod, "trigger_qa") as mock_trigger, \
+             patch.object(sync_mod, "get_ticket_branch", return_value="fix/PROJ-1"):
+            sync_mod._trigger_qa_guarded("PROJ-1", Path("/some/project"), ["a.py"])
+        mock_trigger.assert_called_once_with(
+            ticket_id="PROJ-1", project_path=Path("/some/project"),
+            files=["a.py"], branch="fix/PROJ-1",
+        )
+
+    def test_trigger_qa_guarded_never_raises_when_trigger_qa_blows_up(self):
+        from aicli.commands import sync as sync_mod
+        with patch.object(sync_mod, "trigger_qa", side_effect=RuntimeError("boom")), \
+             patch.object(sync_mod, "get_ticket_branch", return_value=None):
+            sync_mod._trigger_qa_guarded("PROJ-2", Path("/x"), [])  # no debe lanzar
+
+    def test_sync_impl_calls_guarded_trigger_after_clear_active_ticket(self):
+        import inspect
+        from aicli.commands import sync as sync_mod
+        src = inspect.getsource(sync_mod._sync_impl)
+        idx_clear = src.index("clear_active_ticket()")
+        idx_trigger = src.index("_trigger_qa_guarded(")
+        self.assertGreater(idx_trigger, idx_clear)
+        # debe estar dentro del bloque `if save:` — ambas líneas comparten
+        # la misma indentación de 12 espacios en el cuerpo de ese bloque.
+        self.assertIn("            _trigger_qa_guarded(", src)
+
+
+class TicketPanelBadgeTestCase(unittest.TestCase):
+    """Fase 7.1 — badge symbol+color en _row(); función pura, no requiere
+    un App de Textual montado."""
+
+    def setUp(self):
+        from aicli.tui.widgets import TicketPanel
+        self.panel = TicketPanel()
+
+    def test_row_appends_badge_when_qa_present(self):
+        t = {
+            "id": "PROJ-1", "summary": "algo", "_rounds": 0, "_active": False,
+            "_qa": {"ch": "✓", "col": "#4ADE80", "state": "passed"},
+        }
+        text = self.panel._row(t)
+        self.assertIn("✓", text.plain)
+
+    def test_row_omits_badge_when_qa_absent(self):
+        t = {"id": "PROJ-2", "summary": "algo", "_rounds": 0, "_active": False}
+        text = self.panel._row(t)
+        for ch in ("✓", "✗", "?", "!", "⚠", "◔"):
+            self.assertNotIn(ch, text.plain)
+
+    def test_row_badge_symbol_present_never_colour_alone(self):
+        t = {
+            "id": "PROJ-3", "summary": "algo", "_rounds": 2, "_active": False,
+            "_qa": {"ch": "!", "col": "bold #FBBF24", "state": "manual-review"},
+        }
+        text = self.panel._row(t)
+        self.assertIn("!", text.plain)
+
+
+class QaEventPollingTestCase(unittest.TestCase):
+    """Fase 7.2 — traducción de events[] no vistos a notificaciones; función
+    pura (`_unseen_events`) extraída de `_poll_qa` para ser testeable sin un
+    App de Textual montado."""
+
+    def test_unseen_events_returns_only_higher_seq_in_order(self):
+        from aicli.tui.widgets import _unseen_events
+        events = [{"seq": 1, "msg": "a"}, {"seq": 3, "msg": "c"}, {"seq": 2, "msg": "b"}]
+        result = _unseen_events(events, last_seen_seq=1)
+        self.assertEqual([e["seq"] for e in result], [2, 3])
+
+    def test_unseen_events_empty_when_all_seen(self):
+        from aicli.tui.widgets import _unseen_events
+        events = [{"seq": 1, "msg": "a"}]
+        self.assertEqual(_unseen_events(events, last_seen_seq=5), [])
+
+    def test_unseen_events_empty_list_input(self):
+        from aicli.tui.widgets import _unseen_events
+        self.assertEqual(_unseen_events([], last_seen_seq=0), [])
+
+
+class LogScreenTestCase(unittest.TestCase):
+    """Fase 7.4 — LogScreen(log_path=None, title=...) keyword-defaulted; el
+    call site existente (screens.py, SettingsScreen) sigue funcionando con
+    los valores por defecto."""
+
+    def test_log_screen_defaults_match_prior_hardcoded_call_site(self):
+        from aicli.tui.screens import LogScreen
+        from textual.widgets import Static
+        screen = LogScreen()
+        widgets = list(screen.compose())
+        header = next(w for w in widgets if isinstance(w, Static))
+        self.assertIn("magna.log", str(header.render()))
+        self.assertIn("MAGNA — Logs", str(header.render()))
+
+    def test_log_screen_accepts_custom_log_path_and_title(self):
+        from aicli.tui.screens import LogScreen
+        from textual.widgets import Static, TextArea
+        tmp = tempfile.TemporaryDirectory()
+        try:
+            log_path = Path(tmp.name) / "evidence.log"
+            log_path.write_text("contenido de evidencia QA", encoding="utf-8")
+            screen = LogScreen(log_path=log_path, title="QA — PROJ-1")
+            widgets = list(screen.compose())
+            header = next(w for w in widgets if isinstance(w, Static))
+            self.assertIn("QA — PROJ-1", str(header.render()))
+            text_area = next(w for w in widgets if isinstance(w, TextArea))
+            self.assertIn("contenido de evidencia QA", text_area.text)
+        finally:
+            tmp.cleanup()
+
+    def test_log_screen_missing_log_path_shows_placeholder(self):
+        from aicli.tui.screens import LogScreen
+        from textual.widgets import TextArea
+        tmp = tempfile.TemporaryDirectory()
+        try:
+            missing = Path(tmp.name) / "nope.log"
+            screen = LogScreen(log_path=missing, title="QA — PROJ-2")
+            widgets = list(screen.compose())
+            text_area = next(w for w in widgets if isinstance(w, TextArea))
+            self.assertIn("sin logs", text_area.text)
+        finally:
+            tmp.cleanup()
+
+
 if __name__ == "__main__":
     unittest.main()

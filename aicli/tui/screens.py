@@ -1093,16 +1093,20 @@ class LogScreen(Screen):
     }}
     """
 
+    def __init__(self, log_path: Path | None = None, title: str = "MAGNA — Logs") -> None:
+        super().__init__()
+        self._log_path = log_path or (Path.home() / ".mycontext" / "magna.log")
+        self._title = title
+
     def compose(self) -> ComposeResult:
-        log_path = Path.home() / ".mycontext" / "magna.log"
         content = (
-            log_path.read_text(encoding="utf-8", errors="replace")
-            if log_path.exists()
+            self._log_path.read_text(encoding="utf-8", errors="replace")
+            if self._log_path.exists()
             else "(sin logs aún — los errores aparecerán aquí)"
         )
         yield Static(
-            f"[bold {_ACCENT}]MAGNA — Logs[/bold {_ACCENT}]"
-            f"  [{_MUTED}]{log_path}[/{_MUTED}]",
+            f"[bold {_ACCENT}]{self._title}[/bold {_ACCENT}]"
+            f"  [{_MUTED}]{self._log_path}[/{_MUTED}]",
             id="log-header", markup=True,
         )
         yield TextArea(content, id="log-view", read_only=True)

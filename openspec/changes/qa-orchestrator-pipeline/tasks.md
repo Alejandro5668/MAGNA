@@ -72,16 +72,18 @@ Chain strategy: pending
 - [x] 5.4 RED test: `not_reproduced` (doubtful) never starts a correction cycle.
 - [x] 5.5 RED test: cap exhausted at 2 → `manual_review`, no 3rd attempt, never blocked/reverted.
 
-## Phase 6: `_sync_impl` Trigger Call Site
+## Phase 6: `_sync_impl` Trigger Call Site — ALL DONE (PR4)
 
-- [ ] 6.1 `aicli/commands/sync.py`: one guarded `trigger_qa(...)` call after `clear_active_ticket()` (~line 416), inside `if save:`; must not block return.
+- [x] 6.1 `aicli/commands/sync.py`: one guarded `trigger_qa(...)` call after `clear_active_ticket()`, inside `if save:`; must not block return. **Implemented as `_trigger_qa_guarded()`**: a small named helper (not an inline try/except) so the call site is independently unit-testable without the full `_sync_impl` DB/git fixture chain — wraps `trigger_qa(...)` in try/except even though `trigger_qa()` already never raises internally (defense for failures *before* reaching that internal try, e.g. `get_ticket_branch()` lookup).
 
-## Phase 7: TUI Polling, Badge, LogScreen Wiring
+## Phase 7: TUI Polling, Badge, LogScreen Wiring — ALL DONE (PR4)
 
-- [ ] 7.1 `aicli/tui/widgets.py`: `_fetch()` sets `t["_qa"]`; `_row()` appends badge (symbol + colour, never colour alone).
-- [ ] 7.2 `aicli/tui/widgets.py`: `on_mount` adds `set_interval(5.0, self._poll_qa)`; notifies for each unseen `events[].seq`.
-- [ ] 7.3 `aicli/tui/widgets.py`: footer `[e] evidencia`; `on_key` opens `LogScreen` for the ticket's `evidence.log`.
-- [ ] 7.4 `aicli/tui/screens.py`: `LogScreen.__init__(log_path=None, title="MAGNA — Logs")`; keep existing call site (screens.py:1300) working via defaults.
+- [x] 7.1 `aicli/tui/widgets.py`: `_fetch()` sets `t["_qa"]` via the new `qa_orchestrator.read_qa_badge()`; `_row()` appends badge (symbol + colour, never colour alone) exactly per design's code sample.
+- [x] 7.2 `aicli/tui/widgets.py`: `on_mount` adds `set_interval(5.0, self._poll_qa)`; `_poll_qa()` notifies for each unseen `events[].seq` via the new pure helper `_unseen_events()` (extracted so the seq-filtering logic is testable without a mounted Textual `App`). One polling loop naturally satisfies both `qa-correction-cycle`'s "Start+Terminal Notify" and `qa-status-surface`'s "Completion Notification" — the runner's `kind:"terminal"` event IS the completion notify, no separate code path needed.
+- [x] 7.3 `aicli/tui/widgets.py`: footer `[e] evidencia`; `on_key` opens `LogScreen` for the ticket's `evidence.log` via the new `_open_evidence()`.
+- [x] 7.4 `aicli/tui/screens.py`: `LogScreen.__init__(log_path=None, title="MAGNA — Logs")`; existing call site (`screens.py`, `SettingsScreen._worker_action`, `opt_id == "logs"`) keeps working unchanged via defaults.
+
+**Gap found and fixed (not scope creep — required for Phase 7's own spec requirement)**: `evidence.log` was never written by any prior unit — Phase 5 (PR3) only wrote `verdict.json`. The `qa-status-surface` spec's "Evidence Viewable on Demand" requirement is unsatisfiable without it, so this unit added `qa_runner._write_evidence_log()` (a flat human-readable digest of repro/verify/regression/verdict, exactly as design.md's File Changes section describes) and wired it into `qa_runner._finalize()`'s existing three call sites. Purely additive: `_finalize()` gained required keyword-only `repro`/`verify`/`regression` params, all three existing call sites already had those values in scope, and no test asserted the old 4-arg signature.
 
 ## Phase 8: Remaining Tests Per Design's Test Plan
 
