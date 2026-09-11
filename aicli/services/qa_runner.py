@@ -60,7 +60,7 @@ def run_repro_stage(run_dir: Path, project_path: Path, ticket_id: str, ticket_hi
     prompt_path = qa_prompts.build_repro_prompt(run_dir, ticket_id, ticket_history)
     defaults = {"steps": [], "expected": None, "actual": None, "evidence": [], "notes": None}
     try:
-        stdout = qa_prompts.invoke_stage(prompt_path, project_path)
+        stdout = qa_prompts.invoke_stage(prompt_path, project_path, run_dir=run_dir, stage="repro")
     except subprocess.TimeoutExpired:
         return _stage_timeout_result(run_dir, "repro", REPRO_SCHEMA, defaults)
     return _finalize_stage_json(run_dir, "repro", REPRO_SCHEMA, stdout, defaults)
@@ -70,9 +70,9 @@ def run_repro_stage(run_dir: Path, project_path: Path, ticket_id: str, ticket_hi
 
 def run_verify_stage(run_dir: Path, project_path: Path, ticket_id: str, ticket_history: str) -> dict:
     prompt_path = qa_prompts.build_verify_prompt(run_dir, ticket_id, ticket_history)
-    defaults = {"checks": [], "evidence": [], "db_reads": []}
+    defaults = {"checks": [], "evidence": [], "db_reads": [], "needs_input": None}
     try:
-        stdout = qa_prompts.invoke_stage(prompt_path, project_path)
+        stdout = qa_prompts.invoke_stage(prompt_path, project_path, run_dir=run_dir, stage="verify")
     except subprocess.TimeoutExpired:
         return _stage_timeout_result(run_dir, "verify", VERIFY_SCHEMA, defaults)
     return _finalize_stage_json(run_dir, "verify", VERIFY_SCHEMA, stdout, defaults)
@@ -182,7 +182,7 @@ def run_correction_attempt(
         or current_branch in ("", "HEAD")
         or (expected_branch and current_branch != expected_branch)
     ):
-        return {"status": "aborted", "reason": "branch_mismatch_or_detached", "commit": None}
+        return {"status": "aborted", "reason": "branch_mismatch_or_detached", "commit": None, "needs_input": None}
 
     diff_result = _git(["diff", "--", *archivos_tocados], project_path)
     git_diff = diff_result.stdout if diff_result.returncode == 0 else ""
@@ -191,21 +191,31 @@ def run_correction_attempt(
         run_dir, ticket_id, attempt, MAX_CORRECTION_ATTEMPTS,
         archivos_tocados, git_diff, failure_reason,
     )
-    stdout = qa_prompts.invoke_stage(prompt_path, project_path)
+    stdout = qa_prompts.invoke_stage(
+        prompt_path, project_path, run_dir=run_dir, stage=f"correction_{attempt}",
+    )
     data = _parse_agent_json(stdout)
     if data is None or data.get("status") == "error":
         raw_dir = run_dir / "raw"
         raw_dir.mkdir(parents=True, exist_ok=True)
         (raw_dir / f"correction_{attempt}.txt").write_text(stdout or "", encoding="utf-8")
     motivo = (data or {}).get("motivo") or "correccion automatica"
+    needs_input = (data or {}).get("needs_input")
+
+    if needs_input:
+        # El agente detectó que necesita DB/URL que no puede inferir (o
+        # confirmar) — se detiene ANTES de commitear, en vez de forzar un
+        # commit sobre un intento incompleto (Requirement: needs_input
+        # escape hatch, ver brief).
+        return {"status": "awaiting_input", "commit": None, "needs_input": needs_input}
 
     if archivos_tocados:
         _git(["add", "--", *archivos_tocados], project_path)
     commit_msg = f"fix(qa-auto): correccion automatica {attempt}/{MAX_CORRECTION_ATTEMPTS} - {motivo}"
     commit_result = _git(["commit", "-m", commit_msg], project_path)
     if commit_result.returncode == 0:
-        return {"status": "applied", "commit": commit_msg}
-    return {"status": "no_changes", "commit": None}
+        return {"status": "applied", "commit": commit_msg, "needs_input": None}
+    return {"status": "no_changes", "commit": None, "needs_input": None}
 
 
 # ── Agregador — única fuente de qa_verified ───────────────────────────────
@@ -317,6 +327,23 @@ def _write_evidence_log(run_dir: Path, repro: dict, verify: dict, regression: di
     (run_dir / "evidence.log").write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
+def _finalize_awaiting_input(status_path: Path, run_id: str, needs_input: dict) -> dict | None:
+    """Pausa la corrida: escribe `state:"awaiting_input"` + la pregunta en
+    `status.json`, en vez de agregar/finalizar como pass/fail. Distinto tanto
+    de "sigue corriendo" como de los veredictos terminales existentes
+    (`_TERMINAL_VERDICTS`) — no se escribe `verdict.json`, así que ningún
+    consumidor puede confundirlo con un veredicto real. Retorna `None` si la
+    corrida fue superseded en el ínterin (mismo contrato que `_finalize`)."""
+    status = _still_current(status_path, run_id)
+    if status is None:
+        return None
+    status["question"] = needs_input
+    return _advance(
+        status_path, status, state="awaiting_input", stage="awaiting_input",
+        event=("awaiting_input", f"Esperando respuesta del usuario: {needs_input.get('prompt')}"),
+    )
+
+
 def _finalize(status_path: Path, run_id: str, run_dir: Path, verdict: dict, *,
               repro: dict, verify: dict, regression: dict) -> dict | None:
     status = _still_current(status_path, run_id)
@@ -388,6 +415,10 @@ def run_pipeline(
         if status is None:
             return None
 
+        needs_input = verify.get("needs_input")
+        if needs_input:
+            return _finalize_awaiting_input(status_path, run_id, needs_input)
+
         if verify.get("status") == "pass":
             status = _advance(status_path, status, state="regression", stage="regression")
             regression = regression_fn(run_dir, project_path)
@@ -422,6 +453,10 @@ def run_pipeline(
         status = _still_current(status_path, run_id)
         if status is None:
             return None
+
+        needs_input = result.get("needs_input")
+        if needs_input:
+            return _finalize_awaiting_input(status_path, run_id, needs_input)
 
         if result.get("status") == "aborted":
             verdict = aggregate(

@@ -4,7 +4,7 @@ from pathlib import Path
 from rich.text import Text
 from textual.app import ComposeResult
 from textual.screen import ModalScreen
-from textual.widgets import Static, Input, Label, Rule, RichLog, TextArea
+from textual.widgets import Static, Input, Label, Rule, RichLog, TextArea, OptionList
 from textual.widget import Widget
 from textual.widgets.option_list import Option
 from textual.containers import Container, Vertical
@@ -281,6 +281,86 @@ class TextAreaModal(ModalScreen[str | None]):
     def action_submit(self) -> None:
         text = self.query_one(TextArea).text.strip()
         self.dismiss(text or None)
+
+    def action_cancel(self) -> None:
+        self.dismiss(None)
+
+
+# ─── Select Modal ─────────────────────────────────────────────────────────────
+
+class SelectModal(ModalScreen[str | None]):
+    """Modal de selección de una opción entre varias — usado por el
+    `kind:"select"` de un `awaiting_input` del pipeline de QA (ver
+    TicketPanel._poll_qa). Reusa OptionList, mismo widget que SettingsScreen."""
+
+    BINDINGS = [Binding("escape", "cancel", show=False)]
+
+    DEFAULT_CSS = f"""
+    SelectModal {{
+        align: center middle;
+    }}
+    #sm-box {{
+        background: {_ELEVATED};
+        border: double {_ACCENT};
+        padding: 1 3;
+        width: 68;
+        height: auto;
+    }}
+    #sm-header {{
+        color: {_ACCENT};
+        text-style: bold;
+        text-align: center;
+        height: 1;
+        margin-bottom: 1;
+    }}
+    #sm-prompt {{
+        color: #F1F3F9;
+        text-style: bold;
+        height: 1;
+        margin-bottom: 1;
+    }}
+    SelectModal OptionList {{
+        background: transparent;
+        border: tall {_BORDER};
+        height: auto;
+        max-height: 12;
+    }}
+    SelectModal OptionList:focus > .option-list--option-highlighted {{
+        background: {_SELECT};
+    }}
+    #sm-hint {{
+        color: {_MUTED};
+        text-align: right;
+        height: 1;
+        margin-top: 1;
+    }}
+    """
+
+    def __init__(self, prompt: str, options: list[str]) -> None:
+        super().__init__()
+        self._prompt = prompt
+        self._options = options
+
+    def compose(self) -> ComposeResult:
+        with Container(id="sm-box"):
+            yield Static("━━━  MAGNA  ━━━", id="sm-header")
+            yield Label(self._prompt, id="sm-prompt")
+            yield OptionList(*[Option(opt, id=str(i)) for i, opt in enumerate(self._options)])
+            yield Label(
+                f"[bold {_ACCENT}][[↵]][/bold {_ACCENT}] [{_SEC}]seleccionar[/{_SEC}]"
+                f"  [{_MUTED}]·[/{_MUTED}]  [bold {_ERROR}][[esc]][/bold {_ERROR}] [{_SEC}]cancelar[/{_SEC}]",
+                id="sm-hint", markup=True,
+            )
+
+    def on_mount(self) -> None:
+        self.query_one(OptionList).focus()
+
+    def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
+        idx = int(event.option.id) if event.option.id is not None else -1
+        if 0 <= idx < len(self._options):
+            self.dismiss(self._options[idx])
+        else:
+            self.dismiss(None)
 
     def action_cancel(self) -> None:
         self.dismiss(None)

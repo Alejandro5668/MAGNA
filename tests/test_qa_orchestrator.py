@@ -15,6 +15,7 @@ import os
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import unittest
 from pathlib import Path
@@ -460,6 +461,46 @@ class QaRunEntrypointTestCase(unittest.TestCase):
         self.assertEqual(kwargs["branch"], "fix/PROJ-921")
 
 
+class _FakeProc:
+    """Doble minimalista de subprocess.Popen para invoke_stage — expone
+    `.stdout` (iterable de líneas ya listas), `.wait()` y `.kill()`, sin
+    spawnear ningún proceso real."""
+
+    def __init__(self, lines):
+        self.stdout = iter(lines)
+        self.waited = False
+        self.killed = False
+
+    def wait(self):
+        self.waited = True
+
+    def kill(self):
+        self.killed = True
+
+
+class _FakeHangingProc:
+    """Simula un proceso que imprime una línea y después cuelga (nunca más
+    output, nunca termina solo) — usado para probar que invoke_stage lo mata
+    y levanta TimeoutExpired en vez de bloquear para siempre."""
+
+    def __init__(self):
+        self._kill_event = threading.Event()
+        self.killed = False
+        self.stdout = self._lines()
+
+    def _lines(self):
+        yield "arrancando\n"
+        self._kill_event.wait()
+        return
+
+    def kill(self):
+        self.killed = True
+        self._kill_event.set()
+
+    def wait(self):
+        pass
+
+
 class QaPromptsTestCase(unittest.TestCase):
     """Fase 4 — prompts de stage + helper de invocación headless."""
 
@@ -471,6 +512,8 @@ class QaPromptsTestCase(unittest.TestCase):
         self.qp = qa_prompts
 
     def tearDown(self):
+        os.environ.pop("MAGNA_QA_DEFAULT_DB", None)
+        os.environ.pop("MAGNA_QA_APP_URL", None)
         self._tmp.cleanup()
 
     # ── 4.1 — Requirement: Repro Stage Isolation ─────────────────────────────
@@ -515,21 +558,160 @@ class QaPromptsTestCase(unittest.TestCase):
         prompt_path.parent.mkdir(parents=True, exist_ok=True)
         prompt_path.write_text("contenido", encoding="utf-8")
 
-        fake_result = Mock(stdout='{"status": "reproduced"}')
+        fake_proc = _FakeProc(['{"status": "reproduced"}'])
         with patch.object(self.qp, "_find_claude_windows", return_value=None), \
-             patch.object(self.qp.subprocess, "run", return_value=fake_result) as mock_run:
-            out = self.qp.invoke_stage(prompt_path, self.run_dir, timeout=5)
+             patch.object(self.qp.subprocess, "Popen", return_value=fake_proc) as mock_popen:
+            out = self.qp.invoke_stage(
+                prompt_path, self.run_dir, run_dir=self.run_dir, stage="repro", timeout=5,
+            )
 
         self.assertEqual(out, '{"status": "reproduced"}')
-        mock_run.assert_called_once()
-        args, kwargs = mock_run.call_args
+        mock_popen.assert_called_once()
+        args, kwargs = mock_popen.call_args
         argv = args[0]
         self.assertEqual(argv[0], "claude")
         self.assertEqual(argv[1], "-p")
         self.assertNotIn("--output-format", argv)
         self.assertNotIn("--permission-mode", argv)
         self.assertEqual(kwargs["shell"], False)
-        self.assertEqual(kwargs["timeout"], 5)
+        self.assertEqual(kwargs["stdout"], subprocess.PIPE)
+        self.assertEqual(kwargs["stderr"], subprocess.DEVNULL)
+        self.assertTrue(fake_proc.waited)
+
+    # ── streaming a run_dir/live/<stage>.log — extensión no-SDD ──────────────
+
+    def test_invoke_stage_streams_lines_to_live_log_progressively(self):
+        prompt_path = self.run_dir / "prompts" / "verify.md"
+        prompt_path.parent.mkdir(parents=True, exist_ok=True)
+        prompt_path.write_text("contenido", encoding="utf-8")
+
+        lines = ["linea 1\n", "linea 2\n", '{"status": "pass"}\n']
+        with patch.object(self.qp, "_find_claude_windows", return_value=None), \
+             patch.object(self.qp.subprocess, "Popen", return_value=_FakeProc(lines)):
+            out = self.qp.invoke_stage(
+                prompt_path, self.run_dir, run_dir=self.run_dir, stage="verify", timeout=5,
+            )
+
+        self.assertEqual(out, "".join(lines))
+        live_path = self.run_dir / "live" / "verify.log"
+        self.assertEqual(live_path.read_text(encoding="utf-8"), "".join(lines))
+
+    def test_invoke_stage_truncates_live_log_on_fresh_call(self):
+        prompt_path = self.run_dir / "prompts" / "verify.md"
+        prompt_path.parent.mkdir(parents=True, exist_ok=True)
+        prompt_path.write_text("contenido", encoding="utf-8")
+
+        with patch.object(self.qp, "_find_claude_windows", return_value=None), \
+             patch.object(self.qp.subprocess, "Popen", return_value=_FakeProc(["intento viejo y largo\n"])):
+            self.qp.invoke_stage(prompt_path, self.run_dir, run_dir=self.run_dir, stage="verify", timeout=5)
+
+        with patch.object(self.qp, "_find_claude_windows", return_value=None), \
+             patch.object(self.qp.subprocess, "Popen", return_value=_FakeProc(["nuevo\n"])):
+            self.qp.invoke_stage(prompt_path, self.run_dir, run_dir=self.run_dir, stage="verify", timeout=5)
+
+        content = (self.run_dir / "live" / "verify.log").read_text(encoding="utf-8")
+        self.assertEqual(content, "nuevo\n")
+        self.assertNotIn("viejo", content)
+
+    def test_invoke_stage_timeout_kills_process_and_raises(self):
+        prompt_path = self.run_dir / "prompts" / "repro.md"
+        prompt_path.parent.mkdir(parents=True, exist_ok=True)
+        prompt_path.write_text("contenido", encoding="utf-8")
+
+        fake_proc = _FakeHangingProc()
+        with patch.object(self.qp, "_find_claude_windows", return_value=None), \
+             patch.object(self.qp.subprocess, "Popen", return_value=fake_proc):
+            with self.assertRaises(subprocess.TimeoutExpired):
+                self.qp.invoke_stage(
+                    prompt_path, self.run_dir, run_dir=self.run_dir, stage="repro", timeout=0.05,
+                )
+
+        self.assertTrue(fake_proc.killed)
+
+    # ── needs_input escape hatch — extensión no-SDD ──────────────────────────
+
+    def test_verify_prompt_documents_needs_input_and_two_tier_db_rule(self):
+        path = self.qp.build_verify_prompt(self.run_dir, "PROJ-1", "historial")
+        content = path.read_text(encoding="utf-8").lower()
+        self.assertIn("needs_input", content)
+        self.assertIn("solo lectura", content)
+        self.assertIn("sin excepción", content)
+        self.assertIn("libertad total de lectura", content)
+
+    def test_corrector_prompt_documents_needs_input_and_two_tier_db_rule(self):
+        path = self.qp.build_corrector_prompt(
+            self.run_dir, "PROJ-1", attempt=1, max_attempts=2,
+            archivos_tocados=["foo.py"], git_diff="", failure_reason="motivo",
+        )
+        content = path.read_text(encoding="utf-8").lower()
+        self.assertIn("needs_input", content)
+        self.assertIn("solo lectura", content)
+        self.assertIn("sin excepción", content)
+        self.assertIn("libertad total de lectura", content)
+
+    def test_repro_prompt_has_no_needs_input_field(self):
+        # repro no necesita DB/URL — fuera de alcance (ver brief).
+        path = self.qp.build_repro_prompt(self.run_dir, "PROJ-1", "historial")
+        content = path.read_text(encoding="utf-8")
+        self.assertNotIn("needs_input", content)
+
+    def test_verify_prompt_interpolates_configured_default_db_and_url(self):
+        os.environ["MAGNA_QA_DEFAULT_DB"] = "postgres://local/test_db"
+        os.environ["MAGNA_QA_APP_URL"] = "http://localhost:4000"
+        path = self.qp.build_verify_prompt(self.run_dir, "PROJ-1", "historial")
+        content = path.read_text(encoding="utf-8")
+        self.assertIn("postgres://local/test_db", content)
+        self.assertIn("http://localhost:4000", content)
+
+    def test_verify_prompt_shows_unconfigured_placeholder_when_env_unset(self):
+        os.environ.pop("MAGNA_QA_DEFAULT_DB", None)
+        os.environ.pop("MAGNA_QA_APP_URL", None)
+        path = self.qp.build_verify_prompt(self.run_dir, "PROJ-1", "historial")
+        content = path.read_text(encoding="utf-8")
+        self.assertIn("(no configurada)", content)
+
+    def test_corrector_prompt_interpolates_configured_default_db_and_url(self):
+        os.environ["MAGNA_QA_DEFAULT_DB"] = "postgres://local/test_db"
+        os.environ["MAGNA_QA_APP_URL"] = "http://localhost:4000"
+        path = self.qp.build_corrector_prompt(
+            self.run_dir, "PROJ-1", attempt=1, max_attempts=2,
+            archivos_tocados=["foo.py"], git_diff="", failure_reason="motivo",
+        )
+        content = path.read_text(encoding="utf-8")
+        self.assertIn("postgres://local/test_db", content)
+        self.assertIn("http://localhost:4000", content)
+
+    def test_verify_prompt_consumes_and_deletes_answer_file(self):
+        answer_path = self.run_dir / "answer.json"
+        answer_path.parent.mkdir(parents=True, exist_ok=True)
+        answer_path.write_text(json.dumps({"value": "cliente_acme_backup"}), encoding="utf-8")
+
+        path = self.qp.build_verify_prompt(self.run_dir, "PROJ-1", "historial")
+
+        content = path.read_text(encoding="utf-8")
+        self.assertIn("cliente_acme_backup", content)
+        self.assertIn("ya respondió esto", content.lower())
+        self.assertFalse(answer_path.exists())
+
+    def test_corrector_prompt_consumes_and_deletes_answer_file(self):
+        answer_path = self.run_dir / "answer.json"
+        answer_path.parent.mkdir(parents=True, exist_ok=True)
+        answer_path.write_text(json.dumps({"value": "usar staging"}), encoding="utf-8")
+
+        path = self.qp.build_corrector_prompt(
+            self.run_dir, "PROJ-1", attempt=1, max_attempts=2,
+            archivos_tocados=["foo.py"], git_diff="", failure_reason="motivo",
+        )
+
+        content = path.read_text(encoding="utf-8")
+        self.assertIn("usar staging", content)
+        self.assertIn("ya respondió esto", content.lower())
+        self.assertFalse(answer_path.exists())
+
+    def test_verify_prompt_without_answer_file_has_no_answer_mention(self):
+        path = self.qp.build_verify_prompt(self.run_dir, "PROJ-1", "historial")
+        content = path.read_text(encoding="utf-8").lower()
+        self.assertNotIn("ya respondió esto", content)
 
 
 class QaRunnerStageTestCase(unittest.TestCase):
@@ -624,6 +806,26 @@ class QaRunnerCorrectionTestCase(unittest.TestCase):
         unrelated_lines = [l for l in status.splitlines() if "unrelated.py" in l]
         self.assertEqual(len(unrelated_lines), 1)
         self.assertTrue(unrelated_lines[0].startswith("??"))
+
+    # ── needs_input escape hatch — extensión no-SDD ──────────────────────────
+
+    def test_correction_attempt_needs_input_returns_awaiting_input_without_committing(self):
+        current_branch = _run_git(["rev-parse", "--abbrev-ref", "HEAD"], self.repo).stdout.strip()
+        before = _commit_count(self.repo)
+        question = {"kind": "select", "prompt": "¿Qué base usar?", "options": ["a", "b"]}
+        agent_json = json.dumps({"status": "applied", "motivo": "x", "needs_input": question})
+
+        with patch.object(self.runner.qa_prompts, "invoke_stage", return_value=agent_json):
+            result = self.runner.run_correction_attempt(
+                run_dir=self.run_dir, project_path=self.repo, ticket_id="PROJ-1",
+                attempt=1, archivos_tocados=["tracked.py"],
+                failure_reason="motivo", branch=current_branch,
+            )
+
+        self.assertEqual(result["status"], "awaiting_input")
+        self.assertIsNone(result["commit"])
+        self.assertEqual(result["needs_input"], question)
+        self.assertEqual(_commit_count(self.repo), before)
 
 
 class QaRunnerPipelineTestCase(unittest.TestCase):
@@ -726,6 +928,53 @@ class QaRunnerPipelineTestCase(unittest.TestCase):
         self.assertIsNone(verdict)
         self.assertFalse((self.run_dir / "verdict.json").exists())
 
+    # ── needs_input escape hatch — extensión no-SDD ──────────────────────────
+
+    def test_pipeline_verify_needs_input_writes_awaiting_input_status_not_verdict(self):
+        question = {"kind": "text", "prompt": "¿Qué URL usar?", "options": None}
+        repro_fn = Mock(return_value={"schema": self.qa.REPRO_SCHEMA, "status": "reproduced"})
+        verify_fn = Mock(return_value={
+            "schema": self.qa.VERIFY_SCHEMA, "status": "fail", "checks": [], "needs_input": question,
+        })
+        regression_fn = Mock()
+        correction_fn = Mock()
+
+        result = self.runner.run_pipeline(
+            ticket_id="PROJ-930", project_path=self.base, run_dir=self.run_dir,
+            run_id=self.run_id, status_path=self.status_path,
+            repro_fn=repro_fn, verify_fn=verify_fn,
+            regression_fn=regression_fn, correction_fn=correction_fn,
+        )
+
+        regression_fn.assert_not_called()
+        correction_fn.assert_not_called()
+        self.assertFalse((self.run_dir / "verdict.json").exists())
+
+        status = json.loads(self.status_path.read_text(encoding="utf-8"))
+        self.assertEqual(status["state"], "awaiting_input")
+        self.assertEqual(status["question"], question)
+        self.assertEqual(result["state"], "awaiting_input")
+
+    def test_pipeline_correction_needs_input_writes_awaiting_input_status(self):
+        question = {"kind": "select", "prompt": "¿Qué backup de cliente?", "options": ["acme", "beta"]}
+        repro_fn = Mock(return_value={"schema": self.qa.REPRO_SCHEMA, "status": "reproduced"})
+        verify_fn = Mock(return_value={"schema": self.qa.VERIFY_SCHEMA, "status": "fail", "checks": []})
+        regression_fn = Mock()
+        correction_fn = Mock(return_value={"status": "awaiting_input", "commit": None, "needs_input": question})
+
+        result = self.runner.run_pipeline(
+            ticket_id="PROJ-930", project_path=self.base, run_dir=self.run_dir,
+            run_id=self.run_id, status_path=self.status_path,
+            repro_fn=repro_fn, verify_fn=verify_fn,
+            regression_fn=regression_fn, correction_fn=correction_fn,
+        )
+
+        self.assertFalse((self.run_dir / "verdict.json").exists())
+        status = json.loads(self.status_path.read_text(encoding="utf-8"))
+        self.assertEqual(status["state"], "awaiting_input")
+        self.assertEqual(status["question"], question)
+        self.assertEqual(result["state"], "awaiting_input")
+
 
 class QaStatusSurfaceTestCase(unittest.TestCase):
     """Fase 7 — read_qa_status/read_qa_badge, funciones puras que alimentan el
@@ -805,6 +1054,132 @@ class QaStatusSurfaceTestCase(unittest.TestCase):
     def test_qa_evidence_log_path_matches_run_dir(self):
         run_dir = self.qa._run_dir("PROJ-959")
         self.assertEqual(self.qa.qa_evidence_log_path("PROJ-959"), run_dir / "evidence.log")
+
+    # ── TUI wiring gap fix: awaiting_input debe tener badge propio, nunca
+    # caer en "in-progress" (ver brief de esta unidad) ──────────────────────
+
+    def test_read_qa_badge_awaiting_input_is_distinct_from_in_progress(self):
+        self._write_status("PROJ-965", state="awaiting_input", heartbeat=time.time())
+        badge = self.qa.read_qa_badge("PROJ-965")
+        self.assertEqual(badge["state"], "awaiting-input")
+        in_progress_badge = {"ch": "◔", "col": self.qa._BADGE_ACCENT, "state": "in-progress"}
+        self.assertNotEqual(badge, in_progress_badge)
+        # símbolo y color siempre juntos — ninguno de los dos solo
+        self.assertIn("ch", badge)
+        self.assertIn("col", badge)
+
+    def test_read_qa_status_awaiting_input_never_stale_with_old_heartbeat(self):
+        # Esperar al usuario indefinidamente es esperado, no un signo de
+        # proceso muerto — el gap que esta unidad corrige.
+        self._write_status("PROJ-966", state="awaiting_input", heartbeat=time.time() - 700)
+        status = self.qa.read_qa_status("PROJ-966")
+        self.assertFalse(status.get("stale", False))
+
+    def test_read_qa_badge_awaiting_input_not_shown_as_error_despite_old_heartbeat(self):
+        self._write_status("PROJ-967", state="awaiting_input", heartbeat=time.time() - 700)
+        badge = self.qa.read_qa_badge("PROJ-967")
+        self.assertEqual(badge["state"], "awaiting-input")
+
+
+class QaAnswerResumeTestCase(unittest.TestCase):
+    """Extensión no-SDD — needs_input: write_qa_answer/resume_qa."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        os.environ["MYCONTEXT_HOME"] = self._tmp.name
+        import aicli.services.qa_orchestrator as qa_orchestrator
+        importlib.reload(qa_orchestrator)
+        self.qa = qa_orchestrator
+        self.base = Path(self._tmp.name)
+        popen_patcher = patch(
+            "aicli.services.qa_orchestrator.subprocess.Popen",
+            return_value=Mock(pid=4321),
+        )
+        self.mock_popen = popen_patcher.start()
+        self.addCleanup(popen_patcher.stop)
+
+    def tearDown(self):
+        os.environ.pop("MYCONTEXT_HOME", None)
+        self._tmp.cleanup()
+
+    def _write_awaiting_status(self, ticket_id: str, run_id: str = "R1", **overrides) -> Path:
+        run_dir = self.qa._run_dir(ticket_id)
+        status = self.qa._new_status(run_id, ticket_id, str(self.base), None)
+        status["state"] = "awaiting_input"
+        status["question"] = {"kind": "text", "prompt": "?", "options": None}
+        status.update(overrides)
+        self.qa._write_json_atomic(run_dir / "status.json", status)
+        return run_dir
+
+    def test_write_qa_answer_writes_value_json(self):
+        self.qa.write_qa_answer("PROJ-970", "postgres_local")
+        answer_path = self.qa._run_dir("PROJ-970") / "answer.json"
+        data = json.loads(answer_path.read_text(encoding="utf-8"))
+        self.assertEqual(data, {"value": "postgres_local"})
+
+    def test_resume_qa_noop_when_no_status_at_all(self):
+        self.qa.resume_qa("PROJ-971", self.base)
+        self.mock_popen.assert_not_called()
+        self.assertFalse((self.qa._run_dir("PROJ-971") / "status.json").exists())
+
+    def test_resume_qa_noop_when_not_awaiting_input(self):
+        run_dir = self.qa._run_dir("PROJ-972")
+        status = self.qa._new_status("R1", "PROJ-972", str(self.base), None)
+        status["state"] = "verify"
+        self.qa._write_json_atomic(run_dir / "status.json", status)
+
+        self.qa.resume_qa("PROJ-972", self.base)
+
+        self.mock_popen.assert_not_called()
+        after = json.loads((run_dir / "status.json").read_text(encoding="utf-8"))
+        self.assertEqual(after["state"], "verify")
+
+    def test_resume_qa_reuses_same_run_id_and_appends_event(self):
+        run_dir = self._write_awaiting_status("PROJ-973", run_id="ORIGINAL-RUN")
+
+        self.qa.resume_qa("PROJ-973", self.base)
+
+        status = json.loads((run_dir / "status.json").read_text(encoding="utf-8"))
+        self.assertEqual(status["run_id"], "ORIGINAL-RUN")
+        self.assertEqual(status["state"], "pending")
+        self.assertEqual(len(status["events"]), 1)
+        self.assertEqual(status["events"][0]["kind"], "resume")
+
+    def test_resume_qa_appends_to_existing_events_not_replace(self):
+        run_dir = self._write_awaiting_status("PROJ-974", events=[
+            {"seq": 1, "ts": time.time(), "kind": "correction", "msg": "intento previo"},
+        ])
+
+        self.qa.resume_qa("PROJ-974", self.base)
+
+        status = json.loads((run_dir / "status.json").read_text(encoding="utf-8"))
+        self.assertEqual(len(status["events"]), 2)
+        self.assertEqual(status["events"][0]["kind"], "correction")
+        self.assertEqual(status["events"][1]["kind"], "resume")
+
+    def test_resume_qa_resets_stage_files_but_keeps_answer_json(self):
+        run_dir = self._write_awaiting_status("PROJ-975")
+        (run_dir / "verify.json").write_text('{"schema": "qa.verify/1"}', encoding="utf-8")
+        (run_dir / "verdict.json").write_text('{"schema": "qa.verdict/1"}', encoding="utf-8")
+        answer_path = run_dir / "answer.json"
+        answer_path.write_text('{"value": "x"}', encoding="utf-8")
+
+        self.qa.resume_qa("PROJ-975", self.base)
+
+        self.assertFalse((run_dir / "verify.json").exists())
+        self.assertFalse((run_dir / "verdict.json").exists())
+        self.assertTrue(answer_path.exists())
+
+    def test_resume_qa_launches_detached_process_with_reused_run_id(self):
+        self._write_awaiting_status("PROJ-976", run_id="ORIGINAL-RUN")
+
+        self.qa.resume_qa("PROJ-976", self.base)
+
+        self.mock_popen.assert_called_once()
+        args, _ = self.mock_popen.call_args
+        argv = args[0]
+        self.assertIn("PROJ-976", argv)
+        self.assertIn("ORIGINAL-RUN", argv)
 
 
 class QaEvidenceLogTestCase(unittest.TestCase):
@@ -988,6 +1363,432 @@ class QaEventPollingTestCase(unittest.TestCase):
     def test_unseen_events_empty_list_input(self):
         from aicli.tui.widgets import _unseen_events
         self.assertEqual(_unseen_events([], last_seen_seq=0), [])
+
+
+class QuestionModalKindTestCase(unittest.TestCase):
+    """QA TUI wiring — `_question_modal_kind` traduce el `question` de un
+    awaiting_input al tipo de modal a mostrar. Función pura, sin Textual."""
+
+    def test_select_with_options_maps_to_select(self):
+        from aicli.tui.widgets import _question_modal_kind
+        question = {"kind": "select", "prompt": "?", "options": ["a", "b"]}
+        self.assertEqual(_question_modal_kind(question), "select")
+
+    def test_select_without_options_falls_back_to_text(self):
+        # kind:"select" sin opciones no alcanza para mostrar un OptionList —
+        # cae a InputModal en vez de romper con una lista vacia.
+        from aicli.tui.widgets import _question_modal_kind
+        question = {"kind": "select", "prompt": "?", "options": []}
+        self.assertEqual(_question_modal_kind(question), "text")
+
+    def test_text_kind_maps_to_text(self):
+        from aicli.tui.widgets import _question_modal_kind
+        question = {"kind": "text", "prompt": "?", "options": None}
+        self.assertEqual(_question_modal_kind(question), "text")
+
+    def test_unknown_or_missing_kind_falls_back_to_text(self):
+        from aicli.tui.widgets import _question_modal_kind
+        self.assertEqual(_question_modal_kind({}), "text")
+        self.assertEqual(_question_modal_kind({"kind": "unknown"}), "text")
+
+
+class QaAnswerRoundTripTestCase(unittest.TestCase):
+    """QA TUI wiring — `TicketPanel._on_qa_answer` (callback del modal de
+    awaiting_input): con valor persiste + reanuda, sin valor es un no-op.
+    No requiere un App montado — `_on_qa_answer` no toca self.app en la rama
+    sin valor, y en la rama con valor solo llama a funciones de servicio
+    (mockeadas aquí)."""
+
+    def test_on_qa_answer_with_value_writes_answer_and_resumes(self):
+        from aicli.tui.widgets import TicketPanel
+        panel = TicketPanel()
+        panel._qa_awaiting.add("PROJ-1")
+
+        with patch("aicli.services.qa_orchestrator.write_qa_answer") as mock_write, \
+             patch("aicli.services.qa_orchestrator.resume_qa") as mock_resume:
+            panel._on_qa_answer("PROJ-1", "postgres_local")
+
+        mock_write.assert_called_once_with("PROJ-1", "postgres_local")
+        mock_resume.assert_called_once()
+        self.assertEqual(mock_resume.call_args.args[0], "PROJ-1")
+        self.assertNotIn("PROJ-1", panel._qa_awaiting)
+
+    def test_on_qa_answer_cancelled_is_noop_and_clears_guard(self):
+        from aicli.tui.widgets import TicketPanel
+        panel = TicketPanel()
+        panel._qa_awaiting.add("PROJ-2")
+
+        with patch("aicli.services.qa_orchestrator.write_qa_answer") as mock_write, \
+             patch("aicli.services.qa_orchestrator.resume_qa") as mock_resume:
+            panel._on_qa_answer("PROJ-2", None)
+
+        mock_write.assert_not_called()
+        mock_resume.assert_not_called()
+        self.assertNotIn("PROJ-2", panel._qa_awaiting)
+
+    def test_on_qa_answer_empty_string_is_treated_as_no_answer(self):
+        from aicli.tui.widgets import TicketPanel
+        panel = TicketPanel()
+        panel._qa_awaiting.add("PROJ-3")
+
+        with patch("aicli.services.qa_orchestrator.write_qa_answer") as mock_write:
+            panel._on_qa_answer("PROJ-3", "")
+
+        mock_write.assert_not_called()
+        self.assertNotIn("PROJ-3", panel._qa_awaiting)
+
+
+class QaAwaitingInputModalGuardTestCase(unittest.IsolatedAsyncioTestCase):
+    """QA TUI wiring — guard obligatorio contra apilar modales: si
+    `_poll_qa` corre de nuevo mientras el modal de un ticket sigue abierto
+    (usuario todavía no respondió), NO debe pushear un segundo modal encima.
+    Mismo harness Textual real (`App.run_test()`) que
+    QaNotifyMechanismRuntimeIntegrationTestCase ya usa más arriba en este
+    archivo — hay precedente establecido, así que se reusa en vez de testear
+    solo con mocks de `self.app`."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        os.environ["MYCONTEXT_HOME"] = self._tmp.name
+        import aicli.services.qa_orchestrator as qa_orchestrator
+        importlib.reload(qa_orchestrator)
+        self.qa = qa_orchestrator
+        self.base = Path(self._tmp.name)
+
+    def tearDown(self):
+        os.environ.pop("MYCONTEXT_HOME", None)
+        self._tmp.cleanup()
+
+    def _write_awaiting_status(self, ticket_id: str, **question_overrides) -> None:
+        run_dir = self.qa._run_dir(ticket_id)
+        status = self.qa._new_status("R1", ticket_id, str(self.base), None)
+        status["state"] = "awaiting_input"
+        status["question"] = {"kind": "text", "prompt": "Necesito la URL de la BD", "options": None}
+        status["question"].update(question_overrides)
+        self.qa._write_json_atomic(run_dir / "status.json", status)
+
+    async def test_second_poll_while_modal_open_does_not_stack_another(self):
+        from textual.app import App, ComposeResult
+        from aicli.tui.widgets import TicketPanel
+
+        self._write_awaiting_status("PROJ-1")
+
+        class _PollHarnessApp(App):
+            def compose(self) -> ComposeResult:
+                yield TicketPanel()
+
+        app = _PollHarnessApp()
+        async with app.run_test() as pilot:
+            panel = app.query_one(TicketPanel)
+            panel._tickets = [{"id": "PROJ-1", "summary": "x", "_rounds": 0, "_active": False}]
+
+            panel._poll_qa()
+            await pilot.pause()
+            self.assertEqual(len(app.screen_stack), 2)  # MainScreen-equivalent + InputModal
+            self.assertIn("PROJ-1", panel._qa_awaiting)
+
+            # segundo poll: el ticket sigue awaiting_input y el modal sigue
+            # abierto (in-flight) — NO debe pushear un segundo modal encima.
+            panel._poll_qa()
+            await pilot.pause()
+            self.assertEqual(len(app.screen_stack), 2)
+
+    async def test_select_question_opens_select_modal(self):
+        from textual.app import App, ComposeResult
+        from aicli.tui.widgets import TicketPanel
+        from aicli.tui.modals import SelectModal
+
+        self._write_awaiting_status("PROJ-2", kind="select", options=["a", "b"])
+
+        class _PollHarnessApp(App):
+            def compose(self) -> ComposeResult:
+                yield TicketPanel()
+
+        app = _PollHarnessApp()
+        async with app.run_test() as pilot:
+            panel = app.query_one(TicketPanel)
+            panel._tickets = [{"id": "PROJ-2", "summary": "x", "_rounds": 0, "_active": False}]
+
+            panel._poll_qa()
+            await pilot.pause()
+            self.assertIsInstance(app.screen, SelectModal)
+
+    async def test_text_question_opens_input_modal(self):
+        from textual.app import App, ComposeResult
+        from aicli.tui.widgets import TicketPanel
+        from aicli.tui.modals import InputModal
+
+        self._write_awaiting_status("PROJ-3")
+
+        class _PollHarnessApp(App):
+            def compose(self) -> ComposeResult:
+                yield TicketPanel()
+
+        app = _PollHarnessApp()
+        async with app.run_test() as pilot:
+            panel = app.query_one(TicketPanel)
+            panel._tickets = [{"id": "PROJ-3", "summary": "x", "_rounds": 0, "_active": False}]
+
+            panel._poll_qa()
+            await pilot.pause()
+            self.assertIsInstance(app.screen, InputModal)
+
+    async def test_dismissing_modal_clears_guard_allowing_a_future_reprompt(self):
+        from textual.app import App, ComposeResult
+        from aicli.tui.widgets import TicketPanel
+
+        self._write_awaiting_status("PROJ-4")
+
+        class _PollHarnessApp(App):
+            def compose(self) -> ComposeResult:
+                yield TicketPanel()
+
+        app = _PollHarnessApp()
+        async with app.run_test() as pilot:
+            panel = app.query_one(TicketPanel)
+            panel._tickets = [{"id": "PROJ-4", "summary": "x", "_rounds": 0, "_active": False}]
+
+            panel._poll_qa()
+            await app.workers.wait_for_complete()
+            self.assertIn("PROJ-4", panel._qa_awaiting)
+
+            await pilot.press("escape")  # cancela el InputModal
+            await pilot.pause()
+            self.assertNotIn("PROJ-4", panel._qa_awaiting)
+
+
+class QaStageChecklistTestCase(unittest.TestCase):
+    """QaDetailScreen — `qa_stage_checklist`/`_derive_stage_state`: derivan
+    el estado de cada stage a partir de status.json + los *.json de stage ya
+    leídos por el llamador. Puras — dicts armados a mano, sin tempdirs."""
+
+    def test_pending_stage_not_reached_yet(self):
+        from aicli.tui.screens import qa_stage_checklist
+        status = {"state": "repro", "stage": "repro"}
+        checklist = qa_stage_checklist(status, repro=None, verify=None, regression=None, verdict=None)
+        by_name = {c["name"]: c for c in checklist}
+        self.assertEqual(by_name["verify"]["state"], "pending")
+        self.assertEqual(by_name["verify"]["ch"], "·")
+
+    def test_running_stage_matches_current_status_stage(self):
+        from aicli.tui.screens import qa_stage_checklist
+        status = {"state": "verify", "stage": "verify"}
+        checklist = qa_stage_checklist(status, repro={"status": "reproduced"}, verify=None,
+                                        regression=None, verdict=None)
+        by_name = {c["name"]: c for c in checklist}
+        self.assertEqual(by_name["repro"]["state"], "done-pass")
+        self.assertEqual(by_name["verify"]["state"], "running")
+
+    def test_repro_not_reproduced_is_done_fail(self):
+        from aicli.tui.screens import qa_stage_checklist
+        status = {"state": "done", "stage": "verdict"}
+        checklist = qa_stage_checklist(
+            status, repro={"status": "not_reproduced"}, verify=None, regression=None,
+            verdict={"verdict": "dudoso", "attempts": 0},
+        )
+        by_name = {c["name"]: c for c in checklist}
+        self.assertEqual(by_name["repro"]["state"], "done-fail")
+
+    def test_verify_pass_is_done_pass(self):
+        from aicli.tui.screens import qa_stage_checklist
+        status = {"state": "done", "stage": "verdict"}
+        checklist = qa_stage_checklist(
+            status, repro={"status": "reproduced"}, verify={"status": "pass"},
+            regression={"status": "skipped"}, verdict={"verdict": "passed", "attempts": 0},
+        )
+        by_name = {c["name"]: c for c in checklist}
+        self.assertEqual(by_name["verify"]["state"], "done-pass")
+        self.assertEqual(by_name["regression"]["state"], "done-pass")  # skipped cuenta como ok
+
+    def test_verify_fail_is_done_fail(self):
+        from aicli.tui.screens import qa_stage_checklist
+        status = {"state": "correcting", "stage": "correction_1"}
+        checklist = qa_stage_checklist(
+            status, repro={"status": "reproduced"}, verify={"status": "fail"},
+            regression=None, verdict=None,
+        )
+        by_name = {c["name"]: c for c in checklist}
+        self.assertEqual(by_name["verify"]["state"], "done-fail")
+
+    def test_corrector_pending_when_never_needed(self):
+        from aicli.tui.screens import qa_stage_checklist
+        status = {"state": "done", "stage": "verdict"}
+        checklist = qa_stage_checklist(
+            status, repro={"status": "reproduced"}, verify={"status": "pass"},
+            regression={"status": "pass"}, verdict={"verdict": "passed", "attempts": 0},
+        )
+        by_name = {c["name"]: c for c in checklist}
+        self.assertEqual(by_name["corrector"]["state"], "pending")
+
+    def test_corrector_running_during_correction_attempt(self):
+        from aicli.tui.screens import qa_stage_checklist
+        status = {"state": "correcting", "stage": "correction_1"}
+        checklist = qa_stage_checklist(status, repro={"status": "reproduced"}, verify={"status": "fail"},
+                                        regression=None, verdict=None)
+        by_name = {c["name"]: c for c in checklist}
+        self.assertEqual(by_name["corrector"]["state"], "running")
+
+    def test_corrector_done_pass_after_applied_commit(self):
+        from aicli.tui.screens import qa_stage_checklist
+        status = {"state": "done", "stage": "verdict"}
+        verdict = {"verdict": "passed", "attempts": 1, "reason": "verify_pass_regression_ok"}
+        checklist = qa_stage_checklist(status, repro={"status": "reproduced"}, verify={"status": "pass"},
+                                        regression={"status": "pass"}, verdict=verdict)
+        by_name = {c["name"]: c for c in checklist}
+        self.assertEqual(by_name["corrector"]["state"], "done-pass")
+
+    def test_corrector_done_fail_when_aborted(self):
+        from aicli.tui.screens import qa_stage_checklist
+        status = {"state": "error", "stage": "verdict"}
+        verdict = {"verdict": "manual_review", "attempts": 1, "reason": "branch_mismatch_or_detached"}
+        checklist = qa_stage_checklist(status, repro={"status": "reproduced"}, verify={"status": "fail"},
+                                        regression=None, verdict=verdict)
+        by_name = {c["name"]: c for c in checklist}
+        self.assertEqual(by_name["corrector"]["state"], "done-fail")
+
+
+class QaLiveStageTestCase(unittest.TestCase):
+    """QaDetailScreen — `qa_live_stage`: qué stage tailear en vivo, y cuándo
+    dejar de tratarlo como "en vivo". Pura — mismo estilo que
+    QaStageChecklistTestCase, dicts armados a mano, sin tempdirs ni I/O."""
+
+    def test_no_active_stage_returns_none(self):
+        from aicli.tui.screens import qa_live_stage
+        status = {"state": "pending", "stage": None}
+        self.assertIsNone(qa_live_stage(status, repro=None, verify=None, regression=None))
+
+    def test_repro_running_without_artifact_is_live(self):
+        from aicli.tui.screens import qa_live_stage
+        status = {"state": "repro", "stage": "repro"}
+        self.assertEqual(
+            qa_live_stage(status, repro=None, verify=None, regression=None), "repro",
+        )
+
+    def test_repro_stops_being_live_once_its_json_result_exists(self):
+        from aicli.tui.screens import qa_live_stage
+        status = {"state": "repro", "stage": "repro"}
+        self.assertIsNone(
+            qa_live_stage(status, repro={"status": "reproduced"}, verify=None, regression=None),
+        )
+
+    def test_verify_running_without_artifact_is_live(self):
+        from aicli.tui.screens import qa_live_stage
+        status = {"state": "verify", "stage": "verify"}
+        result = qa_live_stage(status, repro={"status": "reproduced"}, verify=None, regression=None)
+        self.assertEqual(result, "verify")
+
+    def test_verify_stops_being_live_once_verify_json_exists(self):
+        from aicli.tui.screens import qa_live_stage
+        status = {"state": "verify", "stage": "verify"}
+        result = qa_live_stage(
+            status, repro={"status": "reproduced"}, verify={"status": "pass"}, regression=None,
+        )
+        self.assertIsNone(result)
+
+    def test_corrector_attempt_is_live_since_it_has_no_own_json_artifact(self):
+        from aicli.tui.screens import qa_live_stage
+        status = {"state": "correcting", "stage": "correction_1"}
+        result = qa_live_stage(
+            status, repro={"status": "reproduced"}, verify={"status": "fail"}, regression=None,
+        )
+        self.assertEqual(result, "correction_1")
+
+    def test_corrector_stops_being_live_once_pipeline_moves_past_it(self):
+        # Tras un intento de corrección, el pipeline reintenta verify — el
+        # `stage` activo ya cambió, así que el log de la corrección anterior
+        # deja de tailearse (aunque nunca tuvo JSON propio).
+        from aicli.tui.screens import qa_live_stage
+        status = {"state": "verify", "stage": "verify"}
+        result = qa_live_stage(
+            status, repro={"status": "reproduced"}, verify=None, regression=None,
+        )
+        self.assertEqual(result, "verify")
+
+    def test_terminal_state_never_reports_a_live_stage(self):
+        from aicli.tui.screens import qa_live_stage
+        status = {"state": "done", "stage": "verdict"}
+        self.assertIsNone(qa_live_stage(status, repro=None, verify=None, regression=None))
+
+        status = {"state": "error", "stage": "verify"}
+        self.assertIsNone(qa_live_stage(status, repro=None, verify=None, regression=None))
+
+
+class QaDetailScreenLiveTailIntegrationTestCase(unittest.IsolatedAsyncioTestCase):
+    """QaDetailScreen — confirma que la pantalla realmente renderiza el tail
+    del log en vivo del stage activo (no solo que la lógica pura lo elige
+    bien). Mismo harness Textual real (`App.run_test()`) que
+    QaAwaitingInputModalGuardTestCase, usado acá solo porque hace falta un
+    render real — la selección del stage en sí ya está cubierta por
+    QaLiveStageTestCase sin montar nada."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        os.environ["MYCONTEXT_HOME"] = self._tmp.name
+        import aicli.services.qa_orchestrator as qa_orchestrator
+        importlib.reload(qa_orchestrator)
+        self.qa = qa_orchestrator
+
+    def tearDown(self):
+        os.environ.pop("MYCONTEXT_HOME", None)
+        self._tmp.cleanup()
+
+    async def test_renders_live_tail_for_currently_running_stage(self):
+        from textual.app import App, ComposeResult
+        from aicli.tui.screens import QaDetailScreen
+
+        ticket_id = "PROJ-LIVE-1"
+        run_dir = self.qa._run_dir(ticket_id)
+        status = self.qa._new_status("R1", ticket_id, str(Path(self._tmp.name)), None)
+        status["state"] = "verify"
+        status["stage"] = "verify"
+        self.qa._write_json_atomic(run_dir / "status.json", status)
+        live_dir = run_dir / "live"
+        live_dir.mkdir(parents=True, exist_ok=True)
+        (live_dir / "verify.log").write_text(
+            "navegando a /login\nclick en boton\n", encoding="utf-8",
+        )
+
+        class _Harness(App):
+            def compose(self) -> ComposeResult:
+                return iter(())
+
+        app = _Harness()
+        async with app.run_test() as pilot:
+            await app.push_screen(QaDetailScreen(ticket_id))
+            await pilot.pause()
+            log = app.screen.query_one("#qd-events")
+            rendered = "\n".join(strip.text for strip in log.lines)
+            self.assertIn("en vivo: verify", rendered)
+            self.assertIn("navegando a /login", rendered)
+            self.assertIn("click en boton", rendered)
+
+    async def test_no_live_tail_section_once_stage_has_finished(self):
+        from textual.app import App, ComposeResult
+        from aicli.tui.screens import QaDetailScreen
+
+        ticket_id = "PROJ-LIVE-2"
+        run_dir = self.qa._run_dir(ticket_id)
+        status = self.qa._new_status("R1", ticket_id, str(Path(self._tmp.name)), None)
+        status["state"] = "done"
+        status["stage"] = "verdict"
+        self.qa._write_json_atomic(run_dir / "status.json", status)
+        self.qa._write_json_atomic(run_dir / "verify.json", {"status": "pass", "checks": []})
+        live_dir = run_dir / "live"
+        live_dir.mkdir(parents=True, exist_ok=True)
+        (live_dir / "verify.log").write_text("esto ya es historia\n", encoding="utf-8")
+
+        class _Harness(App):
+            def compose(self) -> ComposeResult:
+                return iter(())
+
+        app = _Harness()
+        async with app.run_test() as pilot:
+            await app.push_screen(QaDetailScreen(ticket_id))
+            await pilot.pause()
+            log = app.screen.query_one("#qd-events")
+            rendered = "\n".join(strip.text for strip in log.lines)
+            self.assertNotIn("en vivo", rendered)
+            self.assertNotIn("esto ya es historia", rendered)
 
 
 class LogScreenTestCase(unittest.TestCase):
@@ -1275,6 +2076,20 @@ class FrozenClockStalenessTestCase(unittest.TestCase):
         with patch.object(self.qa.time, "time", return_value=frozen_now):
             badge = self.qa.read_qa_badge("PROJ-964")
         self.assertEqual(badge["state"], "error")
+
+    def test_frozen_clock_awaiting_input_never_stale_even_if_very_old(self):
+        frozen_now = 1_000_000.0
+        self._write_status_with_heartbeat("PROJ-965", heartbeat=frozen_now - 10_000, state="awaiting_input")
+        with patch.object(self.qa.time, "time", return_value=frozen_now):
+            status = self.qa.read_qa_status("PROJ-965")
+        self.assertFalse(status.get("stale", False))
+
+    def test_frozen_clock_badge_awaiting_input_distinct_even_if_very_old(self):
+        frozen_now = 1_000_000.0
+        self._write_status_with_heartbeat("PROJ-966", heartbeat=frozen_now - 10_000, state="awaiting_input")
+        with patch.object(self.qa.time, "time", return_value=frozen_now):
+            badge = self.qa.read_qa_badge("PROJ-966")
+        self.assertEqual(badge["state"], "awaiting-input")
 
 
 class BlackboardSupersedeIntegrationTestCase(unittest.TestCase):
