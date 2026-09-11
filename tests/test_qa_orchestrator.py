@@ -960,6 +960,31 @@ class QaStatusSurfaceTestCase(unittest.TestCase):
         run_dir = self.qa._run_dir("PROJ-959")
         self.assertEqual(self.qa.qa_evidence_log_path("PROJ-959"), run_dir / "evidence.log")
 
+    # ── TUI wiring gap fix: awaiting_input debe tener badge propio, nunca
+    # caer en "in-progress" (ver brief de esta unidad) ──────────────────────
+
+    def test_read_qa_badge_awaiting_input_is_distinct_from_in_progress(self):
+        self._write_status("PROJ-965", state="awaiting_input", heartbeat=time.time())
+        badge = self.qa.read_qa_badge("PROJ-965")
+        self.assertEqual(badge["state"], "awaiting-input")
+        in_progress_badge = {"ch": "◔", "col": self.qa._BADGE_ACCENT, "state": "in-progress"}
+        self.assertNotEqual(badge, in_progress_badge)
+        # símbolo y color siempre juntos — ninguno de los dos solo
+        self.assertIn("ch", badge)
+        self.assertIn("col", badge)
+
+    def test_read_qa_status_awaiting_input_never_stale_with_old_heartbeat(self):
+        # Esperar al usuario indefinidamente es esperado, no un signo de
+        # proceso muerto — el gap que esta unidad corrige.
+        self._write_status("PROJ-966", state="awaiting_input", heartbeat=time.time() - 700)
+        status = self.qa.read_qa_status("PROJ-966")
+        self.assertFalse(status.get("stale", False))
+
+    def test_read_qa_badge_awaiting_input_not_shown_as_error_despite_old_heartbeat(self):
+        self._write_status("PROJ-967", state="awaiting_input", heartbeat=time.time() - 700)
+        badge = self.qa.read_qa_badge("PROJ-967")
+        self.assertEqual(badge["state"], "awaiting-input")
+
 
 class QaAnswerResumeTestCase(unittest.TestCase):
     """Extensión no-SDD — needs_input: write_qa_answer/resume_qa."""
@@ -1243,6 +1268,288 @@ class QaEventPollingTestCase(unittest.TestCase):
     def test_unseen_events_empty_list_input(self):
         from aicli.tui.widgets import _unseen_events
         self.assertEqual(_unseen_events([], last_seen_seq=0), [])
+
+
+class QuestionModalKindTestCase(unittest.TestCase):
+    """QA TUI wiring — `_question_modal_kind` traduce el `question` de un
+    awaiting_input al tipo de modal a mostrar. Función pura, sin Textual."""
+
+    def test_select_with_options_maps_to_select(self):
+        from aicli.tui.widgets import _question_modal_kind
+        question = {"kind": "select", "prompt": "?", "options": ["a", "b"]}
+        self.assertEqual(_question_modal_kind(question), "select")
+
+    def test_select_without_options_falls_back_to_text(self):
+        # kind:"select" sin opciones no alcanza para mostrar un OptionList —
+        # cae a InputModal en vez de romper con una lista vacia.
+        from aicli.tui.widgets import _question_modal_kind
+        question = {"kind": "select", "prompt": "?", "options": []}
+        self.assertEqual(_question_modal_kind(question), "text")
+
+    def test_text_kind_maps_to_text(self):
+        from aicli.tui.widgets import _question_modal_kind
+        question = {"kind": "text", "prompt": "?", "options": None}
+        self.assertEqual(_question_modal_kind(question), "text")
+
+    def test_unknown_or_missing_kind_falls_back_to_text(self):
+        from aicli.tui.widgets import _question_modal_kind
+        self.assertEqual(_question_modal_kind({}), "text")
+        self.assertEqual(_question_modal_kind({"kind": "unknown"}), "text")
+
+
+class QaAnswerRoundTripTestCase(unittest.TestCase):
+    """QA TUI wiring — `TicketPanel._on_qa_answer` (callback del modal de
+    awaiting_input): con valor persiste + reanuda, sin valor es un no-op.
+    No requiere un App montado — `_on_qa_answer` no toca self.app en la rama
+    sin valor, y en la rama con valor solo llama a funciones de servicio
+    (mockeadas aquí)."""
+
+    def test_on_qa_answer_with_value_writes_answer_and_resumes(self):
+        from aicli.tui.widgets import TicketPanel
+        panel = TicketPanel()
+        panel._qa_awaiting.add("PROJ-1")
+
+        with patch("aicli.services.qa_orchestrator.write_qa_answer") as mock_write, \
+             patch("aicli.services.qa_orchestrator.resume_qa") as mock_resume:
+            panel._on_qa_answer("PROJ-1", "postgres_local")
+
+        mock_write.assert_called_once_with("PROJ-1", "postgres_local")
+        mock_resume.assert_called_once()
+        self.assertEqual(mock_resume.call_args.args[0], "PROJ-1")
+        self.assertNotIn("PROJ-1", panel._qa_awaiting)
+
+    def test_on_qa_answer_cancelled_is_noop_and_clears_guard(self):
+        from aicli.tui.widgets import TicketPanel
+        panel = TicketPanel()
+        panel._qa_awaiting.add("PROJ-2")
+
+        with patch("aicli.services.qa_orchestrator.write_qa_answer") as mock_write, \
+             patch("aicli.services.qa_orchestrator.resume_qa") as mock_resume:
+            panel._on_qa_answer("PROJ-2", None)
+
+        mock_write.assert_not_called()
+        mock_resume.assert_not_called()
+        self.assertNotIn("PROJ-2", panel._qa_awaiting)
+
+    def test_on_qa_answer_empty_string_is_treated_as_no_answer(self):
+        from aicli.tui.widgets import TicketPanel
+        panel = TicketPanel()
+        panel._qa_awaiting.add("PROJ-3")
+
+        with patch("aicli.services.qa_orchestrator.write_qa_answer") as mock_write:
+            panel._on_qa_answer("PROJ-3", "")
+
+        mock_write.assert_not_called()
+        self.assertNotIn("PROJ-3", panel._qa_awaiting)
+
+
+class QaAwaitingInputModalGuardTestCase(unittest.IsolatedAsyncioTestCase):
+    """QA TUI wiring — guard obligatorio contra apilar modales: si
+    `_poll_qa` corre de nuevo mientras el modal de un ticket sigue abierto
+    (usuario todavía no respondió), NO debe pushear un segundo modal encima.
+    Mismo harness Textual real (`App.run_test()`) que
+    QaNotifyMechanismRuntimeIntegrationTestCase ya usa más arriba en este
+    archivo — hay precedente establecido, así que se reusa en vez de testear
+    solo con mocks de `self.app`."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        os.environ["MYCONTEXT_HOME"] = self._tmp.name
+        import aicli.services.qa_orchestrator as qa_orchestrator
+        importlib.reload(qa_orchestrator)
+        self.qa = qa_orchestrator
+        self.base = Path(self._tmp.name)
+
+    def tearDown(self):
+        os.environ.pop("MYCONTEXT_HOME", None)
+        self._tmp.cleanup()
+
+    def _write_awaiting_status(self, ticket_id: str, **question_overrides) -> None:
+        run_dir = self.qa._run_dir(ticket_id)
+        status = self.qa._new_status("R1", ticket_id, str(self.base), None)
+        status["state"] = "awaiting_input"
+        status["question"] = {"kind": "text", "prompt": "Necesito la URL de la BD", "options": None}
+        status["question"].update(question_overrides)
+        self.qa._write_json_atomic(run_dir / "status.json", status)
+
+    async def test_second_poll_while_modal_open_does_not_stack_another(self):
+        from textual.app import App, ComposeResult
+        from aicli.tui.widgets import TicketPanel
+
+        self._write_awaiting_status("PROJ-1")
+
+        class _PollHarnessApp(App):
+            def compose(self) -> ComposeResult:
+                yield TicketPanel()
+
+        app = _PollHarnessApp()
+        async with app.run_test() as pilot:
+            panel = app.query_one(TicketPanel)
+            panel._tickets = [{"id": "PROJ-1", "summary": "x", "_rounds": 0, "_active": False}]
+
+            panel._poll_qa()
+            await pilot.pause()
+            self.assertEqual(len(app.screen_stack), 2)  # MainScreen-equivalent + InputModal
+            self.assertIn("PROJ-1", panel._qa_awaiting)
+
+            # segundo poll: el ticket sigue awaiting_input y el modal sigue
+            # abierto (in-flight) — NO debe pushear un segundo modal encima.
+            panel._poll_qa()
+            await pilot.pause()
+            self.assertEqual(len(app.screen_stack), 2)
+
+    async def test_select_question_opens_select_modal(self):
+        from textual.app import App, ComposeResult
+        from aicli.tui.widgets import TicketPanel
+        from aicli.tui.modals import SelectModal
+
+        self._write_awaiting_status("PROJ-2", kind="select", options=["a", "b"])
+
+        class _PollHarnessApp(App):
+            def compose(self) -> ComposeResult:
+                yield TicketPanel()
+
+        app = _PollHarnessApp()
+        async with app.run_test() as pilot:
+            panel = app.query_one(TicketPanel)
+            panel._tickets = [{"id": "PROJ-2", "summary": "x", "_rounds": 0, "_active": False}]
+
+            panel._poll_qa()
+            await pilot.pause()
+            self.assertIsInstance(app.screen, SelectModal)
+
+    async def test_text_question_opens_input_modal(self):
+        from textual.app import App, ComposeResult
+        from aicli.tui.widgets import TicketPanel
+        from aicli.tui.modals import InputModal
+
+        self._write_awaiting_status("PROJ-3")
+
+        class _PollHarnessApp(App):
+            def compose(self) -> ComposeResult:
+                yield TicketPanel()
+
+        app = _PollHarnessApp()
+        async with app.run_test() as pilot:
+            panel = app.query_one(TicketPanel)
+            panel._tickets = [{"id": "PROJ-3", "summary": "x", "_rounds": 0, "_active": False}]
+
+            panel._poll_qa()
+            await pilot.pause()
+            self.assertIsInstance(app.screen, InputModal)
+
+    async def test_dismissing_modal_clears_guard_allowing_a_future_reprompt(self):
+        from textual.app import App, ComposeResult
+        from aicli.tui.widgets import TicketPanel
+
+        self._write_awaiting_status("PROJ-4")
+
+        class _PollHarnessApp(App):
+            def compose(self) -> ComposeResult:
+                yield TicketPanel()
+
+        app = _PollHarnessApp()
+        async with app.run_test() as pilot:
+            panel = app.query_one(TicketPanel)
+            panel._tickets = [{"id": "PROJ-4", "summary": "x", "_rounds": 0, "_active": False}]
+
+            panel._poll_qa()
+            await app.workers.wait_for_complete()
+            self.assertIn("PROJ-4", panel._qa_awaiting)
+
+            await pilot.press("escape")  # cancela el InputModal
+            await pilot.pause()
+            self.assertNotIn("PROJ-4", panel._qa_awaiting)
+
+
+class QaStageChecklistTestCase(unittest.TestCase):
+    """QaDetailScreen — `qa_stage_checklist`/`_derive_stage_state`: derivan
+    el estado de cada stage a partir de status.json + los *.json de stage ya
+    leídos por el llamador. Puras — dicts armados a mano, sin tempdirs."""
+
+    def test_pending_stage_not_reached_yet(self):
+        from aicli.tui.screens import qa_stage_checklist
+        status = {"state": "repro", "stage": "repro"}
+        checklist = qa_stage_checklist(status, repro=None, verify=None, regression=None, verdict=None)
+        by_name = {c["name"]: c for c in checklist}
+        self.assertEqual(by_name["verify"]["state"], "pending")
+        self.assertEqual(by_name["verify"]["ch"], "·")
+
+    def test_running_stage_matches_current_status_stage(self):
+        from aicli.tui.screens import qa_stage_checklist
+        status = {"state": "verify", "stage": "verify"}
+        checklist = qa_stage_checklist(status, repro={"status": "reproduced"}, verify=None,
+                                        regression=None, verdict=None)
+        by_name = {c["name"]: c for c in checklist}
+        self.assertEqual(by_name["repro"]["state"], "done-pass")
+        self.assertEqual(by_name["verify"]["state"], "running")
+
+    def test_repro_not_reproduced_is_done_fail(self):
+        from aicli.tui.screens import qa_stage_checklist
+        status = {"state": "done", "stage": "verdict"}
+        checklist = qa_stage_checklist(
+            status, repro={"status": "not_reproduced"}, verify=None, regression=None,
+            verdict={"verdict": "dudoso", "attempts": 0},
+        )
+        by_name = {c["name"]: c for c in checklist}
+        self.assertEqual(by_name["repro"]["state"], "done-fail")
+
+    def test_verify_pass_is_done_pass(self):
+        from aicli.tui.screens import qa_stage_checklist
+        status = {"state": "done", "stage": "verdict"}
+        checklist = qa_stage_checklist(
+            status, repro={"status": "reproduced"}, verify={"status": "pass"},
+            regression={"status": "skipped"}, verdict={"verdict": "passed", "attempts": 0},
+        )
+        by_name = {c["name"]: c for c in checklist}
+        self.assertEqual(by_name["verify"]["state"], "done-pass")
+        self.assertEqual(by_name["regression"]["state"], "done-pass")  # skipped cuenta como ok
+
+    def test_verify_fail_is_done_fail(self):
+        from aicli.tui.screens import qa_stage_checklist
+        status = {"state": "correcting", "stage": "correction_1"}
+        checklist = qa_stage_checklist(
+            status, repro={"status": "reproduced"}, verify={"status": "fail"},
+            regression=None, verdict=None,
+        )
+        by_name = {c["name"]: c for c in checklist}
+        self.assertEqual(by_name["verify"]["state"], "done-fail")
+
+    def test_corrector_pending_when_never_needed(self):
+        from aicli.tui.screens import qa_stage_checklist
+        status = {"state": "done", "stage": "verdict"}
+        checklist = qa_stage_checklist(
+            status, repro={"status": "reproduced"}, verify={"status": "pass"},
+            regression={"status": "pass"}, verdict={"verdict": "passed", "attempts": 0},
+        )
+        by_name = {c["name"]: c for c in checklist}
+        self.assertEqual(by_name["corrector"]["state"], "pending")
+
+    def test_corrector_running_during_correction_attempt(self):
+        from aicli.tui.screens import qa_stage_checklist
+        status = {"state": "correcting", "stage": "correction_1"}
+        checklist = qa_stage_checklist(status, repro={"status": "reproduced"}, verify={"status": "fail"},
+                                        regression=None, verdict=None)
+        by_name = {c["name"]: c for c in checklist}
+        self.assertEqual(by_name["corrector"]["state"], "running")
+
+    def test_corrector_done_pass_after_applied_commit(self):
+        from aicli.tui.screens import qa_stage_checklist
+        status = {"state": "done", "stage": "verdict"}
+        verdict = {"verdict": "passed", "attempts": 1, "reason": "verify_pass_regression_ok"}
+        checklist = qa_stage_checklist(status, repro={"status": "reproduced"}, verify={"status": "pass"},
+                                        regression={"status": "pass"}, verdict=verdict)
+        by_name = {c["name"]: c for c in checklist}
+        self.assertEqual(by_name["corrector"]["state"], "done-pass")
+
+    def test_corrector_done_fail_when_aborted(self):
+        from aicli.tui.screens import qa_stage_checklist
+        status = {"state": "error", "stage": "verdict"}
+        verdict = {"verdict": "manual_review", "attempts": 1, "reason": "branch_mismatch_or_detached"}
+        checklist = qa_stage_checklist(status, repro={"status": "reproduced"}, verify={"status": "fail"},
+                                        regression=None, verdict=verdict)
+        by_name = {c["name"]: c for c in checklist}
+        self.assertEqual(by_name["corrector"]["state"], "done-fail")
 
 
 class LogScreenTestCase(unittest.TestCase):
@@ -1530,6 +1837,20 @@ class FrozenClockStalenessTestCase(unittest.TestCase):
         with patch.object(self.qa.time, "time", return_value=frozen_now):
             badge = self.qa.read_qa_badge("PROJ-964")
         self.assertEqual(badge["state"], "error")
+
+    def test_frozen_clock_awaiting_input_never_stale_even_if_very_old(self):
+        frozen_now = 1_000_000.0
+        self._write_status_with_heartbeat("PROJ-965", heartbeat=frozen_now - 10_000, state="awaiting_input")
+        with patch.object(self.qa.time, "time", return_value=frozen_now):
+            status = self.qa.read_qa_status("PROJ-965")
+        self.assertFalse(status.get("stale", False))
+
+    def test_frozen_clock_badge_awaiting_input_distinct_even_if_very_old(self):
+        frozen_now = 1_000_000.0
+        self._write_status_with_heartbeat("PROJ-966", heartbeat=frozen_now - 10_000, state="awaiting_input")
+        with patch.object(self.qa.time, "time", return_value=frozen_now):
+            badge = self.qa.read_qa_badge("PROJ-966")
+        self.assertEqual(badge["state"], "awaiting-input")
 
 
 class BlackboardSupersedeIntegrationTestCase(unittest.TestCase):

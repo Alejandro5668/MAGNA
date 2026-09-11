@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 from rich.text import Text
 from textual.app import ComposeResult
 from textual.widget import Widget
@@ -49,6 +51,17 @@ def _unseen_events(events: list[dict], last_seen_seq: int) -> list[dict]:
         (e for e in events if e.get("seq", 0) > last_seen_seq),
         key=lambda e: e["seq"],
     )
+
+
+def _question_modal_kind(question: dict) -> str:
+    """Traduce el `question` de un `awaiting_input` al tipo de modal a
+    mostrar — función pura (sin Textual) para que sea testeable sin montar
+    un App real. `"select"` solo si además vienen opciones; cualquier otro
+    caso (incluido `kind` ausente/desconocido) cae a `"text"`, el mismo
+    criterio permisivo que ya usa InputModal (no requiere opciones)."""
+    if question.get("kind") == "select" and question.get("options"):
+        return "select"
+    return "text"
 
 
 class TicketPanel(Widget):
@@ -113,6 +126,10 @@ class TicketPanel(Widget):
         super().__init__()
         self._tickets: list[dict] = []
         self._qa_seen_seq: dict[str, int] = {}
+        # Tickets con un modal de awaiting_input actualmente abierto — evita
+        # apilar un modal nuevo por ticket en cada poll de 5s mientras el
+        # usuario todavía no respondió el actual (ver _prompt_awaiting_input).
+        self._qa_awaiting: set[str] = set()
 
     def compose(self) -> ComposeResult:
         yield Static("  TICKETS", id="tp-header", markup=False)
@@ -120,7 +137,7 @@ class TicketPanel(Widget):
         yield Rule(id="tp-divider")
         yield Static("", id="tp-desc", markup=False)
         yield Static(
-            f"  [[↵]] iniciar tarea  ·  [[r]] refrescar  ·  [[e]] evidencia",
+            f"  [[↵]] iniciar tarea  ·  [[r]] refrescar  ·  [[e]] detalle QA",
             id="tp-foot", markup=True,
         )
 
@@ -234,7 +251,7 @@ class TicketPanel(Widget):
             self._fetch()
             event.stop()
         elif event.key == "e":
-            self._open_evidence()
+            self._open_qa_detail()
             event.stop()
 
     def _poll_qa(self) -> None:
@@ -274,9 +291,44 @@ class TicketPanel(Widget):
                 except Exception:
                     pass
 
-    def _open_evidence(self) -> None:
-        """[e] — abre `evidence.log` del ticket resaltado en un `LogScreen`
-        (Requirement: Evidence Viewable on Demand)."""
+            if status.get("state") == "awaiting_input" and tid not in self._qa_awaiting:
+                self._prompt_awaiting_input(tid, status.get("question") or {})
+
+    def _prompt_awaiting_input(self, ticket_id: str, question: dict) -> None:
+        """Muestra el modal correspondiente a un `awaiting_input` pendiente.
+        `self._qa_awaiting` se marca ANTES de pushear el modal (nunca
+        después) y solo se libera cuando el modal se resuelve — así, si el
+        usuario tarda más de un ciclo de poll (5s) en responder, los polls
+        intermedios no apilan un modal nuevo encima."""
+        from aicli.tui.modals import InputModal, SelectModal
+
+        prompt = question.get("prompt") or "Se necesita una respuesta para continuar"
+        self._qa_awaiting.add(ticket_id)
+
+        if _question_modal_kind(question) == "select":
+            modal = SelectModal(prompt, question["options"])
+        else:
+            modal = InputModal(prompt)
+
+        self.app.push_screen(modal, callback=lambda value: self._on_qa_answer(ticket_id, value))
+
+    def _on_qa_answer(self, ticket_id: str, value: str | None) -> None:
+        """Callback del modal de awaiting_input. Sin respuesta (cancelado o
+        vacío) ⇒ no-op, el pipeline sigue pausado. Con respuesta ⇒ se
+        persiste y se reanuda la corrida (mismo Path.cwd() que el resto del
+        TUI usa para "el proyecto actual", ver _sync_impl)."""
+        self._qa_awaiting.discard(ticket_id)
+        if not value:
+            return
+        from aicli.services import qa_orchestrator
+
+        qa_orchestrator.write_qa_answer(ticket_id, value)
+        qa_orchestrator.resume_qa(ticket_id, Path.cwd())
+
+    def _open_qa_detail(self) -> None:
+        """[e] — abre el QaDetailScreen (resumen/progressive disclosure) del
+        ticket resaltado, en vez de saltar directo al log crudo (ese sigue
+        un keypress adentro, [l], sin regresión)."""
         if not self._tickets:
             return
         try:
@@ -288,8 +340,6 @@ class TicketPanel(Widget):
             return
 
         tid = self._tickets[idx]["id"]
-        from aicli.services.qa_orchestrator import qa_evidence_log_path
-        from aicli.tui.screens import LogScreen
+        from aicli.tui.screens import QaDetailScreen
 
-        log_path = qa_evidence_log_path(tid)
-        self.app.push_screen(LogScreen(log_path=log_path, title=f"QA — {tid}"))
+        self.app.push_screen(QaDetailScreen(tid))
