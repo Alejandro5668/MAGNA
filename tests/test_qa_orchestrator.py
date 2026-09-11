@@ -578,6 +578,27 @@ class QaPromptsTestCase(unittest.TestCase):
         self.assertEqual(kwargs["stderr"], subprocess.DEVNULL)
         self.assertTrue(fake_proc.waited)
 
+    def test_invoke_stage_strips_anthropic_api_key_from_subprocess_env(self):
+        """Si ANTHROPIC_API_KEY está en el entorno (p. ej. .env del proyecto
+        para el indexer de MAGNA), claude -p headless la prioriza sobre la
+        sesión de suscripción ya logueada y factura contra la API — el
+        pipeline de QA nunca debe dejar que eso pase."""
+        prompt_path = self.run_dir / "prompts" / "repro.md"
+        prompt_path.parent.mkdir(parents=True, exist_ok=True)
+        prompt_path.write_text("contenido", encoding="utf-8")
+
+        fake_proc = _FakeProc(['{"status": "reproduced"}'])
+        with patch.object(self.qp, "_find_claude_windows", return_value=None), \
+             patch.object(self.qp.os, "environ", {"ANTHROPIC_API_KEY": "sk-ant-fake", "PATH": "/usr/bin"}), \
+             patch.object(self.qp.subprocess, "Popen", return_value=fake_proc) as mock_popen:
+            self.qp.invoke_stage(
+                prompt_path, self.run_dir, run_dir=self.run_dir, stage="repro", timeout=5,
+            )
+
+        _, kwargs = mock_popen.call_args
+        self.assertNotIn("ANTHROPIC_API_KEY", kwargs["env"])
+        self.assertIn("PATH", kwargs["env"])
+
     # ── streaming a run_dir/live/<stage>.log — extensión no-SDD ──────────────
 
     def test_invoke_stage_streams_lines_to_live_log_progressively(self):

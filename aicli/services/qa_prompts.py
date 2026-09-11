@@ -29,6 +29,18 @@ STAGE_TIMEOUT_SECONDS = 600
 
 _NO_CONFIGURADA = "(no configurada)"
 
+# Variables que NUNCA deben llegarle al subproceso `claude -p`: si están
+# seteadas (p. ej. un .env de proyecto con ANTHROPIC_API_KEY para el indexer
+# de MAGNA, que sí la necesita para su propio uso de la SDK), el CLI de
+# Claude Code las prioriza sobre la sesión de suscripción ya logueada y
+# factura contra la API en vez de usar la suscripción — exactamente lo que
+# este pipeline de QA existe para NO hacer.
+_STRIP_ENV_VARS = ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN")
+
+
+def _subprocess_env() -> dict:
+    return {k: v for k, v in os.environ.items() if k not in _STRIP_ENV_VARS}
+
 
 def _default_db_hint() -> str:
     return os.environ.get("MAGNA_QA_DEFAULT_DB") or _NO_CONFIGURADA
@@ -289,6 +301,7 @@ def invoke_stage(
         bufsize=1,
         shell=False,
         creationflags=creationflags,
+        env=_subprocess_env(),
     )
 
     # Timer separado solo para matar el proceso si se pasa del timeout —

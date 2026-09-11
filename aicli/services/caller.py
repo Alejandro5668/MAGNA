@@ -9,6 +9,16 @@ from rich.console import Group
 
 console = Console()
 
+# Si ANTHROPIC_API_KEY está en el entorno (p. ej. el .env de un proyecto que
+# la necesita para otra cosa, como el indexer de MAGNA), el CLI de Claude
+# Code la prioriza sobre la sesión de suscripción ya logueada y factura
+# contra la API — launch_claude() nunca debe dejar que eso pase.
+_STRIP_ENV_VARS = ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN")
+
+
+def _subprocess_env() -> dict:
+    return {k: v for k, v in os.environ.items() if k not in _STRIP_ENV_VARS}
+
 # Rutas conocidas donde Claude Code suele instalarse en Windows
 _CLAUDE_WINDOWS_PATHS = [
     Path(os.environ.get("APPDATA", "")) / "npm" / "claude.cmd",
@@ -232,9 +242,9 @@ def launch_claude(
     for attempt in range(2):
         try:
             if claude_path and is_windows:
-                subprocess.run([str(claude_path), message], check=False, shell=False)
+                subprocess.run([str(claude_path), message], check=False, shell=False, env=_subprocess_env())
             else:
-                subprocess.run(["claude", message], check=False, shell=is_windows)
+                subprocess.run(["claude", message], check=False, shell=is_windows, env=_subprocess_env())
             _set_terminal_title("MAGNA")
             return
         except FileNotFoundError:
