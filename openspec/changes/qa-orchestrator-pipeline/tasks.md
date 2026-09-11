@@ -46,12 +46,12 @@ Chain strategy: pending
 - [x] 2.8 RED test: correction commit lands only in the tmp repo at `cwd=project_path` (git-repo-selection threat).
 - [x] 2.9 `qa_orchestrator.py`: implement `_git(args, cwd)` deny-listed helper (`push/fetch/pull/remote/reset/checkout/clean/rebase/merge/cherry-pick` raise) — makes 2.5–2.8 pass.
 
-## Phase 3: Detached Launcher + Hidden Entrypoint
+## Phase 3: Detached Launcher + Hidden Entrypoint — ALL DONE
 
-- [ ] 3.1 Create `aicli/commands/qa_cmd.py` — hidden `qa-run <TICKET> --project-path <p> --run-id <id>` Typer command.
-- [ ] 3.2 `main.py`: `app.add_typer(qa_cmd.app, name="qa-run")`.
-- [ ] 3.3 `qa_orchestrator.py`: implement `trigger_qa()` detached `Popen` launcher (re-enter via `sys.executable`, frozen-vs-dev argv, stdout/stderr → `run.log`). Blocked on spike 1.3 passing; if S3 failed, redesign first.
-- [ ] 3.4 Launch-failure handling: wrap 3.3 in try/except, write `status.json` `state:"error", reason:"launch_failed"`; never raise into the caller.
+- [x] 3.1 Create `aicli/commands/qa_cmd.py` — hidden `qa-run <TICKET> --project-path <p> --run-id <id>` Typer command. This unit's scope: placeholder heartbeat loop (no real stages yet, Phase 5) that proves the detach mechanic and honors cooperative supersede (exits without writing if `status.json`'s `run_id` no longer matches).
+- [x] 3.2 `main.py`: `app.add_typer(qa_cmd.app, name="qa-run", hidden=True)` — confirmed hidden from `main.py --help`.
+- [x] 3.3 `qa_orchestrator.py`: implemented `trigger_qa()` detached `Popen` launcher (re-enter via `sys.executable`, frozen-vs-dev argv via `_qa_run_argv`, stdout/stderr → `run.log`, exact S3-validated creationflags). Spike S3 passed, no redesign needed. **Deviation found and fixed**: the internal argv puts `--project-path`/`--run-id` BEFORE the `ticket_id` positional (not after, as tasks.md's literal invocation example showed) — Click/Typer's group-dispatch parsing (same `@app.callback(invoke_without_command=True)` pattern already used by `task.py`/`archive.py`) mis-parses `qa-run <TICKET> --opt val` as "TICKET is COMMAND, then unknown args", a pre-existing quirk of this project's whole CLI convention (reproduced identically with `ctx task "text" --archivo x.py`), not something new. Confirmed real end-to-end: `qa-run --project-path <p> --run-id <id> <TICKET>` works; the wrong order does not. `qa_cmd.py`'s help text/param names are unchanged — only the internally-generated argv order changed.
+- [x] 3.4 Launch-failure handling: wrapped 3.3 in try/except around the `open(run.log)` + `Popen(...)` call — any exception writes `status.json` `state:"error", reason:"launch_failed"` and `trigger_qa()` returns `None`; never raises into the caller.
 
 ## Phase 4: Stage Prompts (depends on spikes 1.1, 1.2)
 

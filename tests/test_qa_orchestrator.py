@@ -15,9 +15,10 @@ import os
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
@@ -81,6 +82,10 @@ class ParseAgentJsonTestCase(unittest.TestCase):
 
 
 class BlackboardTestCase(unittest.TestCase):
+    """Fase 2 — layout/atomicidad del blackboard, no la mecánica de lanzamiento
+    (Fase 3, cubierta por LaunchTestCase). Se mockea subprocess.Popen porque,
+    desde esta unidad, trigger_qa() SIEMPRE intenta lanzar el proceso
+    detached — estos tests no necesitan (ni deben) spawnear uno real."""
 
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
@@ -89,6 +94,12 @@ class BlackboardTestCase(unittest.TestCase):
         importlib.reload(qa_orchestrator)
         self.qa = qa_orchestrator
         self.base = Path(self._tmp.name)
+        popen_patcher = patch(
+            "aicli.services.qa_orchestrator.subprocess.Popen",
+            return_value=Mock(pid=1234),
+        )
+        popen_patcher.start()
+        self.addCleanup(popen_patcher.stop)
 
     def tearDown(self):
         os.environ.pop("MYCONTEXT_HOME", None)
@@ -263,6 +274,178 @@ class GitDenylistTestCase(unittest.TestCase):
 
         self.assertEqual(_commit_count(self.repo), repo_before + 1)
         self.assertEqual(_commit_count(decoy), decoy_before)
+
+
+class LaunchTestCase(unittest.TestCase):
+    """Fase 3 — argv de re-entrada y lanzador Popen detached."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        os.environ["MYCONTEXT_HOME"] = self._tmp.name
+        import aicli.services.qa_orchestrator as qa_orchestrator
+        importlib.reload(qa_orchestrator)
+        self.qa = qa_orchestrator
+        self.base = Path(self._tmp.name)
+
+    def tearDown(self):
+        os.environ.pop("MYCONTEXT_HOME", None)
+        os.environ.pop("MAGNA_QA", None)
+        # El test end-to-end real (sin mocks) deja un proceso hijo detached
+        # que puede tardar un instante extra en soltar el handle de
+        # run.log en Windows incluso después de reportar state="done" —
+        # reintenta la limpieza en vez de asumir que el handle ya se liberó.
+        for attempt in range(10):
+            try:
+                self._tmp.cleanup()
+                return
+            except PermissionError:
+                if attempt == 9:
+                    raise
+                time.sleep(0.5)
+
+    # ── 3.1/3.2 — argv de re-entrada (frozen vs. dev) ────────────────────────
+
+    def test_qa_run_argv_dev_mode_reenters_main_py(self):
+        argv = self.qa._qa_run_argv("PROJ-1", Path("/some/project"), "run-abc")
+        self.assertEqual(argv[0], sys.executable)
+        self.assertTrue(argv[1].endswith("main.py"))
+        # Las opciones van antes del positional a propósito — ver docstring
+        # de _qa_run_argv (evita la ambigüedad de despacho de Click/Typer).
+        self.assertEqual(
+            argv[2:],
+            ["qa-run", "--project-path", str(Path("/some/project")), "--run-id", "run-abc", "PROJ-1"],
+        )
+
+    def test_qa_run_argv_frozen_mode_skips_main_py(self):
+        with patch.object(sys, "frozen", True, create=True):
+            argv = self.qa._qa_run_argv("PROJ-1", Path("/some/project"), "run-abc")
+        self.assertEqual(argv[0], sys.executable)
+        self.assertEqual(argv[1], "qa-run")
+        self.assertEqual(
+            argv[2:],
+            ["--project-path", str(Path("/some/project")), "--run-id", "run-abc", "PROJ-1"],
+        )
+
+    # ── 3.3 — Popen detached launcher (mockeado) ─────────────────────────────
+
+    def test_trigger_qa_launches_detached_popen_with_expected_kwargs(self):
+        fake_proc = Mock(pid=4242)
+        with patch("aicli.services.qa_orchestrator.subprocess.Popen", return_value=fake_proc) as mock_popen:
+            run_id = self.qa.trigger_qa(
+                ticket_id="PROJ-910", project_path=self.base, files=["a.py"],
+            )
+        self.assertIsNotNone(run_id)
+        mock_popen.assert_called_once()
+        args, kwargs = mock_popen.call_args
+        argv = args[0]
+        self.assertEqual(argv[0], sys.executable)
+        self.assertIn("qa-run", argv)
+        self.assertIn("PROJ-910", argv)
+        self.assertIn(run_id, argv)
+        self.assertEqual(kwargs["cwd"], str(self.base))
+        self.assertEqual(kwargs["stdin"], subprocess.DEVNULL)
+        self.assertEqual(kwargs["stderr"], subprocess.STDOUT)
+        self.assertTrue(kwargs["close_fds"])
+        if sys.platform == "win32":
+            expected_flags = (
+                subprocess.DETACHED_PROCESS
+                | subprocess.CREATE_NEW_PROCESS_GROUP
+                | subprocess.CREATE_NO_WINDOW
+            )
+            self.assertEqual(kwargs["creationflags"], expected_flags)
+        else:
+            self.assertTrue(kwargs.get("start_new_session"))
+
+        status_path = self.base / "qa_results" / "PROJ-910" / "status.json"
+        data = json.loads(status_path.read_text(encoding="utf-8"))
+        self.assertEqual(data["pid"], 4242)
+        self.assertEqual(data["state"], "pending")
+
+        run_log = self.base / "qa_results" / "PROJ-910" / "run.log"
+        self.assertTrue(run_log.exists())
+
+    # ── 3.4 — launch failure nunca propaga la excepción ──────────────────────
+
+    def test_trigger_qa_launch_failure_writes_error_status_never_raises(self):
+        with patch("aicli.services.qa_orchestrator.subprocess.Popen", side_effect=OSError("boom")):
+            run_id = self.qa.trigger_qa(
+                ticket_id="PROJ-911", project_path=self.base, files=["a.py"],
+            )
+        self.assertIsNone(run_id)
+        status_path = self.base / "qa_results" / "PROJ-911" / "status.json"
+        data = json.loads(status_path.read_text(encoding="utf-8"))
+        self.assertEqual(data["state"], "error")
+        self.assertEqual(data["reason"], "launch_failed")
+
+    # ── 3.3 real — spike S3, extremo a extremo, sin mocks ────────────────────
+
+    def test_trigger_qa_real_process_survives_and_completes(self):
+        run_id = self.qa.trigger_qa(
+            ticket_id="PROJ-912", project_path=self.base, files=["a.py"],
+        )
+        self.assertIsNotNone(run_id)
+        status_path = self.base / "qa_results" / "PROJ-912" / "status.json"
+
+        deadline = time.time() + 45
+        final_state = None
+        while time.time() < deadline:
+            try:
+                data = json.loads(status_path.read_text(encoding="utf-8"))
+            except (FileNotFoundError, json.JSONDecodeError):
+                data = {}
+            if data.get("state") == "done":
+                final_state = data
+                break
+            time.sleep(0.3)
+
+        self.assertIsNotNone(final_state, "el proceso detached nunca llegó a state=done")
+        self.assertEqual(final_state["run_id"], run_id)
+        self.assertIsInstance(final_state["pid"], int)
+
+        run_log = self.base / "qa_results" / "PROJ-912" / "run.log"
+        self.assertTrue(run_log.exists())
+
+
+class QaRunEntrypointTestCase(unittest.TestCase):
+    """Fase 3 — comando oculto `qa-run`: heartbeat mínimo + supersede cooperativo."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        os.environ["MYCONTEXT_HOME"] = self._tmp.name
+        import aicli.services.qa_orchestrator as qa_orchestrator
+        importlib.reload(qa_orchestrator)
+        self.qa = qa_orchestrator
+        import aicli.commands.qa_cmd as qa_cmd
+        importlib.reload(qa_cmd)
+        self.qa_cmd = qa_cmd
+        self.base = Path(self._tmp.name)
+
+    def tearDown(self):
+        os.environ.pop("MYCONTEXT_HOME", None)
+        self._tmp.cleanup()
+
+    def test_qa_run_exits_immediately_on_run_id_mismatch(self):
+        run_dir = self.qa._run_dir("PROJ-920")
+        status = self.qa._new_status("OLD-RUN", "PROJ-920", str(self.base), None)
+        self.qa._write_json_atomic(run_dir / "status.json", status)
+        before = json.loads((run_dir / "status.json").read_text(encoding="utf-8"))
+
+        self.qa_cmd.qa_run(ticket_id="PROJ-920", project_path=str(self.base), run_id="NEW-RUN")
+
+        after = json.loads((run_dir / "status.json").read_text(encoding="utf-8"))
+        self.assertEqual(before, after)
+
+    def test_qa_run_writes_heartbeats_and_finishes_done(self):
+        run_dir = self.qa._run_dir("PROJ-921")
+        status = self.qa._new_status("R1", "PROJ-921", str(self.base), None)
+        self.qa._write_json_atomic(run_dir / "status.json", status)
+
+        self.qa_cmd.qa_run(ticket_id="PROJ-921", project_path=str(self.base), run_id="R1")
+
+        final = json.loads((run_dir / "status.json").read_text(encoding="utf-8"))
+        self.assertEqual(final["state"], "done")
+        self.assertEqual(final["run_id"], "R1")
+        self.assertGreater(final["heartbeat"], status["heartbeat"])
 
 
 if __name__ == "__main__":

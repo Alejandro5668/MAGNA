@@ -31,7 +31,7 @@ import questionary
 from questionary import Style as QStyle
 from rich.console import Console
 from rich.rule import Rule
-from aicli.commands import status, init, archive, file_cmd, sync, task, claude_cmd, proyecto, profile
+from aicli.commands import status, init, archive, file_cmd, sync, task, claude_cmd, proyecto, profile, qa_cmd
 from aicli.db import init_db, engine
 
 init_db()
@@ -46,6 +46,7 @@ app.add_typer(task.app,       name="task")
 app.add_typer(claude_cmd.app, name="claude")
 app.add_typer(proyecto.app,   name="scan")
 app.add_typer(profile.app,    name="profile")
+app.add_typer(qa_cmd.app,     name="qa-run", hidden=True)
 
 console = Console()
 
