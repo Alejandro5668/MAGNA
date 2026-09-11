@@ -58,20 +58,35 @@ def ticket_history_text(ticket_id: str) -> str:
 
 def run_repro_stage(run_dir: Path, project_path: Path, ticket_id: str, ticket_history: str) -> dict:
     prompt_path = qa_prompts.build_repro_prompt(run_dir, ticket_id, ticket_history)
-    stdout = qa_prompts.invoke_stage(prompt_path, project_path)
-    return _finalize_stage_json(run_dir, "repro", REPRO_SCHEMA, stdout, {
-        "steps": [], "expected": None, "actual": None, "evidence": [], "notes": None,
-    })
+    defaults = {"steps": [], "expected": None, "actual": None, "evidence": [], "notes": None}
+    try:
+        stdout = qa_prompts.invoke_stage(prompt_path, project_path)
+    except subprocess.TimeoutExpired:
+        return _stage_timeout_result(run_dir, "repro", REPRO_SCHEMA, defaults)
+    return _finalize_stage_json(run_dir, "repro", REPRO_SCHEMA, stdout, defaults)
 
 
 # ── Stage: verify ─────────────────────────────────────────────────────────
 
 def run_verify_stage(run_dir: Path, project_path: Path, ticket_id: str, ticket_history: str) -> dict:
     prompt_path = qa_prompts.build_verify_prompt(run_dir, ticket_id, ticket_history)
-    stdout = qa_prompts.invoke_stage(prompt_path, project_path)
-    return _finalize_stage_json(run_dir, "verify", VERIFY_SCHEMA, stdout, {
-        "checks": [], "evidence": [], "db_reads": [],
-    })
+    defaults = {"checks": [], "evidence": [], "db_reads": []}
+    try:
+        stdout = qa_prompts.invoke_stage(prompt_path, project_path)
+    except subprocess.TimeoutExpired:
+        return _stage_timeout_result(run_dir, "verify", VERIFY_SCHEMA, defaults)
+    return _finalize_stage_json(run_dir, "verify", VERIFY_SCHEMA, stdout, defaults)
+
+
+def _stage_timeout_result(run_dir: Path, stage: str, schema: str, defaults: dict) -> dict:
+    """Un `subprocess.TimeoutExpired` de `invoke_stage` nunca debe propagar y
+    tumbar el pipeline completo — se normaliza al mismo `status:"error"` que
+    ya usa el JSON inparseable (design.md: 'Any stage error/timeout ⇒
+    error'), así el agregador lo trata exactamente igual que cualquier otro
+    error de stage sin necesitar un status "timeout" literal en el esquema."""
+    result = {"schema": schema, "status": "error", "error": "stage_timeout", **defaults}
+    _write_json_atomic(run_dir / f"{stage}.json", result)
+    return result
 
 
 def _finalize_stage_json(run_dir: Path, stage: str, schema: str, stdout: str, defaults: dict) -> dict:
