@@ -244,10 +244,17 @@ def invoke_stage(prompt_path: Path, cwd: Path, timeout: int = STAGE_TIMEOUT_SECO
     """Invoca `claude -p` headless apuntando al archivo de prompt (nunca el
     contenido completo por argv). Retorna stdout crudo; el llamador es
     responsable de parsearlo vía `qa_orchestrator._parse_agent_json()`.
-    Nunca `shell=True`; siempre list-argv."""
+    Nunca `shell=True`; siempre list-argv.
+
+    El proceso `qa-run` que llama a esto corre detached y sin consola propia
+    (`_popen_kwargs()` en qa_orchestrator.py) — sin `CREATE_NO_WINDOW` acá
+    también, Windows le abre una consola nueva a `claude` de la nada (visible,
+    en negro porque `capture_output=True` manda la salida a pipes, no a esa
+    ventana) por cada etapa del pipeline."""
     claude = _find_claude_windows() if platform.system() == "Windows" else None
     exe = str(claude) if claude else "claude"
     message = f"Read {prompt_path} and follow it exactly. Output ONLY the JSON object."
+    creationflags = subprocess.CREATE_NO_WINDOW if platform.system() == "Windows" else 0
     result = subprocess.run(
         [exe, "-p", message],
         cwd=str(cwd),
@@ -255,5 +262,6 @@ def invoke_stage(prompt_path: Path, cwd: Path, timeout: int = STAGE_TIMEOUT_SECO
         text=True,
         shell=False,
         timeout=timeout,
+        creationflags=creationflags,
     )
     return result.stdout
