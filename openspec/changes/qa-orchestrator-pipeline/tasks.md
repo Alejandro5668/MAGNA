@@ -53,20 +53,20 @@ Chain strategy: pending
 - [x] 3.3 `qa_orchestrator.py`: implemented `trigger_qa()` detached `Popen` launcher (re-enter via `sys.executable`, frozen-vs-dev argv via `_qa_run_argv`, stdout/stderr → `run.log`, exact S3-validated creationflags). Spike S3 passed, no redesign needed. **Deviation found and fixed**: the internal argv puts `--project-path`/`--run-id` BEFORE the `ticket_id` positional (not after, as tasks.md's literal invocation example showed) — Click/Typer's group-dispatch parsing (same `@app.callback(invoke_without_command=True)` pattern already used by `task.py`/`archive.py`) mis-parses `qa-run <TICKET> --opt val` as "TICKET is COMMAND, then unknown args", a pre-existing quirk of this project's whole CLI convention (reproduced identically with `ctx task "text" --archivo x.py`), not something new. Confirmed real end-to-end: `qa-run --project-path <p> --run-id <id> <TICKET>` works; the wrong order does not. `qa_cmd.py`'s help text/param names are unchanged — only the internally-generated argv order changed.
 - [x] 3.4 Launch-failure handling: wrapped 3.3 in try/except around the `open(run.log)` + `Popen(...)` call — any exception writes `status.json` `state:"error", reason:"launch_failed"` and `trigger_qa()` returns `None`; never raises into the caller.
 
-## Phase 4: Stage Prompts (depends on spikes 1.1, 1.2)
+## Phase 4: Stage Prompts (depends on spikes 1.1, 1.2) — ALL DONE (PR3)
 
-- [ ] 4.1 `qa_prompts.py`: repro role contract + template — zero fix-diff/commit references, outputs `reproduced`/`not_reproduced`.
-- [ ] 4.2 `qa_prompts.py`: verify role contract + template — browser + read-only DB only, outputs `pass`/`fail`.
-- [ ] 4.3 `qa_prompts.py`: corrector role contract + inlined `SECURITY_CHECKLIST` + diff-scoped context (`git diff` of touched files + `archivos_tocados`). Assumes no skill/MCP regardless of spike 1.1's result (design decision 5); result only adds an optional hint.
-- [ ] 4.4 Headless invocation helper — `subprocess.run([claude, "-p", ...], capture_output=True, timeout=STAGE_TIMEOUT)` reusing `caller._find_claude_windows()`. Blocked on spike 1.2; if flags differ, update before Phase 5.
+- [x] 4.1 `qa_prompts.py`: repro role contract + template — zero fix-diff/commit references, outputs `reproduced`/`not_reproduced`. **RED test forced a wording fix**: the first draft used the words "diff"/"commit" to instruct the agent NOT to look for them, which itself violated the isolation requirement's letter — reworded to "cambio de código", zero occurrences of "diff"/"commit" anywhere in the repro prompt.
+- [x] 4.2 `qa_prompts.py`: verify role contract + template — browser + read-only DB only, outputs `pass`/`fail`.
+- [x] 4.3 `qa_prompts.py`: corrector role contract + inlined `SECURITY_CHECKLIST` + diff-scoped context (`git diff` of touched files + `archivos_tocados`). Assumes no skill/MCP regardless of spike 1.1's result (design decision 5); result only adds an optional hint.
+- [x] 4.4 Headless invocation helper — `subprocess.run([claude, "-p", ...], capture_output=True, timeout=STAGE_TIMEOUT)` reusing `caller._find_claude_windows()`. Confirmed bare `-p` sufficient (spike S2, PR1) — plus a new spike run by THIS unit confirming Edit/Write tool use also works headlessly with no hang/no explicit permission-mode flag (see apply-progress; this was the explicitly-flagged unverified gap from PR2).
 
-## Phase 5: Stage Driver + Aggregator
+## Phase 5: Stage Driver + Aggregator — ALL DONE (PR3)
 
-- [ ] 5.1 `qa_runner.py`: stage sequencing repro → verify → regression (`npx playwright test`, `status:"skipped"` when `MAGNA_E2E_REPO` unset).
-- [ ] 5.2 `qa_runner.py`: aggregator truth table → `verdict.json`, sole writer of `qa_verified`. Bootstrap default: `regression: skipped` still permits `qa_verified: true` if `verify: pass` — revisit once `MAGNA_E2E_REPO` is standard.
-- [ ] 5.3 `qa_runner.py`: correction loop — max 2 attempts, edits scoped to `archivos_tocados`, notify at attempt start (`n/2`) and terminal state, one `_git` commit per attempt (`fix(qa-auto): corrección automática <n>/2 — <motivo>`).
-- [ ] 5.4 RED test: `not_reproduced` (doubtful) never starts a correction cycle.
-- [ ] 5.5 RED test: cap exhausted at 2 → `manual_review`, no 3rd attempt, never blocked/reverted.
+- [x] 5.1 `qa_runner.py`: stage sequencing repro → verify → regression (`npx playwright test`, `status:"skipped"` when `MAGNA_E2E_REPO` unset). **Scope note**: the Playwright JSON-reporter parsing is a reasonable stub over the documented `--reporter=json` shape (`stats.expected`/`stats.unexpected`) — not verified against a real Playwright run; full E2E integration is out of scope for this unit.
+- [x] 5.2 `qa_runner.py`: aggregator truth table → `verdict.json`, sole writer of `qa_verified`. Bootstrap default: `regression: skipped` still permits `qa_verified: true` if `verify: pass` — implemented exactly as confirmed. Full truth table incl. error/timeout paths gets dedicated test coverage in Phase 8 (PR5); this unit's tests cover only the paths the pipeline-level RED tests (5.4/5.5) plus the happy path exercise.
+- [x] 5.3 `qa_runner.py`: correction loop — max 2 attempts, edits scoped to `archivos_tocados`, one `_git` commit per attempt (`fix(qa-auto): correccion automatica <n>/2 - <motivo>`). **Deviation**: per-attempt/terminal notification is implemented as `status.json` `events[]` entries (`kind:"correction"`/`kind:"terminal"`) appended by the runner, NOT a direct `self.app.notify()` call — the runner is a detached process with no `self.app` handle (design decision 6 explicitly rules this out). Phase 7's TUI poller (PR4) is what turns each unseen event into an actual `app.notify()` call; this unit lays the exact event data Phase 7 consumes.
+- [x] 5.4 RED test: `not_reproduced` (doubtful) never starts a correction cycle.
+- [x] 5.5 RED test: cap exhausted at 2 → `manual_review`, no 3rd attempt, never blocked/reverted.
 
 ## Phase 6: `_sync_impl` Trigger Call Site
 
