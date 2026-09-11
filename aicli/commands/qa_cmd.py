@@ -2,26 +2,21 @@
 Punto de re-entrada oculto del pipeline de QA automático — lanzado como
 proceso OS detached por `qa_orchestrator.trigger_qa()` (Fase 3 del plan SDD).
 
-Esta unidad de trabajo NO ejecuta los stages reales del pipeline
-(repro/verify/regression/corrector, Fase 5) — únicamente prueba el mecanismo
-de detach: escribe heartbeats periódicos en `status.json` y termina en
-`state:"done"`, respetando el supersede cooperativo (si `status.json` ya
-tiene otro `run_id`, esta corrida se sabe reemplazada y sale sin escribir
-nada). Esto permite verificar el lanzador de punta a punta sin depender de
-la lógica de stages, todavía no implementada.
+Fase 5 (esta unidad): reemplaza el loop de heartbeat placeholder de la Fase 3
+por la secuencia real de stages — repro → verify → [regression] → aggregate
+→ [corrector] — delegada a `qa_runner.run_pipeline()`. El supersede
+cooperativo (design decision 6) se sigue respetando: si `status.json` ya
+tiene otro `run_id` en cualquier punto, el pipeline aborta sin escribir
+`verdict.json` ni tocar `status.json` de nuevo.
 """
-import time
+from pathlib import Path
 
 import typer
 
-from aicli.services.qa_orchestrator import _read_json_or_none, _run_dir, _write_json_atomic
+from aicli.services import qa_runner
+from aicli.services.qa_orchestrator import _read_json_or_none, _run_dir
 
 app = typer.Typer()
-
-# Placeholder de esta unidad — Fase 5 reemplaza este loop por la secuencia
-# real de stages (repro → verify → regression → aggregate → [corrector]).
-_HEARTBEAT_INTERVAL_SECONDS = 0.2
-_PLACEHOLDER_HEARTBEAT_TICKS = 3
 
 
 @app.callback(invoke_without_command=True)
@@ -34,19 +29,19 @@ def qa_run(
     run_dir = _run_dir(ticket_id)
     status_path = run_dir / "status.json"
 
-    for _ in range(_PLACEHOLDER_HEARTBEAT_TICKS):
-        status = _read_json_or_none(status_path)
-        if status is None or status.get("run_id") != run_id:
-            # Supersede cooperativo (design decision 6): una corrida más
-            # nueva ya reemplazó a esta — salir sin tocar nada.
-            return
-        status["heartbeat"] = time.time()
-        _write_json_atomic(status_path, status)
-        time.sleep(_HEARTBEAT_INTERVAL_SECONDS)
-
     status = _read_json_or_none(status_path)
     if status is None or status.get("run_id") != run_id:
+        # Supersede cooperativo (design decision 6): una corrida más nueva
+        # ya reemplazó a esta antes de arrancar — salir sin tocar nada.
         return
-    status["state"] = "done"
-    status["heartbeat"] = time.time()
-    _write_json_atomic(status_path, status)
+
+    qa_runner.run_pipeline(
+        ticket_id=ticket_id,
+        project_path=Path(project_path),
+        run_dir=run_dir,
+        run_id=run_id,
+        status_path=status_path,
+        ticket_history=qa_runner.ticket_history_text(ticket_id),
+        files=qa_runner.latest_touched_files(ticket_id),
+        branch=status.get("branch"),
+    )

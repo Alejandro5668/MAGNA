@@ -136,7 +136,7 @@ Blackboard: `~/.mycontext/qa_results/<TICKET>/` (reuse `tickets._safe_id()` for 
 | `aicli/services/qa_prompts.py` | Create | Role contracts, output schemas, `SECURITY_CHECKLIST` |
 | `aicli/commands/qa_cmd.py` | Create | Hidden `qa-run` Typer command (re-entry point) |
 | `main.py` | Modify | `app.add_typer(qa_cmd.app, name="qa-run")` |
-| `aicli/commands/sync.py` | Modify | One guarded `trigger_qa(...)` call after `clear_active_ticket()` (line ~416), inside `if save:` |
+| `aicli/commands/sync.py` | Modify | One guarded `trigger_qa(...)` call after `clear_active_ticket()` (line 439), inside `if save:` |
 | `aicli/tui/widgets.py` | Modify | `_fetch()` sets `t["_qa"]`; `_row()` appends badge; `on_mount` adds `set_interval(5.0, self._poll_qa)`; footer gains `[[e]] evidencia`; `on_key` handles `e` |
 | `aicli/tui/screens.py` | Modify | `LogScreen.__init__(log_path=None, title="MAGNA — Logs")`; `compose()` uses them |
 | `tests/test_qa_orchestrator.py` | Create | Unit + boundary tests (see Testing Strategy) |
