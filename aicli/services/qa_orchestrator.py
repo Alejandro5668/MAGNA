@@ -3,20 +3,25 @@ Orquestador de QA automático — dispara un pipeline de verificación headless
 tras cada `ctx sync`, comunicado únicamente por un blackboard de archivos en
 `~/.mycontext/qa_results/<TICKET>/`.
 
-Esta fase (Fase 2 del plan SDD) cubre la fundación: kill switch, layout del
-blackboard, esquemas JSON y el helper `_git` con lista de comandos prohibidos.
-El lanzamiento del proceso detached (Popen) que ejecuta el pipeline real se
-agrega en la siguiente unidad de trabajo (Fase 3) — `trigger_qa()` todavía
-NO lanza ningún subproceso; solo inicializa el blackboard y aplica el kill
-switch.
+Fase 2 (fundación): kill switch, layout del blackboard, esquemas JSON y el
+helper `_git` con lista de comandos prohibidos.
+
+Fase 3 (esta unidad): `trigger_qa()` ahora lanza el pipeline real como un
+proceso OS detached que re-entra al mismo binario vía el subcomando oculto
+`qa-run` (`aicli/commands/qa_cmd.py`). El lanzamiento nunca propaga una
+excepción al llamador — una falla se registra en `status.json` como
+`state:"error", reason:"launch_failed"` y `trigger_qa()` retorna `None`.
 """
 import json
 import os
+import platform
 import subprocess
+import sys
 import time
 import uuid
 from pathlib import Path
 
+import aicli
 from aicli.services.tickets import _base_dir, _safe_id
 
 # ── Esquemas (ver design.md — sección Interfaces) ────────────────────────────
@@ -96,6 +101,57 @@ def _new_status(run_id: str, ticket_id: str, project_path: str, branch: str | No
     }
 
 
+def _read_json_or_none(path: Path) -> dict | None:
+    """Lee un JSON del blackboard tolerando que el archivo no exista todavía
+    o esté siendo escrito (carrera con la escritura atómica del otro
+    proceso) — nunca levanta, retorna None en cualquier falla de lectura."""
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        return None
+
+
+# ── Lanzador detached: argv de re-entrada ────────────────────────────────────
+
+def _main_py() -> Path:
+    return Path(aicli.__file__).resolve().parents[1] / "main.py"
+
+
+def _qa_run_argv(ticket_id: str, project_path: Path, run_id: str) -> list[str]:
+    """Construye el argv de re-entrada al mismo binario vía el subcomando
+    oculto `qa-run`. En modo frozen (PyInstaller) `sys.executable` ya ES el
+    ejecutable de MAGNA; en modo dev hay que apuntar explícitamente a
+    `main.py`, porque `python -m ...` no existe para el binario empaquetado.
+
+    Las opciones van ANTES del argumento posicional `ticket_id` a propósito:
+    Click/Typer trata a `qa_cmd.app` como un grupo (por el
+    `@app.callback(invoke_without_command=True)`, igual que `task.py` y
+    `archive.py`), y un grupo intenta despachar el primer token no-opción
+    como subcomando en cuanto lo ve — poner el positional al final es la
+    única forma verificada de que el parseo no lo confunda con un
+    subcomando inexistente."""
+    if getattr(sys, "frozen", False):
+        prefix = [sys.executable, "qa-run"]
+    else:
+        prefix = [sys.executable, str(_main_py()), "qa-run"]
+    return [*prefix, "--project-path", str(project_path), "--run-id", run_id, ticket_id]
+
+
+def _popen_kwargs() -> dict:
+    """kwargs de detach validados por el spike S3: en Windows,
+    DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW; en otras
+    plataformas, start_new_session=True (setsid)."""
+    if platform.system() == "Windows":
+        return {
+            "creationflags": (
+                subprocess.DETACHED_PROCESS
+                | subprocess.CREATE_NEW_PROCESS_GROUP
+                | subprocess.CREATE_NO_WINDOW
+            )
+        }
+    return {"start_new_session": True}
+
+
 # ── Punto de entrada ──────────────────────────────────────────────────────────
 
 def trigger_qa(
@@ -110,10 +166,15 @@ def trigger_qa(
     Kill switch: si la variable de entorno MAGNA_QA vale "off", desactiva el
     pipeline por completo y retorna None sin tocar el blackboard.
 
+    Lanza el pipeline como un proceso OS detached que re-entra al mismo
+    binario (`qa-run <TICKET> --project-path <p> --run-id <id>`), con
+    stdin/stdout/stderr nunca heredados de la terminal — sobrevive al cierre
+    de la terminal o del TUI que lo disparó (spike S3).
+
     Retorna el run_id (uuid4) de la corrida iniciada, o None si está
-    deshabilitado. El lanzamiento real del proceso detached se agrega en la
-    Fase 3 (unidad de trabajo siguiente) — esta función todavía no lanza
-    ningún subproceso.
+    deshabilitado o si el lanzamiento falló. Una falla de lanzamiento NUNCA
+    propaga una excepción al llamador: se registra en status.json como
+    state:"error", reason:"launch_failed".
     """
     if os.environ.get("MAGNA_QA") == "off":
         return None
@@ -123,7 +184,30 @@ def trigger_qa(
     _reset_blackboard(run_dir)
 
     status = _new_status(run_id, ticket_id, str(project_path), branch)
-    _write_json_atomic(run_dir / "status.json", status)
+    status_path = run_dir / "status.json"
+    _write_json_atomic(status_path, status)
+
+    argv = _qa_run_argv(ticket_id, project_path, run_id)
+
+    try:
+        with open(run_dir / "run.log", "a", encoding="utf-8") as log:
+            proc = subprocess.Popen(
+                argv,
+                cwd=str(project_path),
+                stdin=subprocess.DEVNULL,
+                stdout=log,
+                stderr=subprocess.STDOUT,
+                close_fds=True,
+                **_popen_kwargs(),
+            )
+    except Exception:
+        status["state"] = "error"
+        status["reason"] = "launch_failed"
+        _write_json_atomic(status_path, status)
+        return None
+
+    status["pid"] = proc.pid
+    _write_json_atomic(status_path, status)
 
     return run_id
 
@@ -142,6 +226,74 @@ def _parse_agent_json(text: str) -> dict | None:
     except (ValueError, json.JSONDecodeError):
         return None
     return data if isinstance(data, dict) else None
+
+
+# ── Lectura de estado + badge para la superficie del TUI (Fase 7) ───────────
+#
+# Colores duplicados literalmente de la paleta MAGNA (aicli/tui/widgets.py:
+# _ACCENT/_OK/_WARN/_ERROR) en vez de importados: este módulo es un service,
+# nunca debe depender de aicli.tui (evita import circular — widgets.py SÍ
+# importa qa_orchestrator, nunca al revés).
+_BADGE_ACCENT = "#FFB703"
+_BADGE_OK = "#4ADE80"
+_BADGE_WARN = "#FBBF24"
+_BADGE_ERROR = "#F87171"
+
+# heartbeat > este umbral en un estado no-terminal ⇒ la corrida se considera
+# stale (proceso probablemente murió sin escribir el estado final).
+STALE_THRESHOLD_SECONDS = 600
+
+_TERMINAL_STATUS_STATES = {"done", "error"}
+
+
+def qa_evidence_log_path(ticket_id: str) -> Path:
+    """Ruta pública al `evidence.log` del ticket — para que el TUI no tenga
+    que alcanzar el helper privado `_run_dir` desde otro módulo (Requirement:
+    Evidence Viewable on Demand)."""
+    return _run_dir(ticket_id) / "evidence.log"
+
+
+def read_qa_status(ticket_id: str) -> dict | None:
+    """Lee status.json del blackboard del ticket, aplicando staleness: un
+    estado no-terminal cuyo heartbeat lleva más de STALE_THRESHOLD_SECONDS sin
+    refrescarse se marca `stale: True` (el proceso probablemente murió sin
+    escribir un estado final). Retorna None si nunca hubo una corrida."""
+    status = _read_json_or_none(_run_dir(ticket_id) / "status.json")
+    if status is None:
+        return None
+    if status.get("state") not in _TERMINAL_STATUS_STATES:
+        heartbeat = status.get("heartbeat") or 0
+        if (time.time() - heartbeat) > STALE_THRESHOLD_SECONDS:
+            status = {**status, "stale": True}
+    return status
+
+
+def read_qa_badge(ticket_id: str) -> dict | None:
+    """Traduce el estado del blackboard a un badge `{"ch","col","state"}` para
+    `TicketPanel._row()` — vocabulario exacto de qa-status-surface/spec.md:
+    none (retorna None) / in-progress / pass / fail / doubtful / manual-review
+    / error. Símbolo Y color siempre juntos — nunca color solo."""
+    status = read_qa_status(ticket_id)
+    if status is None:
+        return None
+    if status.get("stale") or status.get("state") == "error":
+        return {"ch": "⚠", "col": _BADGE_ERROR, "state": "error"}
+    if status.get("state") != "done":
+        return {"ch": "◔", "col": _BADGE_ACCENT, "state": "in-progress"}
+
+    verdict = _read_json_or_none(_run_dir(ticket_id) / "verdict.json")
+    verdict_name = (verdict or {}).get("verdict")
+    if verdict_name == "passed":
+        return {"ch": "✓", "col": _BADGE_OK, "state": "passed"}
+    if verdict_name == "manual_review":
+        return {"ch": "!", "col": f"bold {_BADGE_WARN}", "state": "manual-review"}
+    if verdict_name == "dudoso":
+        return {"ch": "?", "col": _BADGE_WARN, "state": "doubtful"}
+    if verdict_name == "failed":
+        return {"ch": "✗", "col": _BADGE_ERROR, "state": "failed"}
+    # state="done" pero verdict.json ilegible/ausente — no debería pasar en
+    # operación normal, pero nunca debe mostrarse como "passed" por defecto.
+    return {"ch": "⚠", "col": _BADGE_ERROR, "state": "error"}
 
 
 # ── Git seguro para el ciclo de corrección ───────────────────────────────────
