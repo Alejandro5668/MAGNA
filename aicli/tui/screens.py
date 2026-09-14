@@ -257,6 +257,16 @@ def _resume_jira_context(ticket_id: str) -> dict | None:
     comments = jira_mod.fetch_comments(ticket_id)
     cache = get_jira_cache(ticket_id)
     issue["comments"] = jira_mod.filter_new_comments(comments, cache.get("last_comment_id"))
+
+    parent = issue.get("parent")
+    if parent and parent.get("key"):
+        hermanos = [
+            h for h in jira_mod.fetch_subtasks(parent["key"])
+            if h.get("id", "").upper() != ticket_id.upper()
+        ]
+        issue["hermanos"] = hermanos
+        issue["historia"] = parent
+
     return issue
 
 
@@ -298,16 +308,50 @@ def _run_resume() -> None:
         pids_txt = ", ".join(str(p) for p in other_pids)
         console.print(f"[{_WARN}]⚠ {ticket_id} ya está abierto en otra terminal (PID {pids_txt})[/{_WARN}]")
 
-    history = format_history(ticket_id, tickets)
-    if history:
+    jira_data = None
+    while True:
+        history = format_history(ticket_id, tickets)
+        if history:
+            console.print()
+            console.print(RichPanel(
+                history,
+                title=f"[bold {_ACCENT}]Historial {ticket_id}[/bold {_ACCENT}]",
+                border_style=_ACCENT,
+            ))
+
+        jira_data = _resume_jira_context(ticket_id)
+        hermanos = (jira_data or {}).get("hermanos") or []
+        if not hermanos:
+            break
+
+        historia = jira_data.get("historia") or {}
+        resumen_historia = f"{historia.get('key', '')}  {historia.get('summary', '')}"
+        lineas_hermanos = "\n".join(
+            f"  {h.get('id', '')}  ({h.get('tipo', '')})  {h.get('status', '')} — {h.get('summary', '')}"
+            for h in hermanos
+        )
         console.print()
         console.print(RichPanel(
-            history,
-            title=f"[bold {_ACCENT}]Historial {ticket_id}[/bold {_ACCENT}]",
+            f"{resumen_historia}\n\n{lineas_hermanos}",
+            title=f"[bold {_ACCENT}]Hermanos de {ticket_id}[/bold {_ACCENT}]",
             border_style=_ACCENT,
         ))
 
-    jira_data = _resume_jira_context(ticket_id)
+        salto_choices = [questionary.Choice(f"  Seguir con {ticket_id}", value=ticket_id)]
+        salto_choices += [
+            questionary.Choice(f"  Saltar a {h.get('id', '')} ({h.get('tipo', '')})", value=h.get("id"))
+            for h in hermanos
+        ]
+        elegido = questionary.select(
+            "¿Seguís con este ticket o saltás a un hermano?",
+            choices=salto_choices, style=style,
+        ).ask()
+        if elegido is None:
+            return
+        if elegido == ticket_id:
+            break
+        ticket_id = elegido
+
     new_comments = (jira_data or {}).get("comments") or []
 
     console.print()
