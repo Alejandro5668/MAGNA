@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from pathlib import Path
-
 from rich.text import Text
 from textual.app import ComposeResult
 from textual.widget import Widget
@@ -39,29 +37,6 @@ _PRIO_BADGE = {
     "Medium": ("·", _SEC), "Media": ("·", _SEC),
     "Low": ("▽", _MUTED),  "Baja": ("▽", _MUTED), "Lowest": ("▽", _MUTED),
 }
-
-
-def _unseen_events(events: list[dict], last_seen_seq: int) -> list[dict]:
-    """Eventos de status.json con seq > last_seen_seq, en orden — función pura
-    (sin dependencia de Textual/App) para que `_poll_qa` sea testeable sin
-    montar un App real. Cubre tanto los eventos `kind:"correction"` como el
-    `kind:"terminal"` final (Requirement: Completion Notification — un solo
-    mecanismo de polling satisface ambos requisitos de notify())."""
-    return sorted(
-        (e for e in events if e.get("seq", 0) > last_seen_seq),
-        key=lambda e: e["seq"],
-    )
-
-
-def _question_modal_kind(question: dict) -> str:
-    """Traduce el `question` de un `awaiting_input` al tipo de modal a
-    mostrar — función pura (sin Textual) para que sea testeable sin montar
-    un App real. `"select"` solo si además vienen opciones; cualquier otro
-    caso (incluido `kind` ausente/desconocido) cae a `"text"`, el mismo
-    criterio permisivo que ya usa InputModal (no requiere opciones)."""
-    if question.get("kind") == "select" and question.get("options"):
-        return "select"
-    return "text"
 
 
 class TicketPanel(Widget):
@@ -125,11 +100,6 @@ class TicketPanel(Widget):
     def __init__(self) -> None:
         super().__init__()
         self._tickets: list[dict] = []
-        self._qa_seen_seq: dict[str, int] = {}
-        # Tickets con un modal de awaiting_input actualmente abierto — evita
-        # apilar un modal nuevo por ticket en cada poll de 5s mientras el
-        # usuario todavía no respondió el actual (ver _prompt_awaiting_input).
-        self._qa_awaiting: set[str] = set()
 
     def compose(self) -> ComposeResult:
         yield Static("  TICKETS", id="tp-header", markup=False)
@@ -137,13 +107,12 @@ class TicketPanel(Widget):
         yield Rule(id="tp-divider")
         yield Static("", id="tp-desc", markup=False)
         yield Static(
-            f"  [[↵]] iniciar tarea  ·  [[r]] refrescar  ·  [[e]] detalle QA",
+            f"  [[↵]] iniciar tarea  ·  [[r]] refrescar",
             id="tp-foot", markup=True,
         )
 
     def on_mount(self) -> None:
         self._fetch()
-        self.set_interval(5.0, self._poll_qa)
 
     @work(thread=True, exclusive=True)
     def _fetch(self) -> None:
@@ -170,15 +139,12 @@ class TicketPanel(Widget):
 
         flat.sort(key=lambda x: _PRIO_ORDER.get(x.get("priority", ""), 99))
 
-        from aicli.services.qa_orchestrator import read_qa_badge
-
         local = load_tickets()
         active_data = read_active_ticket()
         active_tid = active_data["ticket_id"] if active_data else None
         for t in flat:
             t["_rounds"] = len(local.get(t["id"], {}).get("rondas", []))
             t["_active"] = (t["id"] == active_tid)
-            t["_qa"] = read_qa_badge(t["id"])
 
         if not flat:
             self.app.call_from_thread(self._set_desc, "Sin tickets asignados en curso.")
@@ -214,9 +180,6 @@ class TicketPanel(Widget):
         txt.append(summary, style=_SEC)
         if t["_rounds"]:
             txt.append(f"  ⟳×{t['_rounds']}", style=_MUTED)
-        qa = t.get("_qa")            # {"ch": "✓", "col": _OK, "state": "passed"} | None
-        if qa:
-            txt.append("  " + qa["ch"], style=qa["col"])
         return txt
 
     def _update_desc(self, index: int) -> None:
@@ -250,96 +213,3 @@ class TicketPanel(Widget):
         if event.key == "r":
             self._fetch()
             event.stop()
-        elif event.key == "e":
-            self._open_qa_detail()
-            event.stop()
-
-    def _poll_qa(self) -> None:
-        """`set_interval(5.0, ...)` — corre en el hilo del event loop de
-        Textual (no un worker), por eso puede llamar `self.app.notify()`
-        directo, sin `call_from_thread` (design decision 6). Traduce cada
-        evento no visto de `status.json` (kind:"correction" o "terminal") en
-        un toast real y refresca el badge de la fila si cambió."""
-        if not self._tickets:
-            return
-        from aicli.services.qa_orchestrator import read_qa_status, read_qa_badge
-
-        try:
-            lv = self.query_one("#tp-list", ListView)
-        except Exception:
-            return
-
-        for idx, t in enumerate(self._tickets):
-            tid = t["id"]
-            status = read_qa_status(tid)
-            if status is None:
-                continue
-
-            last_seen = self._qa_seen_seq.get(tid, 0)
-            new_events = _unseen_events(status.get("events") or [], last_seen)
-            for ev in new_events:
-                self.app.notify(f"{tid}: {ev.get('msg', '')}", timeout=6)
-            if new_events:
-                self._qa_seen_seq[tid] = new_events[-1]["seq"]
-
-            badge = read_qa_badge(tid)
-            if badge != t.get("_qa"):
-                t["_qa"] = badge
-                try:
-                    item = lv.children[idx]
-                    item.query_one(Static).update(self._row(t))
-                except Exception:
-                    pass
-
-            if status.get("state") == "awaiting_input" and tid not in self._qa_awaiting:
-                self._prompt_awaiting_input(tid, status.get("question") or {})
-
-    def _prompt_awaiting_input(self, ticket_id: str, question: dict) -> None:
-        """Muestra el modal correspondiente a un `awaiting_input` pendiente.
-        `self._qa_awaiting` se marca ANTES de pushear el modal (nunca
-        después) y solo se libera cuando el modal se resuelve — así, si el
-        usuario tarda más de un ciclo de poll (5s) en responder, los polls
-        intermedios no apilan un modal nuevo encima."""
-        from aicli.tui.modals import InputModal, SelectModal
-
-        prompt = question.get("prompt") or "Se necesita una respuesta para continuar"
-        self._qa_awaiting.add(ticket_id)
-
-        if _question_modal_kind(question) == "select":
-            modal = SelectModal(prompt, question["options"])
-        else:
-            modal = InputModal(prompt)
-
-        self.app.push_screen(modal, callback=lambda value: self._on_qa_answer(ticket_id, value))
-
-    def _on_qa_answer(self, ticket_id: str, value: str | None) -> None:
-        """Callback del modal de awaiting_input. Sin respuesta (cancelado o
-        vacío) ⇒ no-op, el pipeline sigue pausado. Con respuesta ⇒ se
-        persiste y se reanuda la corrida (mismo Path.cwd() que el resto del
-        TUI usa para "el proyecto actual", ver _sync_impl)."""
-        self._qa_awaiting.discard(ticket_id)
-        if not value:
-            return
-        from aicli.services import qa_orchestrator
-
-        qa_orchestrator.write_qa_answer(ticket_id, value)
-        qa_orchestrator.resume_qa(ticket_id, Path.cwd())
-
-    def _open_qa_detail(self) -> None:
-        """[e] — abre el QaDetailScreen (resumen/progressive disclosure) del
-        ticket resaltado, en vez de saltar directo al log crudo (ese sigue
-        un keypress adentro, [l], sin regresión)."""
-        if not self._tickets:
-            return
-        try:
-            lv = self.query_one("#tp-list", ListView)
-            idx = lv.index or 0
-        except Exception:
-            idx = 0
-        if idx >= len(self._tickets):
-            return
-
-        tid = self._tickets[idx]["id"]
-        from aicli.tui.screens import QaDetailScreen
-
-        self.app.push_screen(QaDetailScreen(tid))
