@@ -92,6 +92,14 @@ def fetch_issue(ticket_id: str) -> dict | None:
             else (desc_raw or "")
         )
 
+        parent_raw = fields.get("parent")
+        parent = None
+        if parent_raw:
+            parent = {
+                "key": parent_raw.get("key", ""),
+                "summary": (parent_raw.get("fields") or {}).get("summary", ""),
+            }
+
         return {
             "id": ticket_id.upper(),
             "summary": fields.get("summary", ""),
@@ -101,10 +109,37 @@ def fetch_issue(ticket_id: str) -> dict | None:
             "reporter": (fields.get("reporter") or {}).get("displayName", ""),
             "assignee": (fields.get("assignee") or {}).get("displayName", ""),
             "attachments": fields.get("attachment", []),
+            "parent": parent,
         }
     except Exception as e:
         logging.warning("jira.fetch_issue %s — %s", ticket_id, e)
         return None
+
+
+def fetch_subtasks(parent_key: str) -> list[dict]:
+    """Trae los subtasks hermanos de un ticket, a partir de su parent
+    (metodología 1 historia = N subtasks). Solo pide el campo subtasks."""
+    import httpx
+    url = f"{os.getenv('JIRA_URL')}/rest/api/3/issue/{parent_key}"
+    params = {"fields": "subtasks"}
+    try:
+        resp = httpx.get(url, headers=_headers(), params=params, timeout=10)
+        if resp.status_code != 200:
+            logging.warning("jira.fetch_subtasks %s — HTTP %d", parent_key, resp.status_code)
+            return []
+        raw_subtasks = (resp.json().get("fields", {}) or {}).get("subtasks", [])
+        return [
+            {
+                "id": s.get("key", ""),
+                "summary": (s.get("fields") or {}).get("summary", ""),
+                "status": ((s.get("fields") or {}).get("status") or {}).get("name", ""),
+                "tipo": ((s.get("fields") or {}).get("issuetype") or {}).get("name", ""),
+            }
+            for s in raw_subtasks
+        ]
+    except Exception as e:
+        logging.warning("jira.fetch_subtasks %s — %s", parent_key, e)
+        return []
 
 
 _MAX_COMMENTS = 20
