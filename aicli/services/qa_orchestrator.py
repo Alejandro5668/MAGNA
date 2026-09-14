@@ -15,6 +15,7 @@ excepción al llamador — una falla se registra en `status.json` como
 import json
 import os
 import platform
+import re
 import subprocess
 import sys
 import time
@@ -31,13 +32,36 @@ REPRO_SCHEMA = "qa.repro/1"
 VERIFY_SCHEMA = "qa.verify/1"
 REGRESSION_SCHEMA = "qa.regression/1"
 VERDICT_SCHEMA = "qa.verdict/1"
+ENV_SCHEMA = "qa.env/1"
+REVIEW_SCHEMA = "qa.review/1"
+
+# Allowlist cerrada de categorías de seguridad que SÍ pueden mover un
+# veredicto (design.md, decision 13) — la severidad que reporte el agente
+# de review es decorativa, solo se escribe a evidence.log. Un vocabulario
+# cerrado hace que el conjunto bloqueante sea revisable/diffable/testeable,
+# y una categoría inventada o desconocida degrada a advisory en vez de a
+# un veredicto aleatorio.
+BLOCKING_SECURITY_CATEGORIES = frozenset({
+    "sql_injection", "command_injection", "path_traversal", "unsafe_deserialization",
+    "credential_exposure", "sensitive_data_exposure",
+    "auth_bypass", "authorization_bypass", "xss", "ssrf",
+})
 
 # Artefactos de una corrida anterior que deben descartarse al superseder
 # (nunca se mezclan corridas de distinto run_id).
 _STAGE_ARTIFACTS = (
     "status.json", "repro.json", "verify.json", "regression.json",
-    "verdict.json", "evidence.log",
+    "review.json", "verdict.json", "evidence.log",
 )
+
+# Artefacto persistido POR TICKET — deliberadamente fuera de
+# `_STAGE_ARTIFACTS` (design.md decision 8): `_reset_blackboard()` solo
+# itera `_STAGE_ARTIFACTS`, así que este archivo sobrevive a todo
+# `trigger_qa()`/`resume_qa()` por construcción, sin necesitar un caso
+# especial en el loop de reset.
+_ENV_CONTEXT_FILE = "env_context.json"
+_PERSISTENT_ARTIFACTS = (_ENV_CONTEXT_FILE,)
+assert not (set(_PERSISTENT_ARTIFACTS) & set(_STAGE_ARTIFACTS))
 
 # Comandos de git prohibidos para el helper `_git` — nunca se ejecuta código
 # de red ni se cambia de branch/estado desde el pipeline automático.
@@ -109,6 +133,147 @@ def _read_json_or_none(path: Path) -> dict | None:
         return json.loads(path.read_text(encoding="utf-8"))
     except (FileNotFoundError, json.JSONDecodeError, OSError):
         return None
+
+
+# ── Entorno confirmado por ticket (design decisions 8/9) ─────────────────────
+#
+# `_default_db_hint`/`_default_url_hint`/`_NO_CONFIGURADA` viven acá (no en
+# qa_prompts.py) porque `env_preflight()` los necesita y qa_prompts.py YA
+# importa de este módulo — importar en la otra dirección crearía un ciclo.
+# qa_prompts.py importa estos tres símbolos de acá en vez de duplicarlos.
+
+_NO_CONFIGURADA = "(no configurada)"
+
+
+def _default_db_hint() -> str:
+    return os.environ.get("MAGNA_QA_DEFAULT_DB") or _NO_CONFIGURADA
+
+
+def _default_url_hint() -> str:
+    return os.environ.get("MAGNA_QA_APP_URL") or _NO_CONFIGURADA
+
+
+def _consume_answer(run_dir: Path) -> str | None:
+    """Lee `run_dir/answer.json` y lo borra de inmediato — read-and-consume,
+    para que un resume posterior no relacionado con esta pregunta nunca
+    reuse una respuesta vieja. Vive acá (no en qa_prompts.py) porque
+    `env_preflight()` también lo necesita; qa_prompts.py delega a esta
+    misma función en vez de duplicarla."""
+    path = run_dir / "answer.json"
+    data = _read_json_or_none(path)
+    if data is None:
+        return None
+    path.unlink(missing_ok=True)
+    return data.get("value")
+
+
+_ENV_ANSWER_MAX_LEN = 300
+# Extracción estricta "db=<algo> url=<algo>" — cada mitad rechaza espacios,
+# backticks, punto y coma y saltos de línea (threat matrix: subprocess/shell
+# composition). Un input que no calza exactamente este patrón se rechaza
+# entero, nunca se acepta parcialmente.
+_ENV_ANSWER_RE = re.compile(r"^db=(?P<db>[^\s`;\r\n]+)\s+url=(?P<url>[^\s`;\r\n]+)$")
+
+
+def _parse_env_answer(value: str) -> tuple[str | None, str | None]:
+    """Parsea la respuesta de texto libre del usuario al pre-flight de
+    entorno ("db=<nombre> url=<http://…>"). Nunca levanta: cualquier input
+    inválido, peligroso o desmesuradamente largo retorna (None, None) — el
+    llamador (`env_preflight`) lo trata como "hay que volver a preguntar",
+    nunca como un valor parcialmente confiable."""
+    if not value or len(value) > _ENV_ANSWER_MAX_LEN:
+        return None, None
+    if any(ch in value for ch in ("`", ";", "\n", "\r")):
+        return None, None
+    match = _ENV_ANSWER_RE.match(value.strip())
+    if not match:
+        return None, None
+    return match.group("db"), match.group("url")
+
+
+def read_env_context(run_dir: Path) -> dict | None:
+    """Lee `env_context.json` — persiste fuera de `_STAGE_ARTIFACTS`, así
+    que sobrevive a todo `_reset_blackboard()` (design.md, decision 8)."""
+    return _read_json_or_none(run_dir / _ENV_CONTEXT_FILE)
+
+
+def write_env_context(run_dir: Path, *, db: str, url: str, source: str) -> dict:
+    """Escribe (atómico) la confirmación de entorno del ticket. `source` es
+    `"user"` (el usuario tipeó db=/url= a mano) o `"default_confirmed"` (el
+    usuario aceptó el default de `MAGNA_QA_DEFAULT_DB`/`MAGNA_QA_APP_URL`)."""
+    env = {
+        "schema": ENV_SCHEMA, "db": db, "url": url,
+        "source": source, "confirmed_at": time.time(),
+    }
+    _write_json_atomic(run_dir / _ENV_CONTEXT_FILE, env)
+    return env
+
+
+def clear_env_context(run_dir: Path) -> None:
+    """Borra `env_context.json` — usado cuando un repro `blocked` fuerza
+    una re-confirmación de entorno (design decision 11). No-op si el
+    archivo no existe, nunca levanta."""
+    (run_dir / _ENV_CONTEXT_FILE).unlink(missing_ok=True)
+
+
+_ENV_OTRO_LABEL = "Otro (escribir db y url a mano)"
+
+
+def _env_select_question(ticket_id: str) -> dict:
+    default_label = f"DB: {_default_db_hint()} · URL: {_default_url_hint()}"
+    return {
+        "kind": "select", "topic": "env",
+        "prompt": f"QA {ticket_id} — ¿contra qué DB/URL verifico?",
+        "options": [default_label, _ENV_OTRO_LABEL],
+    }
+
+
+def _env_text_question(ticket_id: str) -> dict:
+    return {
+        "kind": "text", "topic": "env", "options": None,
+        "prompt": f"QA {ticket_id} — escribí el entorno así: db=<nombre> url=<http://…>",
+    }
+
+
+def env_preflight(run_dir: Path, ticket_id: str) -> tuple[dict | None, dict | None]:
+    """Pre-flight puro Python (0 tokens) — Requirement: Pre-Flight DB/URL
+    Confirmation. Retorna exactamente uno de `(env, None)` (contexto listo
+    para usar) o `(None, question)` (el llamador debe pausar vía
+    `_finalize_awaiting_input`). Invariante que resuelve a qué pregunta
+    pertenece un `answer.json` pendiente: se consume acá SI Y SOLO SI
+    `env_context.json` todavía no existe, porque el contexto se escribe
+    antes del stage uno y nunca se resetea — ningún answer de
+    verify/corrector puede estar pendiente mientras falta.
+
+    Estados:
+    - contexto ya confirmado ⇒ (env, None), `answer.json` NUNCA se toca.
+    - sin contexto y sin respuesta pendiente ⇒ (None, pregunta select).
+    - respuesta "Otro…" ⇒ (None, pregunta text), sin escribir contexto.
+    - respuesta parseable ("db=… url=…") ⇒ escribe env_context.json,
+      retorna (env, None).
+    - respuesta no parseable (threat matrix) ⇒ (None, pregunta text de
+      nuevo), sin escribir contexto — nunca acepta un valor parcial."""
+    env = read_env_context(run_dir)
+    if env is not None:
+        return env, None
+
+    answer = _consume_answer(run_dir)
+    if answer is None:
+        return None, _env_select_question(ticket_id)
+
+    if answer == _ENV_OTRO_LABEL:
+        return None, _env_text_question(ticket_id)
+
+    default_db, default_url = _default_db_hint(), _default_url_hint()
+    default_label = f"DB: {default_db} · URL: {default_url}"
+    if answer == default_label and default_db != _NO_CONFIGURADA and default_url != _NO_CONFIGURADA:
+        return write_env_context(run_dir, db=default_db, url=default_url, source="default_confirmed"), None
+
+    db, url = _parse_env_answer(answer)
+    if db is None or url is None:
+        return None, _env_text_question(ticket_id)
+
+    return write_env_context(run_dir, db=db, url=url, source="user"), None
 
 
 # ── Lanzador detached: argv de re-entrada ────────────────────────────────────

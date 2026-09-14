@@ -23,11 +23,13 @@ import threading
 from pathlib import Path
 
 from aicli.services.caller import _find_claude_windows
-from aicli.services.qa_orchestrator import _read_json_or_none
+from aicli.services.qa_orchestrator import (
+    _consume_answer,
+    _default_db_hint,
+    _default_url_hint,
+)
 
 STAGE_TIMEOUT_SECONDS = 600
-
-_NO_CONFIGURADA = "(no configurada)"
 
 # Variables que NUNCA deben llegarle al subproceso `claude -p`: si están
 # seteadas (p. ej. un .env de proyecto con ANTHROPIC_API_KEY para el indexer
@@ -40,27 +42,6 @@ _STRIP_ENV_VARS = ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN")
 
 def _subprocess_env() -> dict:
     return {k: v for k, v in os.environ.items() if k not in _STRIP_ENV_VARS}
-
-
-def _default_db_hint() -> str:
-    return os.environ.get("MAGNA_QA_DEFAULT_DB") or _NO_CONFIGURADA
-
-
-def _default_url_hint() -> str:
-    return os.environ.get("MAGNA_QA_APP_URL") or _NO_CONFIGURADA
-
-
-def _consume_answer(run_dir: Path) -> str | None:
-    """Lee `run_dir/answer.json` (escrito por
-    `qa_orchestrator.write_qa_answer` antes de un resume) y lo borra de
-    inmediato — read-and-consume, para que un resume posterior no relacionado
-    con esta pregunta nunca reuse una respuesta vieja."""
-    path = run_dir / "answer.json"
-    data = _read_json_or_none(path)
-    if data is None:
-        return None
-    path.unlink(missing_ok=True)
-    return data.get("value")
 
 
 _DB_ACCESS_RULE = """
@@ -118,11 +99,37 @@ def _write_prompt(run_dir: Path, stage: str, content: str) -> Path:
     return path
 
 
-def build_repro_prompt(run_dir: Path, ticket_id: str, ticket_history: str) -> Path:
+_REPRO_ISOLATION_CLAUSE = """
+## Aislamiento del diff de la corrección (obligatorio)
+
+No busques ni inspecciones el diff de la corrección, el mensaje de commit, ni
+el historial reciente del repositorio. Tenés PROHIBIDO ejecutar `git log`,
+`git diff`, `git show` o `git blame`, o leer commits recientes de cualquier
+otra forma. Actuá como si no supieras si el proyecto ya fue modificado para
+atender este reporte.
+""".strip()
+
+
+def _confirmed_env_block(env: dict) -> str:
+    return f"""## Entorno confirmado para este ticket
+
+- Base de datos: {env.get("db")}
+- URL: {env.get("url")}
+
+Usá este entorno — ya fue confirmado por el usuario, no preguntes por otro.""".strip()
+
+
+def build_repro_prompt(run_dir: Path, ticket_id: str, ticket_history: str, env: dict) -> Path:
     """Prompt de repro — Requirement: Repro Stage Isolation. SOLO recibe el
-    reporte/historial original del ticket; NUNCA debe contener ninguna
-    referencia al diff de la corrección, al mensaje de commit, ni a que un
-    fix ya fue aplicado."""
+    reporte/historial original del ticket más el entorno YA confirmado
+    (`env_preflight`, design decision 9); NUNCA recibe (ni tiene parámetro
+    capaz de cargar) el diff de la corrección, el mensaje de commit, ni la
+    lista de archivos tocados — deliberadamente no gana `_answer_block()`
+    (podría nombrar el fix) ni `_default_config_block()` (invita a
+    arqueología del repo). El aislamiento es estructural (firma sin
+    parámetro de diff/files/commit) más una cláusula anti-lookup explícita:
+    un scan de texto sería derrotado por la cláusula misma, que necesita
+    nombrar `diff`/`commit` para prohibirlos (design.md, decision 10)."""
     content = f"""# Rol: QA Repro Agent
 
 Tu única tarea es intentar reproducir el bug reportado para el ticket
@@ -130,25 +137,36 @@ Tu única tarea es intentar reproducir el bug reportado para el ticket
 ni asumas ningún cambio de código relacionado — actuá como si no supieras
 si el proyecto ya fue modificado para atender este reporte.
 
+{_DB_ACCESS_RULE}
+
+{_confirmed_env_block(env)}
+
+{_REPRO_ISOLATION_CLAUSE}
+
 ## Reporte / historial del ticket
 
 {ticket_history or "(sin historial adicional)"}
 
 ## Qué hacer
 
-1. Intentá reproducir el bug siguiendo los pasos reportados.
+1. Intentá reproducir el bug siguiendo los pasos reportados, usando el
+   entorno confirmado arriba.
 2. Registrá los pasos que seguiste, el resultado esperado y el resultado real.
+3. Si la base de datos o el navegador no responden o te bloquean el intento
+   a mitad de camino, NO inventes un resultado: marcá "status": "blocked" y
+   contá qué pasó en "blocked_reason".
 
 ## Formato de salida — ÚNICAMENTE este JSON, sin texto adicional
 
 {{
   "schema": "qa.repro/1",
-  "status": "reproduced" | "not_reproduced",
+  "status": "reproduced" | "not_reproduced" | "blocked",
   "steps": ["paso 1", "paso 2"],
   "expected": "...",
   "actual": "...",
   "evidence": [],
-  "notes": "..."
+  "notes": "...",
+  "blocked_reason": null
 }}
 """
     return _write_prompt(run_dir, "repro", content)
@@ -251,6 +269,72 @@ edites ningún otro archivo.
 }}
 """
     return _write_prompt(run_dir, f"correction_{attempt}", content)
+
+
+REVIEW_CONDUCT_RULES = """
+## Reglas de conducta (SIEMPRE, sin excepción)
+
+- Esto es una revisión de SOLO LECTURA: nunca edites archivos, nunca hagas
+  `git add`/`git commit`, y nunca corras migraciones ni escrituras de base
+  de datos.
+- Limitate a inspeccionar el diff y los archivos tocados provistos abajo —
+  nunca el repositorio completo.
+- Nunca ejecutes `git push`, `git fetch`, `git pull`, `git reset`,
+  `git checkout` a otra rama, ni ningún comando que toque un remoto.
+""".strip()
+
+
+def build_review_prompt(run_dir: Path, ticket_id: str, archivos_tocados: list[str], git_diff: str) -> Path:
+    """Prompt de review — Requirement: Review Stage Contract. Recibe
+    ÚNICAMENTE el diff de la corrección y la lista de archivos tocados
+    (nunca el repo completo — threat matrix: diff scope blowout, resuelto
+    en la capa de arriba por `_review_diff`). Pide dos secciones
+    estructuralmente separadas — `security` y `quality` — porque el
+    agregador solo puede juzgar `security` contra un allowlist cerrado
+    (design.md, decision 13); `quality` es siempre asesoramiento."""
+    files_list = "\n".join(f"- {f}" for f in archivos_tocados) or "(ninguno registrado)"
+    content = f"""# Rol: QA Review Agent
+
+Tu tarea es revisar el diff de la corrección aplicada para el ticket
+{ticket_id}. Revisá ÚNICAMENTE lo que está en el diff de abajo, nunca el
+repositorio completo.
+
+{REVIEW_CONDUCT_RULES}
+
+## Archivos tocados
+
+{files_list}
+
+## Diff a revisar
+
+```diff
+{git_diff or "(sin diff disponible)"}
+```
+
+## Qué hacer
+
+1. Buscá hallazgos de seguridad. Nombrá la categoría con la mayor precisión
+   posible (por ejemplo: sql_injection, command_injection, path_traversal,
+   unsafe_deserialization, credential_exposure, sensitive_data_exposure,
+   auth_bypass, authorization_bypass, xss, ssrf, u otra si no calza en
+   ninguna de estas). La severidad que reportes es solo informativa — no
+   decide nada por su cuenta.
+2. Buscá hallazgos de calidad (duplicación, código muerto, convención) por
+   separado — nunca afectan el veredicto final.
+
+## Formato de salida — ÚNICAMENTE este JSON, sin texto adicional
+
+{{
+  "schema": "qa.review/1",
+  "status": "ok",
+  "security": {{"findings": [{{"category": "...", "file": "...", "line": 0,
+                              "detail": "...", "severity": "..."}}]}},
+  "quality": {{"findings": [{{"kind": "...", "file": "...", "line": 0,
+                             "detail": "...", "existing": "..."}}]}},
+  "error": null
+}}
+"""
+    return _write_prompt(run_dir, "review", content)
 
 
 def invoke_stage(

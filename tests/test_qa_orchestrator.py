@@ -381,12 +381,26 @@ class LaunchTestCase(unittest.TestCase):
     # ── 3.3 real — spike S3, extremo a extremo, sin mocks ────────────────────
 
     def test_trigger_qa_real_process_survives_and_completes(self):
+        # Pre-flight de entorno ya confirmado — este spike prueba el
+        # lanzamiento detached extremo a extremo, no el gate de env
+        # pre-flight (cubierto por EnvPreflightPipelineWiringTestCase);
+        # sin esto, el proceso real pausaría en awaiting_input y nunca
+        # llegaría a state=done dentro del deadline.
+        self.qa.write_env_context(
+            self.qa._run_dir("PROJ-912"), db="test_db", url="http://localhost:3000", source="user",
+        )
         run_id = self.qa.trigger_qa(
             ticket_id="PROJ-912", project_path=self.base, files=["a.py"],
         )
         self.assertIsNotNone(run_id)
         status_path = self.base / "qa_results" / "PROJ-912" / "status.json"
 
+        # "done" o "awaiting_input" son ambos terminales-para-este-spike: el
+        # repro real, sin ticket ni bug report reales, puede legítimamente
+        # reportar "blocked" (no tiene nada que reproducir ni acceso a
+        # DB/navegador) y pausar por el canal de entorno — lo que este spike
+        # prueba es que el proceso detached sobrevive y termina escribiendo
+        # ALGÚN estado, no qué verdict de negocio produce el agente real.
         deadline = time.time() + 45
         final_state = None
         while time.time() < deadline:
@@ -394,12 +408,12 @@ class LaunchTestCase(unittest.TestCase):
                 data = json.loads(status_path.read_text(encoding="utf-8"))
             except (FileNotFoundError, json.JSONDecodeError):
                 data = {}
-            if data.get("state") == "done":
+            if data.get("state") in ("done", "awaiting_input"):
                 final_state = data
                 break
             time.sleep(0.3)
 
-        self.assertIsNotNone(final_state, "el proceso detached nunca llegó a state=done")
+        self.assertIsNotNone(final_state, "el proceso detached nunca llegó a un estado terminal")
         self.assertEqual(final_state["run_id"], run_id)
         self.assertIsInstance(final_state["pid"], int)
 
@@ -516,15 +530,54 @@ class QaPromptsTestCase(unittest.TestCase):
         os.environ.pop("MAGNA_QA_APP_URL", None)
         self._tmp.cleanup()
 
-    # ── 4.1 — Requirement: Repro Stage Isolation ─────────────────────────────
+    # ── 2.1/2.2 — Requirement: Repro Stage Isolation (updated for env +
+    # anti-lookup clause — a rendered-text scan for "diff"/"commit" is
+    # defeated by the isolation clause itself, which must NAME them to
+    # forbid them; the durable guarantee is structural: no diff/files/commit
+    # PARAMETER, never actual diff content in the prompt) ────────────────────
 
-    def test_repro_prompt_never_mentions_fix_diff_or_commit(self):
-        path = self.qp.build_repro_prompt(self.run_dir, "PROJ-1", "historial de ejemplo")
-        content = path.read_text(encoding="utf-8").lower()
-        self.assertNotIn("diff", content)
-        self.assertNotIn("commit", content)
+    def test_repro_prompt_signature_has_no_diff_files_commit_parameter(self):
+        import inspect
+        params = list(inspect.signature(self.qp.build_repro_prompt).parameters)
+        self.assertEqual(params, ["run_dir", "ticket_id", "ticket_history", "env"])
+        for forbidden in ("diff", "files", "commit", "archivos_tocados", "git_diff"):
+            self.assertNotIn(forbidden, params)
+
+    def test_repro_prompt_isolation_clause_present_no_actual_diff_content(self):
+        env = {"db": "magna_test", "url": "http://localhost:3000"}
+        path = self.qp.build_repro_prompt(self.run_dir, "PROJ-1", "historial de ejemplo", env)
+        content = path.read_text(encoding="utf-8")
         self.assertIn("qa.repro/1", content)
         self.assertIn("not_reproduced", content)
+        self.assertIn("blocked", content)
+        # la clausula de aislamiento NOMBRA los comandos prohibidos —
+        # eso es lo que la hace testeable/segura, no un scan de texto.
+        self.assertIn("git diff", content)
+        self.assertIn("git log", content)
+        self.assertIn("git show", content)
+        self.assertIn("git blame", content)
+        # pero jamás contiene un diff REAL (ningún hunk, ningún fence ```diff)
+        self.assertNotIn("```diff", content)
+        self.assertNotIn("@@", content)
+        self.assertIn("magna_test", content)
+        self.assertIn("http://localhost:3000", content)
+
+    def test_repro_prompt_has_no_answer_block_or_default_config_block(self):
+        # No gana _answer_block() (podría nombrar el fix) ni
+        # _default_config_block() (invita a arqueología del repo) —
+        # design.md decision 10.
+        answer_path = self.run_dir / "answer.json"
+        answer_path.parent.mkdir(parents=True, exist_ok=True)
+        answer_path.write_text(json.dumps({"value": "usar staging"}), encoding="utf-8")
+        env = {"db": "magna_test", "url": "http://localhost:3000"}
+
+        path = self.qp.build_repro_prompt(self.run_dir, "PROJ-1", "historial", env)
+
+        content = path.read_text(encoding="utf-8").lower()
+        self.assertNotIn("ya respondió esto", content)
+        self.assertNotIn("configuración por defecto", content)
+        # el answer.json NUNCA es consumido por repro — otro stage lo usará
+        self.assertTrue(answer_path.exists())
 
     # ── 4.2 — Requirement: Verify Stage Contract ─────────────────────────────
 
@@ -671,8 +724,11 @@ class QaPromptsTestCase(unittest.TestCase):
         self.assertIn("libertad total de lectura", content)
 
     def test_repro_prompt_has_no_needs_input_field(self):
-        # repro no necesita DB/URL — fuera de alcance (ver brief).
-        path = self.qp.build_repro_prompt(self.run_dir, "PROJ-1", "historial")
+        # repro recibe el DB/URL YA confirmado por env_preflight — nunca
+        # necesita preguntar por su cuenta (needs_input es exclusivo de
+        # verify/corrector).
+        env = {"db": "magna_test", "url": "http://localhost:3000"}
+        path = self.qp.build_repro_prompt(self.run_dir, "PROJ-1", "historial", env)
         content = path.read_text(encoding="utf-8")
         self.assertNotIn("needs_input", content)
 
@@ -754,14 +810,14 @@ class QaRunnerStageTestCase(unittest.TestCase):
 
     def test_run_repro_stage_writes_repro_json_from_agent_output(self):
         with patch.object(self.runner.qa_prompts, "invoke_stage", return_value='{"status": "reproduced", "steps": []}'):
-            result = self.runner.run_repro_stage(self.run_dir, self.project_path, "PROJ-1", "hist")
+            result = self.runner.run_repro_stage(self.run_dir, self.project_path, "PROJ-1", "hist", {"db": "x", "url": "y"})
         self.assertEqual(result["status"], "reproduced")
         data = json.loads((self.run_dir / "repro.json").read_text(encoding="utf-8"))
         self.assertEqual(data["status"], "reproduced")
 
     def test_run_repro_stage_unparseable_output_is_stage_error(self):
         with patch.object(self.runner.qa_prompts, "invoke_stage", return_value="no es json"):
-            result = self.runner.run_repro_stage(self.run_dir, self.project_path, "PROJ-1", "hist")
+            result = self.runner.run_repro_stage(self.run_dir, self.project_path, "PROJ-1", "hist", {"db": "x", "url": "y"})
         self.assertEqual(result["status"], "error")
         self.assertTrue((self.run_dir / "raw" / "repro.txt").exists())
 
@@ -867,6 +923,10 @@ class QaRunnerPipelineTestCase(unittest.TestCase):
         status = self.qa._new_status(self.run_id, "PROJ-930", str(self.base), "fix/PROJ-930")
         self.status_path = self.run_dir / "status.json"
         self.qa._write_json_atomic(self.status_path, status)
+        # Pre-flight de entorno ya confirmado — esta clase testea la
+        # orquestación POST-pre-flight; EnvPreflightPipelineWiringTestCase
+        # (más abajo) cubre el gate en sí, sin este seed.
+        self.qa.write_env_context(self.run_dir, db="magna_test", url="http://localhost:3000", source="user")
 
     def tearDown(self):
         os.environ.pop("MYCONTEXT_HOME", None)
@@ -875,7 +935,11 @@ class QaRunnerPipelineTestCase(unittest.TestCase):
     # ── 5.4 — RED: not_reproduced never starts correction ────────────────────
 
     def test_pipeline_not_reproduced_never_starts_correction(self):
-        repro_fn = Mock(return_value={"schema": self.qa.REPRO_SCHEMA, "status": "not_reproduced"})
+        # steps no vacío — distingue de la normalización "sin evidencia de
+        # intento" (repro_no_attempt_evidence) que ahora recibe manual_review.
+        repro_fn = Mock(return_value={
+            "schema": self.qa.REPRO_SCHEMA, "status": "not_reproduced", "steps": ["intenté reproducir"],
+        })
         verify_fn = Mock()
         correction_fn = Mock()
 
@@ -1272,6 +1336,7 @@ class QaPipelineEvidenceIntegrationTestCase(unittest.TestCase):
         status = self.qa._new_status(run_id, "PROJ-940", str(self.base), None)
         status_path = run_dir / "status.json"
         self.qa._write_json_atomic(status_path, status)
+        self.qa.write_env_context(run_dir, db="magna_test", url="http://localhost:3000", source="user")
 
         repro_fn = Mock(return_value={"schema": self.qa.REPRO_SCHEMA, "status": "reproduced"})
         verify_fn = Mock(return_value={"schema": self.qa.VERIFY_SCHEMA, "status": "pass", "checks": []})
@@ -1291,6 +1356,7 @@ class QaPipelineEvidenceIntegrationTestCase(unittest.TestCase):
         status = self.qa._new_status(run_id, "PROJ-941", str(self.base), None)
         status_path = run_dir / "status.json"
         self.qa._write_json_atomic(status_path, status)
+        self.qa.write_env_context(run_dir, db="magna_test", url="http://localhost:3000", source="user")
 
         repro_fn = Mock(return_value={"schema": self.qa.REPRO_SCHEMA, "status": "not_reproduced"})
 
@@ -1884,13 +1950,42 @@ class AggregateTruthTableTestCase(unittest.TestCase):
         return self._stage("qa.regression/1", status)
 
     def test_repro_not_reproduced_is_dudoso_regardless_of_other_stages(self):
+        repro = {**self._repro("not_reproduced"), "steps": ["intenté reproducir el bug"]}
         verdict = self.runner.aggregate(
-            repro=self._repro("not_reproduced"), verify=self._verify("pass"),
+            repro=repro, verify=self._verify("pass"),
             regression=self._regression("pass"), attempts=0, commits=[],
         )
         self.assertEqual(verdict["verdict"], "dudoso")
         self.assertFalse(verdict["qa_verified"])
         self.assertEqual(verdict["reason"], "repro_not_reproduced")
+
+    # ── qa-pipeline-verification-gaps 2.3/3.16 — nuevas ramas de la tabla ────
+
+    def test_not_reproduced_with_empty_steps_is_manual_review_no_attempt_evidence(self):
+        verdict = self.runner.aggregate(
+            repro=self._repro("not_reproduced"), verify=self._verify(None),
+            regression=self._regression(None), attempts=0, commits=[],
+        )
+        self.assertEqual(verdict["verdict"], "manual_review")
+        self.assertFalse(verdict["qa_verified"])
+        self.assertEqual(verdict["reason"], "repro_no_attempt_evidence")
+
+    def test_repro_blocked_is_manual_review(self):
+        verdict = self.runner.aggregate(
+            repro={**self._repro("blocked"), "blocked_reason": "DB inalcanzable"},
+            verify=self._verify(None), regression=self._regression(None), attempts=0, commits=[],
+        )
+        self.assertEqual(verdict["verdict"], "manual_review")
+        self.assertFalse(verdict["qa_verified"])
+        self.assertEqual(verdict["reason"], "repro_blocked")
+
+    def test_aggregate_without_review_kwarg_behaves_exactly_as_before(self):
+        verdict = self.runner.aggregate(
+            repro=self._repro("reproduced"), verify=self._verify("pass"),
+            regression=self._regression("skipped"), attempts=0, commits=[],
+        )
+        self.assertEqual(verdict["verdict"], "passed")
+        self.assertTrue(verdict["qa_verified"])
 
     def test_repro_error_is_error(self):
         verdict = self.runner.aggregate(
@@ -1972,8 +2067,17 @@ class AggregateTruthTableTestCase(unittest.TestCase):
             regression=self._regression("skipped"), attempts=0, commits=[],
         )
         self.assertEqual(
-            verdict["stages"], {"repro": "reproduced", "verify": "pass", "regression": "skipped"},
+            verdict["stages"],
+            {"repro": "reproduced", "verify": "pass", "regression": "skipped", "review": None},
         )
+
+    def test_verdict_stages_dict_includes_review_status_when_review_ran(self):
+        review = {"schema": self.runner.REVIEW_SCHEMA, "status": "ok", "security": {"findings": []}}
+        verdict = self.runner.aggregate(
+            repro=self._repro("reproduced"), verify=self._verify("pass"),
+            regression=self._regression("skipped"), attempts=0, commits=[], review=review,
+        )
+        self.assertEqual(verdict["stages"]["review"], "ok")
 
     def test_verdict_carries_attempts_and_commits_through(self):
         commits = ["fix(qa-auto): correccion automatica 1/2 - x"]
@@ -2011,7 +2115,7 @@ class QaRunnerStageTimeoutTestCase(unittest.TestCase):
     def test_run_repro_stage_timeout_is_stage_error_never_raises(self):
         timeout_exc = subprocess.TimeoutExpired(cmd=["claude", "-p", "..."], timeout=600)
         with patch.object(self.runner.qa_prompts, "invoke_stage", side_effect=timeout_exc):
-            result = self.runner.run_repro_stage(self.run_dir, self.project_path, "PROJ-1", "hist")
+            result = self.runner.run_repro_stage(self.run_dir, self.project_path, "PROJ-1", "hist", {"db": "x", "url": "y"})
         self.assertEqual(result["status"], "error")
         data = json.loads((self.run_dir / "repro.json").read_text(encoding="utf-8"))
         self.assertEqual(data["status"], "error")
@@ -2314,6 +2418,7 @@ class QaNotifyMechanismRuntimeIntegrationTestCase(unittest.IsolatedAsyncioTestCa
         status = self.qa._new_status(self.run_id, self.ticket_id, str(self.repo), self.branch)
         self.status_path = self.run_dir / "status.json"
         self.qa._write_json_atomic(self.status_path, status)
+        self.qa.write_env_context(self.run_dir, db="magna_test", url="http://localhost:3000", source="user")
 
     def tearDown(self):
         os.environ.pop("MYCONTEXT_HOME", None)
@@ -2385,6 +2490,853 @@ class QaNotifyMechanismRuntimeIntegrationTestCase(unittest.IsolatedAsyncioTestCa
                 # re-poll con el mismo status.json: ningun evento nuevo → notify no vuelve a llamarse
                 panel._poll_qa()
                 self.assertEqual(mock_notify.call_count, 3)
+
+
+class EnvPersistenceTestCase(unittest.TestCase):
+    """qa-pipeline-verification-gaps 1.1 — Requirement: Pre-Flight DB/URL
+    Confirmation / Supersede on Re-Sync. `env_context.json` vive fuera de
+    `_STAGE_ARTIFACTS` a propósito (design.md, decision 8) — debe sobrevivir
+    a todo `_reset_blackboard()`, disparado tanto desde `trigger_qa()` como
+    desde `resume_qa()`."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        os.environ["MYCONTEXT_HOME"] = self._tmp.name
+        import aicli.services.qa_orchestrator as qa_orchestrator
+        importlib.reload(qa_orchestrator)
+        self.qa = qa_orchestrator
+        self.base = Path(self._tmp.name)
+        popen_patcher = patch(
+            "aicli.services.qa_orchestrator.subprocess.Popen", return_value=Mock(pid=1234),
+        )
+        popen_patcher.start()
+        self.addCleanup(popen_patcher.stop)
+
+    def tearDown(self):
+        os.environ.pop("MYCONTEXT_HOME", None)
+        self._tmp.cleanup()
+
+    def test_persistent_artifacts_disjoint_from_stage_artifacts(self):
+        self.assertFalse(set(self.qa._PERSISTENT_ARTIFACTS) & set(self.qa._STAGE_ARTIFACTS))
+
+    def test_reset_blackboard_preserves_env_context_across_trigger_qa(self):
+        run_dir = self.qa._run_dir("PROJ-990")
+        run_dir.mkdir(parents=True, exist_ok=True)
+        self.qa.write_env_context(run_dir, db="magna_test", url="http://localhost:3000", source="user")
+
+        self.qa.trigger_qa(ticket_id="PROJ-990", project_path=self.base, files=["a.py"])
+
+        self.assertTrue((run_dir / "env_context.json").exists())
+
+    def test_resume_qa_preserves_env_context_json(self):
+        run_dir = self.qa._run_dir("PROJ-991")
+        status = self.qa._new_status("R1", "PROJ-991", str(self.base), None)
+        status["state"] = "awaiting_input"
+        status["question"] = {"kind": "text", "prompt": "?", "options": None}
+        self.qa._write_json_atomic(run_dir / "status.json", status)
+        self.qa.write_env_context(run_dir, db="magna_test", url="http://localhost:3000", source="user")
+
+        self.qa.resume_qa("PROJ-991", self.base)
+
+        self.assertTrue((run_dir / "env_context.json").exists())
+
+
+class EnvAnswerParsingTestCase(unittest.TestCase):
+    """1.3 — Requirement: Pre-Flight DB/URL Confirmation, threat matrix:
+    subprocess/shell composition (env answer never reaches an argv)."""
+
+    def setUp(self):
+        import aicli.services.qa_orchestrator as qa_orchestrator
+        importlib.reload(qa_orchestrator)
+        self.qa = qa_orchestrator
+
+    def test_valid_pair_parses_db_and_url(self):
+        db, url = self.qa._parse_env_answer("db=magna_test url=http://localhost:3000")
+        self.assertEqual(db, "magna_test")
+        self.assertEqual(url, "http://localhost:3000")
+
+    def test_missing_url_half_rejected(self):
+        db, url = self.qa._parse_env_answer("db=magna_test")
+        self.assertIsNone(db)
+        self.assertIsNone(url)
+
+    def test_missing_db_half_rejected(self):
+        db, url = self.qa._parse_env_answer("url=http://localhost:3000")
+        self.assertIsNone(db)
+        self.assertIsNone(url)
+
+    def test_backtick_injection_rejected(self):
+        db, url = self.qa._parse_env_answer("db=`rm -rf /` url=http://x")
+        self.assertIsNone(db)
+        self.assertIsNone(url)
+
+    def test_semicolon_injection_rejected(self):
+        db, url = self.qa._parse_env_answer("db=x; rm -rf / url=http://x")
+        self.assertIsNone(db)
+        self.assertIsNone(url)
+
+    def test_newline_injection_rejected(self):
+        db, url = self.qa._parse_env_answer("db=x\nurl=http://x")
+        self.assertIsNone(db)
+        self.assertIsNone(url)
+
+    def test_over_length_input_rejected(self):
+        db, url = self.qa._parse_env_answer("db=" + "a" * 5000 + " url=http://x")
+        self.assertIsNone(db)
+        self.assertIsNone(url)
+
+    def test_empty_string_rejected(self):
+        db, url = self.qa._parse_env_answer("")
+        self.assertIsNone(db)
+        self.assertIsNone(url)
+
+
+class EnvContextFileTestCase(unittest.TestCase):
+    """1.5 — read_env_context/write_env_context/clear_env_context."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.run_dir = Path(self._tmp.name) / "run"
+        import aicli.services.qa_orchestrator as qa_orchestrator
+        importlib.reload(qa_orchestrator)
+        self.qa = qa_orchestrator
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def test_read_env_context_none_when_absent(self):
+        self.assertIsNone(self.qa.read_env_context(self.run_dir))
+
+    def test_write_then_read_round_trip(self):
+        written = self.qa.write_env_context(
+            self.run_dir, db="magna_test", url="http://localhost:3000", source="user",
+        )
+        self.assertEqual(written["schema"], self.qa.ENV_SCHEMA)
+        read_back = self.qa.read_env_context(self.run_dir)
+        self.assertEqual(read_back["db"], "magna_test")
+        self.assertEqual(read_back["url"], "http://localhost:3000")
+        self.assertEqual(read_back["source"], "user")
+
+    def test_clear_env_context_removes_file(self):
+        self.qa.write_env_context(self.run_dir, db="x", url="y", source="user")
+        self.qa.clear_env_context(self.run_dir)
+        self.assertIsNone(self.qa.read_env_context(self.run_dir))
+
+    def test_clear_env_context_noop_when_absent(self):
+        self.qa.clear_env_context(self.run_dir)  # no debe levantar
+        self.assertIsNone(self.qa.read_env_context(self.run_dir))
+
+
+class EnvPreflightTestCase(unittest.TestCase):
+    """1.6 — Requirement: Pre-Flight DB/URL Confirmation, state machine de
+    `env_preflight()`."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.run_dir = Path(self._tmp.name) / "run"
+        import aicli.services.qa_orchestrator as qa_orchestrator
+        importlib.reload(qa_orchestrator)
+        self.qa = qa_orchestrator
+
+    def tearDown(self):
+        os.environ.pop("MAGNA_QA_DEFAULT_DB", None)
+        os.environ.pop("MAGNA_QA_APP_URL", None)
+        self._tmp.cleanup()
+
+    def test_no_context_no_answer_asks_select_question(self):
+        env, question = self.qa.env_preflight(self.run_dir, "PROJ-1")
+        self.assertIsNone(env)
+        self.assertEqual(question["kind"], "select")
+        self.assertEqual(question["topic"], "env")
+
+    def test_otro_answer_asks_text_question_without_writing_context(self):
+        self.run_dir.mkdir(parents=True, exist_ok=True)
+        self.qa._write_json_atomic(
+            self.run_dir / "answer.json", {"value": "Otro (escribir db y url a mano)"},
+        )
+        env, question = self.qa.env_preflight(self.run_dir, "PROJ-1")
+        self.assertIsNone(env)
+        self.assertEqual(question["kind"], "text")
+        self.assertEqual(question["topic"], "env")
+        self.assertFalse((self.run_dir / "answer.json").exists())
+        self.assertFalse((self.run_dir / "env_context.json").exists())
+
+    def test_parsed_answer_writes_file_and_consumes_answer(self):
+        self.run_dir.mkdir(parents=True, exist_ok=True)
+        self.qa._write_json_atomic(
+            self.run_dir / "answer.json", {"value": "db=magna_test url=http://localhost:3000"},
+        )
+        env, question = self.qa.env_preflight(self.run_dir, "PROJ-1")
+        self.assertIsNone(question)
+        self.assertEqual(env["db"], "magna_test")
+        self.assertEqual(env["url"], "http://localhost:3000")
+        self.assertTrue((self.run_dir / "env_context.json").exists())
+        self.assertFalse((self.run_dir / "answer.json").exists())
+
+    def test_existing_context_returns_no_question_and_leaves_answer_untouched(self):
+        self.qa.write_env_context(self.run_dir, db="already", url="http://x", source="user")
+        self.run_dir.mkdir(parents=True, exist_ok=True)
+        self.qa._write_json_atomic(self.run_dir / "answer.json", {"value": "unrelated pending answer"})
+
+        env, question = self.qa.env_preflight(self.run_dir, "PROJ-1")
+
+        self.assertIsNone(question)
+        self.assertEqual(env["db"], "already")
+        self.assertTrue((self.run_dir / "answer.json").exists())
+
+    def test_malformed_answer_reasks_text_question_without_writing_context(self):
+        self.run_dir.mkdir(parents=True, exist_ok=True)
+        self.qa._write_json_atomic(self.run_dir / "answer.json", {"value": "garbage input"})
+        env, question = self.qa.env_preflight(self.run_dir, "PROJ-1")
+        self.assertIsNone(env)
+        self.assertEqual(question["kind"], "text")
+        self.assertFalse((self.run_dir / "env_context.json").exists())
+
+
+class EnvPreflightIntegrationTestCase(unittest.TestCase):
+    """1.8 — integración: `resume_qa` tras una respuesta de entorno deja
+    persistido `env_context.json`, reusado en la siguiente corrida, y el
+    usuario es preguntado exactamente una vez por ticket."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        os.environ["MYCONTEXT_HOME"] = self._tmp.name
+        import aicli.services.qa_orchestrator as qa_orchestrator
+        importlib.reload(qa_orchestrator)
+        self.qa = qa_orchestrator
+        self.base = Path(self._tmp.name)
+        popen_patcher = patch(
+            "aicli.services.qa_orchestrator.subprocess.Popen", return_value=Mock(pid=1),
+        )
+        popen_patcher.start()
+        self.addCleanup(popen_patcher.stop)
+
+    def tearDown(self):
+        os.environ.pop("MYCONTEXT_HOME", None)
+        self._tmp.cleanup()
+
+    def test_env_answer_persists_and_reused_across_runs(self):
+        ticket_id = "PROJ-992"
+        run_dir = self.qa._run_dir(ticket_id)
+
+        env, question = self.qa.env_preflight(run_dir, ticket_id)
+        self.assertIsNone(env)
+        self.assertIsNotNone(question)
+
+        self.qa.write_qa_answer(ticket_id, "db=magna_test url=http://localhost:3000")
+        env, question = self.qa.env_preflight(run_dir, ticket_id)
+        self.assertIsNone(question)
+        self.assertEqual(env["db"], "magna_test")
+
+        # Un resync (trigger_qa nuevo) para el mismo ticket resetea los
+        # artefactos de stage pero reusa el contexto ya confirmado — nunca
+        # vuelve a preguntar (Supersede on Re-Sync: sobrevive el reset).
+        self.qa.trigger_qa(ticket_id=ticket_id, project_path=self.base, files=["a.py"])
+        env2, question2 = self.qa.env_preflight(run_dir, ticket_id)
+        self.assertIsNone(question2)
+        self.assertEqual(env2["db"], "magna_test")
+
+
+class EnvPreflightPipelineWiringTestCase(unittest.TestCase):
+    """1.9 — `run_pipeline()` corre `env_preflight()` antes de CUALQUIER
+    stage y pausa vía `_finalize_awaiting_input` si no hay contexto todavía
+    (Requirement: Pre-Flight DB/URL Confirmation, escenario 'First run for a
+    ticket asks once')."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        os.environ["MYCONTEXT_HOME"] = self._tmp.name
+        import aicli.services.qa_orchestrator as qa_orchestrator
+        importlib.reload(qa_orchestrator)
+        self.qa = qa_orchestrator
+        import aicli.services.qa_runner as qa_runner
+        importlib.reload(qa_runner)
+        self.runner = qa_runner
+        self.base = Path(self._tmp.name)
+
+    def tearDown(self):
+        os.environ.pop("MYCONTEXT_HOME", None)
+        self._tmp.cleanup()
+
+    def test_pipeline_pauses_for_env_preflight_before_any_stage(self):
+        run_id = "R-ENV"
+        run_dir = self.qa._run_dir("PROJ-993")
+        status = self.qa._new_status(run_id, "PROJ-993", str(self.base), None)
+        status_path = run_dir / "status.json"
+        self.qa._write_json_atomic(status_path, status)
+        repro_fn = Mock()
+
+        result = self.runner.run_pipeline(
+            ticket_id="PROJ-993", project_path=self.base, run_dir=run_dir,
+            run_id=run_id, status_path=status_path,
+            repro_fn=repro_fn, verify_fn=Mock(), regression_fn=Mock(), correction_fn=Mock(),
+        )
+
+        repro_fn.assert_not_called()
+        self.assertFalse((run_dir / "verdict.json").exists())
+        self.assertEqual(result["state"], "awaiting_input")
+        self.assertEqual(result["question"]["topic"], "env")
+
+    def test_pipeline_proceeds_without_pausing_when_env_already_confirmed(self):
+        run_id = "R-ENV-2"
+        run_dir = self.qa._run_dir("PROJ-994")
+        status = self.qa._new_status(run_id, "PROJ-994", str(self.base), None)
+        status_path = run_dir / "status.json"
+        self.qa._write_json_atomic(status_path, status)
+        self.qa.write_env_context(run_dir, db="magna_test", url="http://localhost:3000", source="user")
+
+        repro_fn = Mock(return_value={"schema": self.qa.REPRO_SCHEMA, "status": "reproduced"})
+        verify_fn = Mock(return_value={"schema": self.qa.VERIFY_SCHEMA, "status": "pass", "checks": []})
+        regression_fn = Mock(return_value={"schema": self.qa.REGRESSION_SCHEMA, "status": "skipped"})
+
+        verdict = self.runner.run_pipeline(
+            ticket_id="PROJ-994", project_path=self.base, run_dir=run_dir,
+            run_id=run_id, status_path=status_path,
+            repro_fn=repro_fn, verify_fn=verify_fn, regression_fn=regression_fn, correction_fn=Mock(),
+        )
+
+        repro_fn.assert_called_once()
+        self.assertEqual(verdict["verdict"], "passed")
+
+
+class ReproBlockedPipelineTestCase(unittest.TestCase):
+    """2.5/2.6 — Requirement: Repro Stage Isolation ("Environment failure
+    attempted but blocked") + Never Correct on Repro Failure ("Blocked
+    ticket skips correction"). Un repro `blocked` re-pregunta el entorno UNA
+    vez (`MAX_BLOCKED_REPRO_PAUSES = 1`); si sigue bloqueado en el retry,
+    cae a `manual_review` — nunca `dudoso`, nunca una corrección."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        os.environ["MYCONTEXT_HOME"] = self._tmp.name
+        import aicli.services.qa_orchestrator as qa_orchestrator
+        importlib.reload(qa_orchestrator)
+        self.qa = qa_orchestrator
+        import aicli.services.qa_runner as qa_runner
+        importlib.reload(qa_runner)
+        self.runner = qa_runner
+        self.base = Path(self._tmp.name)
+        self.run_id = "R1"
+        self.run_dir = self.qa._run_dir("PROJ-995")
+        status = self.qa._new_status(self.run_id, "PROJ-995", str(self.base), None)
+        self.status_path = self.run_dir / "status.json"
+        self.qa._write_json_atomic(self.status_path, status)
+        self.qa.write_env_context(self.run_dir, db="magna_test", url="http://localhost:3000", source="user")
+
+    def tearDown(self):
+        os.environ.pop("MYCONTEXT_HOME", None)
+        self._tmp.cleanup()
+
+    def test_first_blocked_repro_pauses_via_env_channel_and_clears_context(self):
+        repro_fn = Mock(return_value={
+            "schema": self.qa.REPRO_SCHEMA, "status": "blocked", "blocked_reason": "DB inalcanzable",
+        })
+        correction_fn = Mock()
+
+        result = self.runner.run_pipeline(
+            ticket_id="PROJ-995", project_path=self.base, run_dir=self.run_dir,
+            run_id=self.run_id, status_path=self.status_path,
+            repro_fn=repro_fn, verify_fn=Mock(), regression_fn=Mock(), correction_fn=correction_fn,
+        )
+
+        correction_fn.assert_not_called()
+        self.assertFalse((self.run_dir / "verdict.json").exists())
+        self.assertEqual(result["state"], "awaiting_input")
+        self.assertEqual(result["question"]["topic"], "env")
+        self.assertEqual(result["question"]["blocked_reason"], "DB inalcanzable")
+        self.assertEqual(result["repro_blocked_pauses"], 1)
+        self.assertIsNone(self.qa.read_env_context(self.run_dir))  # limpiado para re-preguntar
+
+    def test_second_blocked_repro_falls_through_to_manual_review_never_dudoso(self):
+        # Simula el retry tras resume_qa: repro_blocked_pauses ya en 1.
+        status = self.qa._read_json_or_none(self.status_path)
+        status["repro_blocked_pauses"] = 1
+        self.qa._write_json_atomic(self.status_path, status)
+        self.qa.write_env_context(self.run_dir, db="magna_test", url="http://localhost:3000", source="user")
+
+        repro_fn = Mock(return_value={
+            "schema": self.qa.REPRO_SCHEMA, "status": "blocked", "blocked_reason": "DB inalcanzable de nuevo",
+        })
+        correction_fn = Mock()
+
+        verdict = self.runner.run_pipeline(
+            ticket_id="PROJ-995", project_path=self.base, run_dir=self.run_dir,
+            run_id=self.run_id, status_path=self.status_path,
+            repro_fn=repro_fn, verify_fn=Mock(), regression_fn=Mock(), correction_fn=correction_fn,
+        )
+
+        correction_fn.assert_not_called()
+        self.assertEqual(verdict["verdict"], "manual_review")
+        self.assertEqual(verdict["reason"], "repro_blocked")
+        self.assertNotEqual(verdict["verdict"], "dudoso")
+
+
+class BlockingSecurityFindingsTestCase(unittest.TestCase):
+    """3.2/3.14 — Requirement: Review Stage Contract / Aggregator Sole
+    Ownership. `_blocking_security_findings` es la ÚNICA fuente de
+    autoridad: la categoría normalizada contra un allowlist cerrado, nunca
+    el `severity` que reporte el agente (design decision 13, threat matrix:
+    prompt injection via ticket data)."""
+
+    def setUp(self):
+        import aicli.services.qa_runner as qa_runner
+        importlib.reload(qa_runner)
+        self.runner = qa_runner
+
+    def test_allowlisted_category_blocks_regardless_of_low_severity(self):
+        review = {"security": {"findings": [
+            {"category": "sql_injection", "severity": "low", "file": "a.py", "line": 1, "detail": "x"},
+        ]}}
+        blocking = self.runner._blocking_security_findings(review)
+        self.assertEqual(len(blocking), 1)
+        self.assertEqual(blocking[0]["category"], "sql_injection")
+
+    def test_unknown_category_never_blocks_even_at_severe_severity(self):
+        review = {"security": {"findings": [
+            {"category": "totally_fine", "severity": "severe", "file": "a.py", "line": 1, "detail": "x"},
+        ]}}
+        self.assertEqual(self.runner._blocking_security_findings(review), [])
+
+    def test_quality_findings_never_consulted(self):
+        review = {
+            "security": {"findings": []},
+            "quality": {"findings": [{"kind": "duplication", "severity": "severe"}]},
+        }
+        self.assertEqual(self.runner._blocking_security_findings(review), [])
+
+    def test_severity_none_on_allowlisted_category_still_blocks(self):
+        # threat matrix: prompt injection via ticket data — un agente
+        # comprometido no puede desactivar el bloqueo bajando la severidad.
+        review = {"security": {"findings": [
+            {"category": "xss", "severity": "none", "file": "a.py", "line": 1, "detail": "x"},
+        ]}}
+        blocking = self.runner._blocking_security_findings(review)
+        self.assertEqual(len(blocking), 1)
+
+    def test_missing_security_section_returns_empty_list(self):
+        self.assertEqual(self.runner._blocking_security_findings({}), [])
+
+    def test_category_case_and_whitespace_normalised(self):
+        review = {"security": {"findings": [
+            {"category": "  SQL_Injection  ", "severity": "low", "file": "a.py", "line": 1, "detail": "x"},
+        ]}}
+        self.assertEqual(len(self.runner._blocking_security_findings(review)), 1)
+
+
+class ReviewDiffTestCase(unittest.TestCase):
+    """3.4/3.5/3.6/3.7 — `_review_diff`: threat matrix (diff scope blowout,
+    git repository selection, push state)."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.repo = Path(self._tmp.name) / "repo"
+        _init_repo(self.repo)
+        (self.repo / "tracked.py").write_text("original\n", encoding="utf-8")
+        (self.repo / "other.py").write_text("otro archivo\n", encoding="utf-8")
+        _run_git(["add", "."], self.repo)
+        _run_git(["commit", "-m", "initial"], self.repo)
+        import aicli.services.qa_runner as qa_runner
+        importlib.reload(qa_runner)
+        self.runner = qa_runner
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    # ── 3.4 — diff scope blowout ──────────────────────────────────────────
+
+    def test_empty_files_returns_empty_string_with_zero_git_calls(self):
+        with patch.object(self.runner, "_git") as mock_git:
+            result = self.runner._review_diff(self.repo, [])
+        self.assertEqual(result, "")
+        mock_git.assert_not_called()
+
+    # ── 3.5/3.6 — git repository selection + push state (fake recorder) ─────
+
+    def test_every_git_call_is_read_only_and_scoped_to_project_path(self):
+        calls = []
+
+        def _recorder(args, cwd):
+            calls.append((args, cwd))
+            return subprocess.CompletedProcess(args, 128, stdout="", stderr="")
+
+        with patch.object(self.runner, "_git", side_effect=_recorder):
+            self.runner._review_diff(self.repo, ["tracked.py"])
+
+        self.assertTrue(calls)
+        _read_only_verbs = {"merge-base", "diff"}
+        for args, cwd in calls:
+            self.assertIn(args[0], _read_only_verbs)
+            self.assertEqual(Path(cwd), self.repo)
+
+    def test_review_diff_never_constructs_a_denylisted_argv(self):
+        import aicli.services.qa_orchestrator as qa_orchestrator
+        calls = []
+
+        def _recorder(args, cwd):
+            calls.append(args)
+            return subprocess.CompletedProcess(args, 0, stdout="deadbeef\n", stderr="")
+
+        with patch.object(self.runner, "_git", side_effect=_recorder):
+            self.runner._review_diff(self.repo, ["tracked.py"])
+
+        for args in calls:
+            self.assertNotIn(args[0], qa_orchestrator._GIT_DENYLIST)
+
+    # ── 3.7 — comportamiento real (repo desechable, sin mocks) ───────────────
+
+    def test_only_touched_file_diff_returned_not_whole_repo(self):
+        (self.repo / "tracked.py").write_text("modified\n", encoding="utf-8")
+        (self.repo / "other.py").write_text("modified tambien\n", encoding="utf-8")
+
+        result = self.runner._review_diff(self.repo, ["tracked.py"])
+
+        self.assertIn("tracked.py", result)
+        self.assertNotIn("other.py", result)
+
+    def test_no_base_branch_falls_back_to_working_tree_diff(self):
+        (self.repo / "tracked.py").write_text("modified sin base branch\n", encoding="utf-8")
+        result = self.runner._review_diff(self.repo, ["tracked.py"])
+        self.assertIn("tracked.py", result)
+        self.assertIn("modified sin base branch", result)
+
+
+class ReviewPromptAndStageTestCase(unittest.TestCase):
+    """3.9/3.10 — `build_review_prompt` + `run_review_stage`."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.run_dir = Path(self._tmp.name) / "run"
+        self.project_path = Path(self._tmp.name) / "project"
+        self.project_path.mkdir(parents=True, exist_ok=True)
+        import aicli.services.qa_prompts as qa_prompts
+        importlib.reload(qa_prompts)
+        self.qp = qa_prompts
+        import aicli.services.qa_runner as qa_runner
+        importlib.reload(qa_runner)
+        self.runner = qa_runner
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def test_build_review_prompt_inlines_conduct_rules_and_diff(self):
+        path = self.qp.build_review_prompt(self.run_dir, "PROJ-1", ["a.py", "b.py"], "- old\n+ new")
+        content = path.read_text(encoding="utf-8")
+        self.assertIn("SOLO LECTURA", content)
+        self.assertIn("a.py", content)
+        self.assertIn("b.py", content)
+        self.assertIn("- old\n+ new", content)
+        self.assertIn("qa.review/1", content)
+        self.assertIn("security", content)
+        self.assertIn("quality", content)
+
+    def test_run_review_stage_empty_files_short_circuits_no_subprocess(self):
+        with patch.object(self.runner.qa_prompts, "invoke_stage") as mock_invoke:
+            result = self.runner.run_review_stage(self.run_dir, self.project_path, "PROJ-1", [])
+        mock_invoke.assert_not_called()
+        self.assertEqual(result["status"], "skipped")
+        data = json.loads((self.run_dir / "review.json").read_text(encoding="utf-8"))
+        self.assertEqual(data["status"], "skipped")
+        self.assertEqual(data["security"]["findings"], [])
+
+    def test_run_review_stage_writes_review_json_from_agent_output(self):
+        agent_json = json.dumps({
+            "status": "ok",
+            "security": {"findings": [{"category": "xss", "file": "a.py", "line": 1, "detail": "x", "severity": "low"}]},
+            "quality": {"findings": []},
+        })
+        with patch.object(self.runner, "_review_diff", return_value="- old\n+ new"), \
+             patch.object(self.runner.qa_prompts, "invoke_stage", return_value=agent_json):
+            result = self.runner.run_review_stage(self.run_dir, self.project_path, "PROJ-1", ["a.py"])
+        self.assertEqual(result["status"], "ok")
+        data = json.loads((self.run_dir / "review.json").read_text(encoding="utf-8"))
+        self.assertEqual(data["security"]["findings"][0]["category"], "xss")
+
+    def test_run_review_stage_unparseable_output_is_stage_error(self):
+        with patch.object(self.runner, "_review_diff", return_value=""), \
+             patch.object(self.runner.qa_prompts, "invoke_stage", return_value="no es json"):
+            result = self.runner.run_review_stage(self.run_dir, self.project_path, "PROJ-1", ["a.py"])
+        self.assertEqual(result["status"], "error")
+
+    # ── 3.8 — threat: commit state (repo desechable, sin mocks de git) ──────
+
+    def test_review_run_leaves_index_and_head_byte_identical(self):
+        repo = Path(self._tmp.name) / "repo"
+        _init_repo(repo)
+        (repo / "tracked.py").write_text("original\n", encoding="utf-8")
+        _run_git(["add", "tracked.py"], repo)
+        _run_git(["commit", "-m", "initial"], repo)
+        head_before = _run_git(["rev-parse", "HEAD"], repo).stdout
+        index_before = _run_git(["status", "--porcelain"], repo).stdout
+
+        agent_json = json.dumps({"status": "ok", "security": {"findings": []}, "quality": {"findings": []}})
+        with patch.object(self.runner.qa_prompts, "invoke_stage", return_value=agent_json):
+            self.runner.run_review_stage(self.run_dir, repo, "PROJ-1", ["tracked.py"])
+
+        head_after = _run_git(["rev-parse", "HEAD"], repo).stdout
+        index_after = _run_git(["status", "--porcelain"], repo).stdout
+        self.assertEqual(head_before, head_after)
+        self.assertEqual(index_before, index_after)
+
+
+class ReviewApplicabilityTestCase(unittest.TestCase):
+    """3.11 — `_review_applies` pure predicate."""
+
+    def setUp(self):
+        import aicli.services.qa_runner as qa_runner
+        importlib.reload(qa_runner)
+        self.runner = qa_runner
+
+    def test_applies_when_verify_pass_and_regression_pass(self):
+        self.assertTrue(self.runner._review_applies({"status": "pass"}, {"status": "pass"}))
+
+    def test_applies_when_verify_pass_and_regression_skipped(self):
+        self.assertTrue(self.runner._review_applies({"status": "pass"}, {"status": "skipped"}))
+
+    def test_does_not_apply_when_verify_fails(self):
+        self.assertFalse(self.runner._review_applies({"status": "fail"}, {"status": "pass"}))
+
+    def test_does_not_apply_when_regression_fails(self):
+        self.assertFalse(self.runner._review_applies({"status": "pass"}, {"status": "fail"}))
+
+
+class ReviewAggregatorTestCase(unittest.TestCase):
+    """3.13/3.16 — `aggregate(review=...)` truth-table additions."""
+
+    def setUp(self):
+        import aicli.services.qa_runner as qa_runner
+        importlib.reload(qa_runner)
+        self.runner = qa_runner
+
+    def _base(self, review=None):
+        return dict(
+            repro={"schema": "qa.repro/1", "status": "reproduced"},
+            verify={"schema": "qa.verify/1", "status": "pass"},
+            regression={"schema": "qa.regression/1", "status": "skipped"},
+            attempts=0, commits=[], review=review,
+        )
+
+    def test_review_error_is_manual_review(self):
+        verdict = self.runner.aggregate(**self._base(review={"status": "error"}))
+        self.assertEqual(verdict["verdict"], "manual_review")
+        self.assertEqual(verdict["reason"], "review_stage_error")
+        self.assertFalse(verdict["qa_verified"])
+
+    def test_blocking_security_finding_is_manual_review(self):
+        review = {"status": "ok", "security": {"findings": [
+            {"category": "sql_injection", "severity": "low", "file": "a.py", "line": 1, "detail": "x"},
+        ]}}
+        verdict = self.runner.aggregate(**self._base(review=review))
+        self.assertEqual(verdict["verdict"], "manual_review")
+        self.assertEqual(verdict["reason"], "security_finding_severe")
+        self.assertFalse(verdict["qa_verified"])
+
+    def test_quality_only_findings_never_move_verdict(self):
+        review = {"status": "ok", "security": {"findings": []},
+                  "quality": {"findings": [{"kind": "duplication", "file": "a.py", "line": 1, "detail": "x"}]}}
+        verdict = self.runner.aggregate(**self._base(review=review))
+        self.assertEqual(verdict["verdict"], "passed")
+        self.assertTrue(verdict["qa_verified"])
+
+    def test_review_none_still_passes_same_as_before(self):
+        verdict = self.runner.aggregate(**self._base(review=None))
+        self.assertEqual(verdict["verdict"], "passed")
+        self.assertTrue(verdict["qa_verified"])
+
+
+class ReviewPipelineWiringTestCase(unittest.TestCase):
+    """3.11/3.12/4.3 — `run_pipeline` invoca `review_fn` exactamente una vez
+    en el camino que pasa, y cero veces cuando regression falla."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        os.environ["MYCONTEXT_HOME"] = self._tmp.name
+        import aicli.services.qa_orchestrator as qa_orchestrator
+        importlib.reload(qa_orchestrator)
+        self.qa = qa_orchestrator
+        import aicli.services.qa_runner as qa_runner
+        importlib.reload(qa_runner)
+        self.runner = qa_runner
+        self.base = Path(self._tmp.name)
+        self.run_id = "R1"
+        self.run_dir = self.qa._run_dir("PROJ-996")
+        status = self.qa._new_status(self.run_id, "PROJ-996", str(self.base), None)
+        self.status_path = self.run_dir / "status.json"
+        self.qa._write_json_atomic(self.status_path, status)
+        self.qa.write_env_context(self.run_dir, db="magna_test", url="http://localhost:3000", source="user")
+
+    def tearDown(self):
+        os.environ.pop("MYCONTEXT_HOME", None)
+        self._tmp.cleanup()
+
+    def test_review_fn_called_once_on_passing_path(self):
+        repro_fn = Mock(return_value={"schema": self.qa.REPRO_SCHEMA, "status": "reproduced"})
+        verify_fn = Mock(return_value={"schema": self.qa.VERIFY_SCHEMA, "status": "pass", "checks": []})
+        regression_fn = Mock(return_value={"schema": self.qa.REGRESSION_SCHEMA, "status": "skipped"})
+        review_fn = Mock(return_value={"schema": self.qa.REVIEW_SCHEMA, "status": "ok",
+                                        "security": {"findings": []}, "quality": {"findings": []}})
+
+        verdict = self.runner.run_pipeline(
+            ticket_id="PROJ-996", project_path=self.base, run_dir=self.run_dir,
+            run_id=self.run_id, status_path=self.status_path,
+            repro_fn=repro_fn, verify_fn=verify_fn, regression_fn=regression_fn,
+            correction_fn=Mock(), review_fn=review_fn,
+        )
+
+        review_fn.assert_called_once()
+        self.assertEqual(verdict["verdict"], "passed")
+        self.assertTrue(verdict["qa_verified"])
+
+    def test_review_fn_never_called_when_regression_fails(self):
+        repro_fn = Mock(return_value={"schema": self.qa.REPRO_SCHEMA, "status": "reproduced"})
+        verify_fn = Mock(return_value={"schema": self.qa.VERIFY_SCHEMA, "status": "pass", "checks": []})
+        regression_fn = Mock(return_value={"schema": self.qa.REGRESSION_SCHEMA, "status": "fail"})
+        review_fn = Mock()
+        correction_fn = Mock(return_value={"status": "applied", "commit": "fix(qa-auto): x"})
+
+        self.runner.run_pipeline(
+            ticket_id="PROJ-996", project_path=self.base, run_dir=self.run_dir,
+            run_id=self.run_id, status_path=self.status_path,
+            repro_fn=repro_fn, verify_fn=verify_fn, regression_fn=regression_fn,
+            correction_fn=correction_fn, review_fn=review_fn,
+        )
+
+        review_fn.assert_not_called()
+
+    def test_review_fn_never_called_when_verify_fails(self):
+        repro_fn = Mock(return_value={"schema": self.qa.REPRO_SCHEMA, "status": "reproduced"})
+        verify_fn = Mock(return_value={"schema": self.qa.VERIFY_SCHEMA, "status": "fail", "checks": []})
+        regression_fn = Mock()
+        review_fn = Mock()
+        correction_fn = Mock(return_value={"status": "applied", "commit": "fix(qa-auto): x"})
+
+        self.runner.run_pipeline(
+            ticket_id="PROJ-996", project_path=self.base, run_dir=self.run_dir,
+            run_id=self.run_id, status_path=self.status_path,
+            repro_fn=repro_fn, verify_fn=verify_fn, regression_fn=regression_fn,
+            correction_fn=correction_fn, review_fn=review_fn,
+        )
+
+        review_fn.assert_not_called()
+        regression_fn.assert_not_called()
+
+    def test_security_finding_from_review_routes_to_manual_review_no_correction(self):
+        repro_fn = Mock(return_value={"schema": self.qa.REPRO_SCHEMA, "status": "reproduced"})
+        verify_fn = Mock(return_value={"schema": self.qa.VERIFY_SCHEMA, "status": "pass", "checks": []})
+        regression_fn = Mock(return_value={"schema": self.qa.REGRESSION_SCHEMA, "status": "skipped"})
+        review_fn = Mock(return_value={
+            "schema": self.qa.REVIEW_SCHEMA, "status": "ok",
+            "security": {"findings": [
+                {"category": "sql_injection", "severity": "low", "file": "a.py", "line": 1, "detail": "x"},
+            ]},
+            "quality": {"findings": []},
+        })
+        correction_fn = Mock()
+
+        verdict = self.runner.run_pipeline(
+            ticket_id="PROJ-996", project_path=self.base, run_dir=self.run_dir,
+            run_id=self.run_id, status_path=self.status_path,
+            repro_fn=repro_fn, verify_fn=verify_fn, regression_fn=regression_fn,
+            correction_fn=correction_fn, review_fn=review_fn,
+        )
+
+        self.assertEqual(verdict["verdict"], "manual_review")
+        self.assertEqual(verdict["reason"], "security_finding_severe")
+        correction_fn.assert_not_called()
+        data = json.loads((self.run_dir / "verdict.json").read_text(encoding="utf-8"))
+        self.assertEqual(data["stages"]["review"], "ok")
+
+
+class SubprocessHardeningThreatMatrixTestCase(unittest.TestCase):
+    """4.1/4.2 — threat matrix: subprocess/shell composition. Un answer de
+    entorno con backtick, punto y coma, salto de línea y 5000 caracteres
+    nunca llega a un argv — `_parse_env_answer` ya lo rechaza (tasks 1.3/
+    1.4); esta clase prueba el flujo completo: `env_preflight` rechaza y
+    re-pregunta, y el argv de `invoke_stage` nunca lleva contenido crudo del
+    usuario (siempre `[exe, "-p", "Read <path> ..."]`, `shell=False`)."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.run_dir = Path(self._tmp.name) / "run"
+        import aicli.services.qa_orchestrator as qa_orchestrator
+        importlib.reload(qa_orchestrator)
+        self.qa = qa_orchestrator
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def test_malicious_env_answer_rejected_and_reasked(self):
+        malicious = "db=`rm -rf /`; url=http://x\n" + "a" * 5000
+        self.run_dir.mkdir(parents=True, exist_ok=True)
+        self.qa._write_json_atomic(self.run_dir / "answer.json", {"value": malicious})
+
+        env, question = self.qa.env_preflight(self.run_dir, "PROJ-1")
+
+        self.assertIsNone(env)
+        self.assertEqual(question["kind"], "text")
+        self.assertFalse((self.run_dir / "env_context.json").exists())
+
+    def test_invoke_stage_argv_unaffected_by_dangerous_prompt_content(self):
+        import aicli.services.qa_prompts as qa_prompts
+        importlib.reload(qa_prompts)
+        prompt_path = self.run_dir / "prompts" / "repro.md"
+        prompt_path.parent.mkdir(parents=True, exist_ok=True)
+        prompt_path.write_text("contenido con `backtick` y ; punto y coma", encoding="utf-8")
+
+        fake_proc = _FakeProc(['{"status": "reproduced"}'])
+        with patch.object(qa_prompts, "_find_claude_windows", return_value=None), \
+             patch.object(qa_prompts.subprocess, "Popen", return_value=fake_proc) as mock_popen:
+            qa_prompts.invoke_stage(prompt_path, self.run_dir, run_dir=self.run_dir, stage="repro", timeout=5)
+
+        args, kwargs = mock_popen.call_args
+        argv = args[0]
+        self.assertEqual(len(argv), 3)
+        self.assertEqual(argv[1], "-p")
+        self.assertTrue(argv[2].startswith("Read "))
+        self.assertEqual(kwargs["shell"], False)
+
+
+class ReviewFindingsEvidenceDigestTestCase(unittest.TestCase):
+    """4.5 — Requirement: Review Findings in Evidence Digest. Confirma que
+    `LogScreen` (zero TUI code change) ya muestra `security`/`quality` de
+    `review.json` verbatim, porque `_write_evidence_log` ahora los escribe
+    en texto plano y `LogScreen` solo renderiza el archivo tal cual."""
+
+    def test_log_screen_surfaces_review_findings_from_evidence_log(self):
+        from aicli.tui.screens import LogScreen
+        from textual.widgets import TextArea
+        import aicli.services.qa_runner as qa_runner
+        importlib.reload(qa_runner)
+
+        tmp = tempfile.TemporaryDirectory()
+        try:
+            run_dir = Path(tmp.name)
+            repro = {"status": "reproduced"}
+            verify = {"status": "pass", "checks": []}
+            regression = {"status": "skipped"}
+            review = {
+                "status": "ok",
+                "security": {"findings": [
+                    {"category": "sql_injection", "file": "a.py", "line": 10, "detail": "raw query", "severity": "low"},
+                ]},
+                "quality": {"findings": [
+                    {"kind": "duplication", "file": "b.py", "line": 3, "detail": "helper duplicado"},
+                ]},
+            }
+            verdict = {
+                "verdict": "manual_review", "qa_verified": False, "reason": "security_finding_severe",
+                "attempts": 0, "commits": [],
+            }
+            qa_runner._write_evidence_log(run_dir, repro, verify, regression, verdict, review=review)
+
+            screen = LogScreen(log_path=run_dir / "evidence.log", title="QA — PROJ-1")
+            widgets = list(screen.compose())
+            text_area = next(w for w in widgets if isinstance(w, TextArea))
+            self.assertIn("sql_injection", text_area.text)
+            self.assertIn("raw query", text_area.text)
+            self.assertIn("duplication", text_area.text)
+            self.assertIn("helper duplicado", text_area.text)
+        finally:
+            tmp.cleanup()
 
 
 if __name__ == "__main__":
