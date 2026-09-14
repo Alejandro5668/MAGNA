@@ -11,7 +11,7 @@ from aicli.db import engine
 from aicli.db.models import Project, Module
 from aicli.services.builder import build_context
 from aicli.services.caller import launch_claude
-from aicli.services.indexer import describe_image, MODEL_BY_OPERATION
+from aicli.services.indexer import describe_image, MODEL_BY_OPERATION, _extract_text
 from aicli.tui.theme import magna_status, magna_ok, magna_warn, magna_error, magna_info, magna_panel, magna_task_plan, ACCENT, SECTION
 
 app = typer.Typer()
@@ -102,7 +102,7 @@ y técnico. Solo el plan, sin introducción ni conclusión."""
         max_tokens=512,
         messages=[{"role": "user", "content": prompt}]
     )
-    return response.content[0].text.strip()
+    return _extract_text(response.content).strip()
 
 
 def _execute_task(

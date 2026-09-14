@@ -44,6 +44,14 @@ MODEL_BY_OPERATION = {
 }
 
 
+def _extract_text(content_blocks) -> str:
+    """Primer bloque de texto de la respuesta — ignora ThinkingBlock u otros no-texto."""
+    for block in content_blocks:
+        if getattr(block, "type", None) == "text":
+            return block.text
+    raise RuntimeError("Respuesta de Claude sin bloque de texto")
+
+
 def _load_ignore(path: Path) -> set[str]:
     """
     Lee el .gitignore del proyecto y lo combina con el mínimo universal.
@@ -196,7 +204,7 @@ def _call_claude(prompt: str, context: str = "", max_tokens: int = 8192, model: 
                 f" [{context}]" if context else "",
                 input_tokens, output_tokens, total
             )
-            return response.content[0].text, total
+            return _extract_text(response.content), total
         except anthropic.RateLimitError as e:
             logging.error(
                 "Rate limit%s — ~%d tokens estimados. Intento %d/%d. Esperando %ds.",
@@ -335,7 +343,7 @@ def describe_image(image_path: str) -> tuple[str, int]:
     )
     tokens = response.usage.input_tokens + response.usage.output_tokens
     logging.info("describe_image — %s · %d tokens", path.name, tokens)
-    return response.content[0].text.strip(), tokens
+    return _extract_text(response.content).strip(), tokens
 
 
 def analyze_file_deep(
