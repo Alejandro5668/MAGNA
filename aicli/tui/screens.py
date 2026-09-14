@@ -499,6 +499,46 @@ def _run_resume_tui(tui_console) -> None:
         pids_txt = ", ".join(str(p) for p in other_pids)
         tui_console.print(f"[{_WARN}]⚠ {ticket_id} ya está abierto en otra terminal (PID {pids_txt})[/{_WARN}]")
 
+    # ── Historia: detectar y navegar hermanos ANTES del checkout de branch,
+    # para que el checkout se haga sobre el ticket final elegido, no el
+    # original si hubo un salto ──────────────────────────────────────────────
+    jira_data = None
+    while True:
+        history = format_history(ticket_id, tickets)
+        if history:
+            tui_console.print(RichPanel(
+                history,
+                title=f"[bold {_ACCENT}]Historial {ticket_id}[/bold {_ACCENT}]",
+                border_style=_ACCENT,
+            ))
+
+        jira_data = _resume_jira_context(ticket_id)
+        hermanos = (jira_data or {}).get("hermanos") or []
+        if not hermanos:
+            break
+
+        historia = jira_data.get("historia") or {}
+        resumen_historia = f"{historia.get('key', '')}  {historia.get('summary', '')}"
+        lineas_hermanos = "\n".join(
+            f"  {h.get('id', '')}  ({h.get('tipo', '')})  {h.get('status', '')} — {h.get('summary', '')}"
+            for h in hermanos
+        )
+        tui_console.print(RichPanel(
+            f"{resumen_historia}\n\n{lineas_hermanos}",
+            title=f"[bold {_ACCENT}]Hermanos de {ticket_id}[/bold {_ACCENT}]",
+            border_style=_ACCENT,
+        ))
+
+        opciones = [f"Seguir con {ticket_id}"] + [
+            f"Saltar a {h.get('id', '')} ({h.get('tipo', '')})" for h in hermanos
+        ]
+        elegido = tui_console.request_select("¿Seguís con este ticket o saltás a un hermano?", opciones)
+        if elegido is None:
+            return
+        if elegido == opciones[0]:
+            break
+        ticket_id = hermanos[opciones.index(elegido) - 1]["id"]
+
     # ── Branch checkout ───────────────────────────────────────────────────────
     cwd = _Path.cwd()
     saved_branch = get_ticket_branch(ticket_id)
@@ -542,15 +582,6 @@ def _run_resume_tui(tui_console) -> None:
                 else:
                     tui_console.print(f"[{_WARN}]checkout falló: {err}[/{_WARN}]")
 
-    history = format_history(ticket_id, tickets)
-    if history:
-        tui_console.print(RichPanel(
-            history,
-            title=f"[bold {_ACCENT}]Historial {ticket_id}[/bold {_ACCENT}]",
-            border_style=_ACCENT,
-        ))
-
-    jira_data = _resume_jira_context(ticket_id)
     new_comments = (jira_data or {}).get("comments") or []
     prefill = new_comments[-1]["body"] if new_comments else ""
 

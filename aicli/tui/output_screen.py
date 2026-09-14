@@ -170,6 +170,23 @@ class CommandOutputScreen(ModalScreen[None]):
             return resp not in ("n", "no") if default else resp in ("y", "si", "sí", "yes")
         return self._run_on_loop(self._push_confirm(prompt, default))
 
+    async def _push_select(self, prompt: str, options: list[str]) -> str | None:
+        from aicli.tui.modals import SelectModal
+        return await self.app.push_screen_wait(SelectModal(prompt, options))
+
+    def request_select(self, prompt: str, options: list[str]) -> str | None:
+        """Block caller thread until user elige una opción en un SelectModal."""
+        if self._loop is None:
+            for i, opt in enumerate(options):
+                print(f"  {i + 1}. {opt}")
+            raw = input(f"  {prompt}: ").strip()
+            if raw.isdigit():
+                idx = int(raw) - 1
+                if 0 <= idx < len(options):
+                    return options[idx]
+            return None
+        return self._run_on_loop(self._push_select(prompt, options))
+
     def action_go_back(self) -> None:
         self.dismiss(None)
 
@@ -218,3 +235,6 @@ class TuiConsole:
 
     def request_confirm(self, prompt: str, default: bool = True) -> bool:
         return self._screen.request_confirm(prompt, default)
+
+    def request_select(self, prompt: str, options: list[str]) -> str | None:
+        return self._screen.request_select(prompt, options)
