@@ -89,7 +89,7 @@ check("cmd: archive — importa correctamente", test_cmd_archive)
 
 
 def test_cmd_task():
-    from aicli.commands.task import task, _execute_task, _detect_relevant_modules
+    from aicli.commands.task import task, _execute_task
     assert callable(task)
     assert callable(_execute_task)
 

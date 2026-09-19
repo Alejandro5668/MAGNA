@@ -15,7 +15,9 @@ console = Console()
 
 
 def _save_zone_modules(modules: list[dict], project: Project) -> None:
+    from aicli.services.embeddings import upsert_modules
     base = Path.home() / ".mycontext" / "projects" / str(project.id)
+    touched: list[Module] = []
     with Session(engine) as session:
         for m in modules:
             md_file = base / Path(m["file_path"]).with_suffix(".md")
@@ -34,8 +36,9 @@ def _save_zone_modules(modules: list[dict], project: Project) -> None:
                 existing.last_updated_at = time.time()
                 existing.description = m.get("description", existing.description)
                 session.add(existing)
+                touched.append(existing)
             else:
-                session.add(Module(
+                new_module = Module(
                     project_id=project.id,
                     name=m["name"],
                     description=m.get("description", ""),
@@ -45,8 +48,12 @@ def _save_zone_modules(modules: list[dict], project: Project) -> None:
                     last_updated_at=time.time(),
                     category=m.get("category"),
                     domain=m.get("domain"),
-                ))
+                )
+                session.add(new_module)
+                touched.append(new_module)
         session.commit()
+        payload = [(m.id, m.name, m.description) for m in touched]  # ids exist post-commit
+    upsert_modules(project.id, payload)
 
 
 @app.callback(invoke_without_command=True)

@@ -53,4 +53,13 @@ def init_db() -> None:
                 ) from exc
 
             from rich.console import Console as _C
-            _C().print(f"  [bold green]✔[/bold green]  [dim]Schema v{current} → v{SCHEMA_VERSION}[/dim]")
+            try:
+                _C().print(f"  [bold green]✔[/bold green]  [dim]Schema v{current} → v{SCHEMA_VERSION}[/dim]")
+            except UnicodeEncodeError:
+                # Pre-existing landmine, unrelated to module-semantic-prefilter:
+                # Rich's legacy Windows console writer queries the raw console
+                # output codepage (not PYTHONIOENCODING). On a fresh non-UTF8
+                # console (cp1252, common on non-English Windows locales) this
+                # raised and crashed the frozen exe on its very first migration.
+                # ASCII-safe fallback so a schema bump never crashes the app.
+                print(f"  [OK]  Schema v{current} -> v{SCHEMA_VERSION}")

@@ -31,7 +31,7 @@ import questionary
 from questionary import Style as QStyle
 from rich.console import Console
 from rich.rule import Rule
-from aicli.commands import status, init, archive, file_cmd, sync, task, claude_cmd, proyecto
+from aicli.commands import status, init, archive, file_cmd, sync, task, claude_cmd, proyecto, embed_selftest, graph_selftest
 from aicli.db import init_db, engine
 
 init_db()
@@ -45,6 +45,8 @@ app.add_typer(sync.app,       name="sync")
 app.add_typer(task.app,       name="task")
 app.add_typer(claude_cmd.app, name="claude")
 app.add_typer(proyecto.app,   name="scan")
+app.add_typer(embed_selftest.app, name="embed-selftest", hidden=True)
+app.add_typer(graph_selftest.app, name="graph-selftest", hidden=True)
 
 console = Console()
 

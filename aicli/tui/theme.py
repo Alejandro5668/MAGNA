@@ -106,7 +106,15 @@ def magna_ok(console: Console, message: str) -> None:
 
 
 def magna_warn(console: Console, message: str) -> None:
-    console.print(f"  [bold {_WARN}]⚠[/bold {_WARN}]  [{_WARN}]{message}[/{_WARN}]")
+    try:
+        console.print(f"  [bold {_WARN}]⚠[/bold {_WARN}]  [{_WARN}]{message}[/{_WARN}]")
+    except UnicodeEncodeError:
+        # Pre-existing landmine, unrelated to module-semantic-prefilter: Rich's
+        # legacy Windows console writer queries the raw console output codepage
+        # (not PYTHONIOENCODING). On a fresh non-UTF8 console this crashed the
+        # frozen exe on the first magna_warn call (e.g. ctx status with no
+        # registered project). ASCII-safe fallback so a warning never crashes.
+        print(f"  [!]  {message}")
 
 
 def magna_error(console: Console, message: str) -> None:

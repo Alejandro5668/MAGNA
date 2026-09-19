@@ -3,7 +3,6 @@ from typing import Callable
 import anthropic
 import subprocess
 import os
-import json
 import time
 import logging
 
@@ -50,6 +49,70 @@ def _extract_text(content_blocks) -> str:
         if getattr(block, "type", None) == "text":
             return block.text
     raise RuntimeError("Respuesta de Claude sin bloque de texto")
+
+
+def _extract_tool_input(content_blocks, tool_name: str) -> dict:
+    """Input ya parseado del ToolUseBlock forzado — sin json.loads."""
+    for block in content_blocks:
+        if getattr(block, "type", None) == "tool_use" and block.name == tool_name:
+            return block.input
+    raise RuntimeError(f"Respuesta de Claude sin bloque tool_use para '{tool_name}'")
+
+
+# Schema compartido por document_zone y document_architecture — key sets idénticos,
+# verificados por lectura directa de ambos prompts (ver design.md). Solo el ejemplo
+# de "file_path" y el tope de cantidad difieren, y ambos son instruction-level:
+# se quedan en el prompt, no en el schema.
+MODULE_ITEM_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "name": {"type": "string", "description": "nombre_snake_case"},
+        "description": {"type": "string", "description": "Qué hace, en una línea, basado en el código real."},
+        "file_path": {"type": "string", "description": "Ruta relativa al proyecto con extensión real. Nunca una carpeta."},
+        "category": {"type": "string", "enum": ["backend", "frontend", "infraestructura", "negocio"]},
+        "domain": {"type": ["string", "null"], "description": "Dominio de negocio, o null."},
+        "documentation": {"type": "string", "description": "Markdown, secciones cortas, \\n para saltos, sin backticks."},
+    },
+    "required": ["name", "description", "file_path", "category", "domain", "documentation"],
+    "additionalProperties": False,
+}
+
+DOCUMENT_MODULES_TOOL = {
+    "name": "documentar_modulos",
+    "description": "Registra los módulos/componentes documentados.",
+    "input_schema": {"type": "object",
+                      "properties": {"modules": {"type": "array", "items": MODULE_ITEM_SCHEMA}},
+                      "required": ["modules"]},
+}
+
+CASE_SUMMARY_TOOL = {
+    "name": "registrar_resumen_caso",
+    "description": "Registra el mensaje de Jira y la memoria estructurada del caso.",
+    "input_schema": {"type": "object", "properties": {
+        "jira": {"type": "string", "description": (
+            "mensaje tecnico para pegar en Jira. Formato: '🌱 Causa Raiz: [origen tecnico, archivo:linea o "
+            "tabla:campo]\\n🛠️ Solucion Aplicada: [cambios concretos, maximo 4 puntos]'. SOLO ASCII puro sin "
+            "tildes. Maximo 6 lineas totales."
+        )},
+        "nota_contextual": {"type": "string", "description": (
+            "nota breve para que una persona de QA sin conocimientos tecnicos entienda que estaba mal y que se "
+            "arreglo, en terminos de pantallas/flujo de negocio del sistema (nunca nombres de archivo, funcion, "
+            "tabla o variable). Maximo 3 oraciones cortas. Ejemplo: 'Al facturar un cliente con descuento, el "
+            "total mostrado no incluia el descuento aplicado. Ahora el total en pantalla siempre refleja el "
+            "descuento correcto antes de confirmar la factura.' Lenguaje simple, directo, sin jerga tecnica."
+        )},
+        "investigado": {"type": "string", "description": (
+            "que causa genero el problema — especifico con archivo/funcion/tabla si aplica — maximo 2 oraciones"
+        )},
+        "hecho": {"type": "string", "description": (
+            "que cambios se aplicaron exactamente — archivos y funciones modificadas — maximo 2 oraciones"
+        )},
+        "tener_en_cuenta": {"type": "string", "description": (
+            "gotchas, restricciones no obvias, edge cases a considerar en el futuro — maximo 2 oraciones"
+        )},
+    }, "required": ["jira", "nota_contextual", "investigado", "hecho", "tener_en_cuenta"],
+       "additionalProperties": False},
+}
 
 
 def _load_ignore(path: Path) -> set[str]:
@@ -129,29 +192,6 @@ def module_needs_update(file_path: str, project_path: Path, existing_module) -> 
     return os.path.getmtime(file) > existing_module.last_updated_at
 
 
-def _reparar_json(text: str) -> str:
-    """
-    Repara el caso más común de JSON inválido: saltos de línea literales
-    dentro de strings. Recorre carácter a carácter y escapa los que aparecen
-    dentro de comillas.
-    """
-    result = []
-    in_string = False
-    i = 0
-    while i < len(text):
-        c = text[i]
-        if c == '"' and (i == 0 or text[i - 1] != "\\"):
-            in_string = not in_string
-        if in_string and c == "\n":
-            result.append("\\n")
-        elif in_string and c == "\r":
-            result.append("\\r")
-        else:
-            result.append(c)
-        i += 1
-    return "".join(result)
-
-
 def _write_md_atomic(path: Path, content: str) -> None:
     """Escribe a .tmp y hace rename atómico — si el proceso muere, el .md original queda intacto."""
     tmp = path.with_suffix(".tmp")
@@ -163,39 +203,18 @@ def _write_md_atomic(path: Path, content: str) -> None:
         raise
 
 
-def _parse_json_claude(text: str, required_keys: set[str] | None = None) -> dict | list:
-    """Parsea JSON de Claude con reparación y validación de campos requeridos."""
-    clean = text.strip().removeprefix("```json").removeprefix("```").removesuffix("```").strip()
-    try:
-        data = json.loads(clean)
-    except json.JSONDecodeError:
-        logging.warning("_parse_json_claude — JSON inválido, intentando reparar")
-        data = json.loads(_reparar_json(clean))
-    if required_keys and isinstance(data, dict):
-        missing = required_keys - data.keys()
-        if missing:
-            raise ValueError(f"JSON de Claude — campos faltantes: {missing}")
-    return data
-
-
-def _call_claude(prompt: str, context: str = "", max_tokens: int = 8192, model: str | None = None) -> tuple[str, int]:
+def _messages_create_retry(context: str, estimated_tokens: int, **kwargs) -> anthropic.types.Message:
     """
-    Llama a la API de Claude y devuelve (texto, tokens_totales).
-    Reintenta con backoff exponencial solo en rate limit.
+    Llama a client.messages.create con reintentos y backoff exponencial en rate limit.
+    Loguea uso de tokens en éxito. `**kwargs` se pasa tal cual a la API — permite tanto
+    llamadas de texto libre como llamadas con `tools`/`tool_choice` forzado.
     """
-    resolved_model = model or MODEL_BY_OPERATION["architecture"]
     client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
     wait = INITIAL_WAIT
-    chars = len(prompt)
-    estimated_tokens = chars // 4
 
     for attempt in range(MAX_RETRIES):
         try:
-            response = client.messages.create(
-                model=resolved_model,
-                max_tokens=max_tokens,
-                messages=[{"role": "user", "content": prompt}]
-            )
+            response = client.messages.create(**kwargs)
             input_tokens = response.usage.input_tokens
             output_tokens = response.usage.output_tokens
             total = input_tokens + output_tokens
@@ -204,7 +223,7 @@ def _call_claude(prompt: str, context: str = "", max_tokens: int = 8192, model: 
                 f" [{context}]" if context else "",
                 input_tokens, output_tokens, total
             )
-            return _extract_text(response.content), total
+            return response
         except anthropic.RateLimitError as e:
             logging.error(
                 "Rate limit%s — ~%d tokens estimados. Intento %d/%d. Esperando %ds.",
@@ -217,6 +236,37 @@ def _call_claude(prompt: str, context: str = "", max_tokens: int = 8192, model: 
                 wait *= 2
             else:
                 raise
+
+
+def _call_claude(prompt: str, context: str = "", max_tokens: int = 8192, model: str | None = None) -> tuple[str, int]:
+    """
+    Llama a la API de Claude y devuelve (texto, tokens_totales).
+    Reintenta con backoff exponencial solo en rate limit.
+    """
+    resolved_model = model or MODEL_BY_OPERATION["architecture"]
+    response = _messages_create_retry(
+        context, len(prompt) // 4,
+        model=resolved_model, max_tokens=max_tokens,
+        messages=[{"role": "user", "content": prompt}],
+    )
+    total = response.usage.input_tokens + response.usage.output_tokens
+    return _extract_text(response.content), total
+
+
+def _call_claude_tool(prompt: str, tool: dict, context: str = "",
+                       max_tokens: int = 8192, model: str | None = None) -> tuple[dict, int]:
+    """
+    Llama a la API de Claude forzando una tool_call estructurada y devuelve (input_dict, tokens_totales).
+    Reintenta con backoff exponencial solo en rate limit (delegado a _messages_create_retry).
+    """
+    response = _messages_create_retry(
+        context, len(prompt) // 4,
+        model=model or MODEL_BY_OPERATION["architecture"], max_tokens=max_tokens,
+        tools=[tool], tool_choice={"type": "tool", "name": tool["name"]},
+        messages=[{"role": "user", "content": prompt}],
+    )
+    usage = response.usage
+    return _extract_tool_input(response.content, tool["name"]), usage.input_tokens + usage.output_tokens
 
 
 
@@ -272,31 +322,12 @@ Archivos modificados:
 {files_str}
 
 Cambios aplicados (git diff):
-{diff[:5000]}
+{diff[:5000]}"""
 
-Genera un JSON con exactamente estas claves, sin texto adicional antes ni despues:
-
-{{
-  "jira": "mensaje tecnico para pegar en Jira. Formato: '🌱 Causa Raiz: [origen tecnico, archivo:linea o tabla:campo]\\n🛠️ Solucion Aplicada: [cambios concretos, maximo 4 puntos]'. SOLO ASCII puro sin tildes. Maximo 6 lineas totales.",
-  "pasos_qa": "pasos numerados para que una persona de QA sin conocimientos tecnicos reproduzca el caso SOLO desde la UI del sistema, sin tocar base de datos ni codigo. Maximo 5 pasos. Cada paso: accion concreta en pantalla. Ejemplo: '1. Ir a Ventas > Facturas. 2. Buscar el cliente afectado. 3. Verificar que el monto aparezca correcto.' Lenguaje simple, claro, sin jerga tecnica.",
-  "investigado": "que causa genero el problema — especifico con archivo/funcion/tabla si aplica — maximo 2 oraciones",
-  "hecho": "que cambios se aplicaron exactamente — archivos y funciones modificadas — maximo 2 oraciones",
-  "tener_en_cuenta": "gotchas, restricciones no obvias, edge cases a considerar en el futuro — maximo 2 oraciones"
-}}"""
-
-    text, tokens = _call_claude(prompt, context="resumen-caso", max_tokens=1000, model=MODEL_BY_OPERATION["case_summary"])
-    try:
-        data = _parse_json_claude(text, required_keys={"jira", "investigado", "hecho", "tener_en_cuenta", "pasos_qa"})
-        case_memory = {
-            "investigado": data.get("investigado", ""),
-            "hecho": data.get("hecho", ""),
-            "tener_en_cuenta": data.get("tener_en_cuenta", ""),
-            "pasos_qa": data.get("pasos_qa", ""),
-        }
-        return data.get("jira", ""), case_memory, tokens
-    except Exception as e:
-        logging.warning("generate_case_summary — parse fallido: %s", e)
-        return text, {"investigado": "", "hecho": "", "tener_en_cuenta": "", "pasos_qa": ""}, tokens
+    data, tokens = _call_claude_tool(prompt, CASE_SUMMARY_TOOL, context="resumen-caso",
+                                     max_tokens=1000, model=MODEL_BY_OPERATION["case_summary"])
+    case_memory = {k: data[k] for k in ("investigado", "hecho", "tener_en_cuenta", "nota_contextual")}
+    return data["jira"], case_memory, tokens
 
 
 def describe_image(image_path: str) -> tuple[str, int]:
@@ -493,24 +524,12 @@ Tu tarea:
 4. Máximo 8 componentes. Si hay más, priorizá los de mayor relevancia funcional.
 
 IMPORTANTE: "documentation" usa \\n para saltos de línea. Sin backticks adentro.
-Cada sección de "documentation" debe ser concisa — 2 a 4 líneas por sección.
+Cada sección de "documentation" debe ser concisa — 2 a 4 líneas por sección."""
 
-Devolvé ÚNICAMENTE este JSON:
-[
-  {{
-    "name": "nombre_snake_case",
-    "description": "qué hace este componente en una línea, basado en el código",
-    "file_path": "{zone_display}/ArchivoReal.php",
-    "category": "backend",
-    "domain": null,
-    "documentation": "# Componente\\n\\n## Qué hace\\nBasado en el código real.\\n\\n## Funciones principales\\nNombre y descripción breve de cada función pública.\\n\\n## Queries SQL\\nTablas observadas (nombres exactos).\\n\\n## Dependencias\\nArchivos o módulos que usa directamente."
-  }}
-]
-
-Valores válidos para category: backend, frontend, infraestructura, negocio."""
-
-    text, tokens = _call_claude(prompt, context=f"zona:{zone_display}", max_tokens=8192, model=MODEL_BY_OPERATION["zone"])
-    modules = _parse_json_claude(text)
+    data, tokens = _call_claude_tool(prompt, DOCUMENT_MODULES_TOOL,
+                                     context=f"zona:{zone_display}", max_tokens=8192,
+                                     model=MODEL_BY_OPERATION["zone"])
+    modules = data["modules"]
 
     if on_progreso:
         on_progreso(f"{len(modules)} componentes documentados · {tokens:,} tokens")
@@ -791,25 +810,13 @@ Tu tarea:
 4. Máximo 15 módulos. Si hay más, priorizá los de mayor relevancia de negocio.
 
 IMPORTANTE: "documentation" usa \\n para saltos de línea. Sin backticks adentro.
-Mantené "documentation" concisa: máximo 3 secciones cortas.
-
-Devolvé ÚNICAMENTE este JSON:
-[
-  {{
-    "name": "nombre_snake_case",
-    "description": "qué hace este módulo en una línea, basado en el código visto",
-    "file_path": "modulo/ArchivoMain.php",
-    "category": "backend",
-    "domain": null,
-    "documentation": "# Módulo\\n\\n## Qué hace\\nDescripción basada en el código real.\\n\\n## Archivos principales\\nLista de archivos vistos con descripción breve.\\n\\n## Dependencias clave\\nQué usa o qué lo usa."
-  }}
-]
-
-Valores válidos para category: backend, frontend, infraestructura, negocio."""
+Mantené "documentation" concisa: máximo 3 secciones cortas."""
 
     try:
-        text, tokens = _call_claude(prompt, context=f"arquitectura:{name}", max_tokens=8000, model=MODEL_BY_OPERATION["architecture"])
-        modules = _parse_json_claude(text)
+        data, tokens = _call_claude_tool(prompt, DOCUMENT_MODULES_TOOL,
+                                         context=f"arquitectura:{name}", max_tokens=8000,
+                                         model=MODEL_BY_OPERATION["architecture"])
+        modules = data["modules"]
         if on_progreso:
             on_progreso(f"{len(modules)} módulos identificados · {tokens:,} tokens")
         return modules

@@ -1,0 +1,46 @@
+change: prompt-caching
+project: aicli
+artifact_store: hybrid
+execution_mode: auto
+delivery_strategy: single-pr
+review_budget_lines: 400
+sequence: 1 of 4
+depends_on: []
+blocks: [structured-tool-output]
+
+phases:
+  explore:
+    status: done
+    engram_topic: sdd/prompt-caching/explore
+    engram_id: 252
+    openspec_path: openspec/changes/prompt-caching/exploration.md
+    note: "Agent returned status=partial only because it lacked Write/Bash tools to create the OpenSpec file; orchestrator materialized exploration.md from the returned content. Content itself passed gate (no hallucination/drift detected on spot-check)."
+  propose:
+    status: done
+    engram_id: 253
+    openspec_path: openspec/changes/prompt-caching/proposal.md
+  spec:
+    status: done
+    engram_id: 254
+    openspec_path: openspec/changes/prompt-caching/specs/ai-prompt-caching/spec.md
+    note: "Fresh-context validator caught a real contradiction with design.md on the ordering-key requirement (spec said ORDER BY Module.name, design chose Module.id). Orchestrator verified against real code (init.py/file_cmd.py/sync.py upsert-by-file_path pattern, DEC-027, no Module deletes anywhere) that id IS stable across re-index and the spec's original justification was factually wrong. Corrected spec (and Engram #254) to require Module.id instead of re-running design, since design was the artifact that was actually right."
+  design:
+    status: done
+    engram_id: 255
+    openspec_path: openspec/changes/prompt-caching/design.md
+    note: "Fresh-context contract validator ran (agent aeb24bd132c8a046b): codebase + installed-SDK citations all verified real, scope matched proposal. Only finding was the ordering-key conflict with spec, resolved by correcting spec (see spec.note above), not design."
+  tasks:
+    status: done
+    openspec_path: openspec/changes/prompt-caching/tasks.md
+    note: "13 tasks / 5 phases. Review Workload Forecast: ~220-260 changed lines, Low risk, no chaining/exception needed — proceeding straight to single-pr apply."
+  apply:
+    status: done
+    engram_id: 257
+    note: "11/13 tasks done (Phase 5's 2 tasks deferred to verify, non-blocking by design). 29/29 tests pass, independently re-run by orchestrator. Fresh-context validator PASS on all 4 checks. One non-blocking note: working tree also has unrelated uncommitted changes from earlier in this session (knowledge/ doc cleanup, flow-*.html diagrams) — must exclude those when staging/committing this change."
+  verify:
+    status: done
+    engram_id: 258
+    note: "passed-with-notes. 29/29 tests re-confirmed. Live cache-read check (5.1) not executable — no ANTHROPIC_API_KEY in agent env; left as explicit manual follow-up. Token-size estimate (5.2) done via char-count approximation: realistic 25-module listing ~2270-3560 tokens, well above ~1024 Sonnet threshold."
+  archive:
+    status: done
+    openspec_path: openspec/changes/archive/2026-09-17-prompt-caching/

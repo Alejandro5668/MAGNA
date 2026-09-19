@@ -30,7 +30,7 @@ _ESTILO = QStyle(Q_STYLE_ARGS)
 
 def _show_case_card(ticket_id: str, round_num: int, files: set[str], case_memory: dict) -> None:
     files_txt = "\n".join(f"  · {a}" for a in sorted(files))
-    pasos_qa = case_memory.get("pasos_qa", "")
+    nota_contextual = case_memory.get("nota_contextual", "")
 
     items = [
         Text.from_markup(f"[{SECTION}]{files_txt}[/{SECTION}]"),
@@ -46,12 +46,12 @@ def _show_case_card(ticket_id: str, round_num: int, files: set[str], case_memory
         Text.from_markup(f"[{SECTION}]  {case_memory['tener_en_cuenta']}[/{SECTION}]"),
         Text(""),
     ]
-    if pasos_qa:
+    if nota_contextual:
         items += [
             Rule(style=BORDER),
             Text(""),
-            Text.from_markup(f"[bold {ACCENT}]  Pasos para QA[/bold {ACCENT}]"),
-            Text.from_markup(f"[{SECTION}]  {pasos_qa}[/{SECTION}]"),
+            Text.from_markup(f"[bold {ACCENT}]  Nota para QA[/bold {ACCENT}]"),
+            Text.from_markup(f"[{SECTION}]  {nota_contextual}[/{SECTION}]"),
             Text(""),
         ]
 
@@ -155,6 +155,7 @@ def sync():
 def _sync_impl(ask_fn=None, confirm_fn=None):
     """Lógica real de sync. ask_fn/confirm_fn permiten sustituir questionary desde la TUI."""
     from aicli.services.activity import log_activity
+    from aicli.services.embeddings import upsert_modules
     log_activity("sync")
     path = Path.cwd()
 
@@ -193,6 +194,7 @@ def _sync_impl(ask_fn=None, confirm_fn=None):
 
     updated = 0
     new_count = 0
+    new_modules: list[tuple[int, str, str]] = []
     base = Path.home() / ".mycontext" / "projects" / str(project.id)
 
     for file_path in sorted(existing_files):
@@ -228,7 +230,7 @@ def _sync_impl(ask_fn=None, confirm_fn=None):
                 session.commit()
                 updated += 1
             else:
-                session.add(Module(
+                new_m = Module(
                     project_id=project.id,
                     name=name,
                     description=description,
@@ -236,11 +238,15 @@ def _sync_impl(ask_fn=None, confirm_fn=None):
                     content_path=str(md_file),
                     created_at=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                     last_updated_at=time.time(),
-                ))
+                )
+                session.add(new_m)
                 session.commit()
+                new_modules.append((new_m.id, name, description))  # id exists post-commit
                 new_count += 1
 
         magna_ok(console, f"{file_path} · {tokens:,} tokens")
+
+    upsert_modules(project.id, new_modules)
 
     # Captura de decisión técnica post-tarea
     console.print()
@@ -289,10 +295,10 @@ def _sync_impl(ask_fn=None, confirm_fn=None):
                 magna_warn(console, f"No se pudo generar el resumen: {e}")
 
         if jira_msg:
-            pasos_qa = case_memory.get("pasos_qa", "") if case_memory else ""
+            nota_contextual = case_memory.get("nota_contextual", "") if case_memory else ""
             full_msg = jira_msg
-            if pasos_qa:
-                full_msg += f"\n\nPasos para QA:\n{pasos_qa}"
+            if nota_contextual:
+                full_msg += f"\n\nNota para QA:\n{nota_contextual}"
 
             panel_body = Group(
                 Text.from_markup(jira_msg),
@@ -300,10 +306,10 @@ def _sync_impl(ask_fn=None, confirm_fn=None):
                     [
                         Text(""),
                         Rule(style=BORDER),
-                        Text.from_markup(f"[bold {SECTION}]Pasos para QA[/bold {SECTION}]"),
-                        Text.from_markup(f"[{SECTION}]{pasos_qa}[/{SECTION}]"),
+                        Text.from_markup(f"[bold {SECTION}]Nota para QA[/bold {SECTION}]"),
+                        Text.from_markup(f"[{SECTION}]{nota_contextual}[/{SECTION}]"),
                     ]
-                    if pasos_qa else []
+                    if nota_contextual else []
                 ),
             )
             console.print(Panel(
