@@ -118,6 +118,8 @@ def _md_path(project_id: int, file_path: str) -> Path:
 
 
 def _save_modules(modules: list[dict], project: Project) -> None:
+    from aicli.services.embeddings import upsert_modules
+    touched: list[Module] = []
     with Session(engine) as session:
         for m in modules:
             md_file = _md_path(project.id, m["file_path"])
@@ -136,8 +138,9 @@ def _save_modules(modules: list[dict], project: Project) -> None:
                 existing.last_updated_at = m.get("last_updated_at", time.time())
                 existing.description = m.get("description", existing.description)
                 session.add(existing)
+                touched.append(existing)
             else:
-                session.add(Module(
+                new_module = Module(
                     project_id=project.id,
                     name=m["name"],
                     description=m.get("description", ""),
@@ -147,8 +150,12 @@ def _save_modules(modules: list[dict], project: Project) -> None:
                     last_updated_at=m.get("last_updated_at", time.time()),
                     category=m.get("category"),
                     domain=m.get("domain"),
-                ))
+                )
+                session.add(new_module)
+                touched.append(new_module)
         session.commit()
+        payload = [(m.id, m.name, m.description) for m in touched]  # ids exist post-commit
+    upsert_modules(project.id, payload)
 
 
 def _create_rol_if_missing() -> None:
@@ -224,6 +231,7 @@ def init():
 
 
 def _update_project(project: Project, path: Path) -> None:
+    from aicli.services.embeddings import upsert_modules
     with Session(engine) as session:
         modules_db = list(session.exec(select(Module).where(Module.project_id == project.id)).all())
 
@@ -251,6 +259,11 @@ def _update_project(project: Project, path: Path) -> None:
                 m.last_updated_at = time.time()
                 session.add(m)
                 session.commit()
+                # Literal spec coverage (upsert coverage at every write site).
+                # Harmless no-op in practice: this branch never touches
+                # name/description, so _reconcile's text-compare would have
+                # self-healed it anyway. See design.md's "3 write sites, not 4".
+                upsert_modules(project.id, [(m.id, m.name, m.description)])
 
             magna_ok(console, f"{module.file_path} — actualizado · {tokens:,} tokens")
             updated += 1

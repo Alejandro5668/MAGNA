@@ -1,0 +1,56 @@
+change: module-semantic-prefilter
+project: aicli
+artifact_store: hybrid
+execution_mode: auto
+delivery_strategy: single-pr
+review_budget_lines: 400
+sequence: 3 of 4
+depends_on: [prompt-caching, structured-tool-output]
+blocks: [task-context-multiagent]
+
+pre_decided:
+  embedding_source: "Chroma embedded (PersistentClient, no server) using Chroma's own DefaultEmbeddingFunction (all-MiniLM-L6-v2 via onnxruntime) — free, local, zero marginal dependency since the full chromadb package already requires onnxruntime for this. Rejected: Voyage/OpenAI (user does not want to pay per API call), sentence-transformers+torch (redundant heavy dependency duplicating what onnxruntime already does for the same job). See Engram decision id 262."
+  reasoning: "User explicitly wants to use real production-grade AI tooling as a learning/practice vehicle for this project, not just the minimal-footprint option — this justifies Chroma over a hand-rolled SQLite-BLOB+numpy approach even though the latter would be simpler at MAGNA's actual data scale."
+
+phases:
+  explore:
+    status: done
+    engram_topic: sdd/module-semantic-prefilter/explore
+    openspec_path: openspec/changes/module-semantic-prefilter/exploration.md
+    note: "Orchestrator materialized file (agent lacks Write, expected). Spot-checked Module model fields and requirements.txt absence of chromadb against real files - accurate. 2 open design decisions for propose/design: backfill strategy for pre-existing projects, embedding-text composition (description-only vs +doc-snippet)."
+  propose:
+    status: done
+    engram_id: 273
+    openspec_path: openspec/changes/module-semantic-prefilter/proposal.md
+    note: "Gate passed, verified the cited ai-prompt-caching spec scenario (lines 32-37) is real. Found a genuine architectural conflict: task_desc-driven top-N selection structurally breaks change 1's 'system block identical regardless of task_desc' cache invariant, not just a rare edge case. 4 open decisions surfaced to user before design/tasks: cache tradeoff, N sizing, frozen-exe smoke test scope, PR split. PAUSED pending user answer."
+  spec:
+    status: done
+    engram_id: 275
+    openspec_paths: [specs/ai-module-prefilter/spec.md, specs/ai-prompt-caching/spec.md]
+    note: "8 reqs new domain + MODIFIED delta on ai-prompt-caching per accepted cache tradeoff. Self-flagged: also lightly qualified the 'Cacheable System Prefix' scenario for internal consistency (added same-task_desc qualifier) - reasonable, not requested verbatim, flagged for design/verify review. Both files verified to exist."
+    user_decisions:
+      cache_tradeoff: "accept — filtered top-N listing stays in the cached system block; amend ai-prompt-caching's 'Task description never affects the cached block' scenario to reflect that the listing now varies per task_desc. Rationale accepted: for large projects, sending 20 vs 100+ modules reduces cost whether or not the cache hits."
+      top_n: 20 (fixed, not proportional)
+      pyinstaller_verification: "blocking — sdd-verify MUST prove the compiled ctx.exe actually starts and runs with chromadb bundled before this change is considered closed, not deferred to a follow-up."
+      delivery: "ask-on-risk — stays single-pr; only escalate to a 2-PR split conversation if sdd-tasks confirms >400 lines."
+  design:
+    status: done
+    engram_id: 277
+    openspec_path: openspec/changes/module-semantic-prefilter/design.md
+    note: "Gate passed. Verified ctx.spec:36 name='MAGNA' (not ctx.exe as earlier phases assumed) - real frozen binary name for the blocking PyInstaller check. Design's claim that specs/ didn't exist yet was a timing race with the parallel sdd-spec run, already stale by the time this was reviewed - both spec files confirmed present. Accepted design's refinement of upsert reconcile to diff metadatas['text'] (not just missing ids) so init._update_project/sync.py's content_path-only writes still self-heal correctly under description-only embeddings - sound implementation detail, doesn't change the spec's observable requirement, no user escalation needed. New finding worth knowing: Chroma's DefaultEmbeddingFunction downloads its ONNX model at first use (not bundleable), so the frozen exe's first run needs network access once."
+    line_estimate: "~323±40, holds under 400"
+  tasks:
+    status: done
+    engram_id: 279
+    openspec_path: openspec/changes/module-semantic-prefilter/tasks.md
+    note: "27 tasks/7 phases, single sequential unit. Independently re-derived line estimate from real source files (not taken on faith) - confirms ~323±40, Low risk, no PR split. Resolved design's open question (skip _update_project or not) toward full spec literalism - added ~3-line no-op task rather than leaving it dangling. File verified to exist."
+  apply:
+    status: done
+    engram_id: 283
+    note: "27/27 tasks. 24/24 focused + 109/109 full suite independently re-confirmed. BLOCKING frozen-exe gate genuinely PASSED (real cold ONNX download 79.3MB, warm reuse with no re-download, all 5 verify_frozen.ps1 steps exit 0) - not faked. Python is actually 3.14 in this venv, not 3.11 as briefed - chromadb/onnxruntime installed clean on cp314 anyway, noted as environment-reality deviation not a real risk. Fixed 2 unrelated pre-existing Unicode console bugs (db/__init__.py, theme.py magna_warn) that blocked the frozen exe from running at all on non-UTF8 console - necessary to unblock the mandated gate, minimal scope, honestly disclosed. Resolved design's 'skip _update_project' question toward full spec coverage (matches change's earlier tasks-phase decision). PAUSED here per user request - sdd-verify NOT launched."
+  verify:
+    status: done
+    engram_id: 284
+    note: "PASS. 0 critical/warning, 3 non-blocking suggestions. Frozen-exe gate re-reproduced independently (fresh temp HOME, new run) - genuinely reproducible, and proved the Unicode bugfix is load-bearing (fired for real on this fresh console, not dead defensive code). 109/109 full suite re-confirmed 3rd time."
+  archive:
+    status: pending

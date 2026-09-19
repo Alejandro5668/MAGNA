@@ -1,0 +1,51 @@
+change: structured-tool-output
+project: aicli
+artifact_store: hybrid
+execution_mode: auto
+delivery_strategy: single-pr
+review_budget_lines: 400
+sequence: 2 of 4
+depends_on: [prompt-caching]
+blocks: [module-semantic-prefilter]
+
+phases:
+  explore:
+    status: done
+    engram_topic: sdd/structured-tool-output/explore
+    openspec_path: openspec/changes/structured-tool-output/exploration.md
+    note: "First attempt failed on an unrelated API session-limit error (not a gate failure), retried once successfully per protocol. Orchestrator materialized exploration.md (agent lacked Write tool, expected). Spot-checked 2 citations (TODO.md:179, init.py:195) against real files, both accurate."
+  propose:
+    status: done
+    engram_id: 263
+    openspec_path: openspec/changes/structured-tool-output/proposal.md
+    note: "All 4 call sites in scope (deletion of _parse_json_claude/_reparar_json requires all 3 of their callers to migrate). Modifies the shipped ai-prompt-caching spec (task.py:64-66 raw_decode requirement) — sdd-spec must write a MODIFIED delta against openspec/specs/ai-prompt-caching/spec.md, not just a new domain. 400-line budget: High risk (~390 est.), pre-authorized A/B file-split seam if sdd-tasks confirms overage. Orchestrator verified the generate_case_summary dead-code claim (indexer.py:287-288: try wraps only the parse, not the _call_claude call) — accurate."
+  spec:
+    status: done
+    openspec_paths: [openspec/changes/structured-tool-output/specs/ai-structured-output/spec.md, openspec/changes/structured-tool-output/specs/ai-prompt-caching/spec.md]
+    engram_topic: sdd/structured-tool-output/spec
+    note: "Both artifacts verified present (orchestrator caught design.md incorrectly claiming the ai-prompt-caching delta was missing — false negative, corrected during design gate)."
+  design:
+    status: done
+    engram_id: 265
+    openspec_path: openspec/changes/structured-tool-output/design.md
+    note: "Fresh-context validator: checks 1/2 PASS, checks 3/4 FAILED then corrected by orchestrator directly (not re-run): (3) false 'spec gap' claim struck — file verified to exist and be correct; (4) B-slice line-sum arithmetic error fixed (366 -> 426, single-PR 491 -> 551). Consequence: B slice now also exceeds 400-line budget on its own, so the pre-authorized B1/B2 sub-split (already described in the design) is now the actual requirement, not just a contingency. sdd-tasks must plan 3 PR units: A, B1, B2."
+  tasks:
+    status: done
+    openspec_path: openspec/changes/structured-tool-output/tasks.md
+    note: "27 tasks (A1-A10, B1-B15, X1-X2). Confirmed: _extract_tool_input ships in Unit A per design.md, A must merge before B. Forecast matches user's 2-unit decision exactly, no re-flagged risk."
+  apply:
+    status: in_progress
+    unit_a:
+      status: done
+      engram_id: apply-progress-unitA
+      note: "14/14 new tests, 33/33 repo-wide (excl. pre-existing broken test_commands.py). Fresh-context validator: checks 1/2/4 PASS. Check 3 (line-count) explained not failed: git diff --numstat measured against stale HEAD (predates change 1 entirely, nothing committed yet), so it double-counted change-1's already-uncommitted .order_by(Module.id) edit as if new. Code itself verified correct."
+    unit_b:
+      status: done
+      engram_id: 267
+      note: "25/25 tasks (A1-A10+B1-B15), 53/53 tests, independently re-confirmed. Fresh-context validator: 4/4 PASS (minor soft note: markdown-caller non-regression is inferred+comment-documented, not tested by literal function name - accepted, behavior is genuinely covered). Isolated Unit B diff ~559 lines vs ~426 forecast (31% over even the accepted exception) - flagged for verify/review, not a blocker per already-accepted size:exception. X1/X2 (live ctx task/init/sync smoke) NOT run - no real project/API key in sandbox, left unchecked in tasks.md honestly."
+  verify:
+    status: done
+    engram_id: 268
+    note: "PASS WITH WARNINGS. 53/53 re-confirmed 3rd time. X1/X2 live smoke not executable (no API key in any agent's sandbox) - explicit manual follow-up for the user post-merge."
+  archive:
+    status: pending

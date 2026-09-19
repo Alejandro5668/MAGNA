@@ -2,7 +2,6 @@ import typer
 import json
 import logging
 import os
-import anthropic
 from typing import Annotated, Optional
 from rich.console import Console
 from pathlib import Path
@@ -11,98 +10,12 @@ from aicli.db import engine
 from aicli.db.models import Project, Module
 from aicli.services.builder import build_context
 from aicli.services.caller import launch_claude
-from aicli.services.indexer import describe_image, MODEL_BY_OPERATION, _extract_text
+from aicli.services.indexer import describe_image
+from aicli.services.task_graph import run_task_graph
 from aicli.tui.theme import magna_status, magna_ok, magna_warn, magna_error, magna_info, magna_panel, magna_task_plan, ACCENT, SECTION
 
 app = typer.Typer()
 console = Console()
-
-
-def _detect_relevant_modules(
-    task_desc: str, modules: list[Module], file: str | None = None, project_context: str | None = None
-) -> list[Module]:
-    listing_parts = []
-    for m in modules:
-        listing_parts.append(f"- {m.name}: {m.description} | archivo: {m.file_path}")
-        if m.content_path:
-            md_path = Path(m.content_path)
-            if md_path.exists():
-                snippet = md_path.read_text(encoding="utf-8", errors="replace")[:300].replace("\n", " ")
-                listing_parts.append(f"  Contexto: {snippet}")
-    listing = "\n".join(listing_parts)
-
-    file_context = (
-        f"\nEl desarrollador indica que el problema ocurre específicamente en: {file}"
-        if file else ""
-    )
-
-    project_ctx_block = f"\nContexto del proyecto (convenciones, arquitectura, patrones):\n{project_context}\n" if project_context else ""
-
-    prompt = f"""Tenés que identificar qué módulos de un proyecto de software son relevantes
-para una tarea específica de desarrollo.
-
-Tarea del desarrollador: {task_desc}{file_context}
-{project_ctx_block}
-Módulos disponibles en el proyecto:
-{listing}
-
-Analizá la tarea, entendé qué partes del sistema necesita tocar, y devolvé ÚNICAMENTE
-un JSON con los nombres de los módulos relevantes, sin texto adicional:
-["nombre_modulo_1", "nombre_modulo_2"]
-
-Seleccioná solo los módulos que realmente necesitarán ser leídos o modificados.
-Si no podés filtrar con seguridad, devolvé todos los nombres."""
-
-    client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
-    response = client.messages.create(
-        model="claude-sonnet-5",
-        max_tokens=4000,
-        thinking={"type": "adaptive"},
-        messages=[{"role": "user", "content": prompt}]
-    )
-
-    text = next(b.text for b in response.content if b.type == "text")
-    text = text.strip().removeprefix("```json").removeprefix("```").removesuffix("```").strip()
-    names, _ = json.JSONDecoder().raw_decode(text)
-    return [m for m in modules if m.name in names]
-
-
-def _generate_task_brief(
-    task_desc: str, modules: list[Module], file: str | None = None, evidence: str | None = None
-) -> str:
-    listing = "\n".join([f"- {m.name} ({m.file_path}): {m.description}" for m in modules])
-
-    file_context = (
-        f"\nPunto de entrada específico donde ocurre el problema: {file}"
-        if file else ""
-    )
-
-    evidence_block = f"\nEvidencia disponible (imágenes/video/Excel ya analizados):\n{evidence}\n" if evidence else ""
-
-    prompt = f"""Sos un arquitecto de software senior. Un desarrollador va a trabajar en esta
-tarea con Claude Code como asistente.
-
-Tarea: {task_desc}{file_context}
-
-Módulos del proyecto involucrados:
-{listing}
-{evidence_block}
-Generá un plan técnico conciso de máximo 8 líneas que indique:
-- Qué hay que revisar o cambiar, empezando por el archivo específico si se indicó uno
-- En qué orden hacerlo
-- Qué dependencias o efectos secundarios tener en cuenta
-- Si hay evidencia disponible, básate en ella para ser específico sobre el bug o comportamiento a resolver
-
-El plan va a ser la primera cosa que lea Claude Code antes de empezar. Sé específico
-y técnico. Solo el plan, sin introducción ni conclusión."""
-
-    client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
-    response = client.messages.create(
-        model=MODEL_BY_OPERATION["task_brief"],
-        max_tokens=512,
-        messages=[{"role": "user", "content": prompt}]
-    )
-    return _extract_text(response.content).strip()
 
 
 def _execute_task(
@@ -131,7 +44,7 @@ def _execute_task(
         save_active_ticket(ticket_id.upper(), "")
 
     with Session(engine) as session:
-        modules = list(session.exec(select(Module).where(Module.project_id == project.id)).all())
+        modules = list(session.exec(select(Module).where(Module.project_id == project.id).order_by(Module.id)).all())
 
     if not modules:
         magna_warn(console, "No hay módulos documentados. Ejecutá ctx init primero.")
@@ -145,17 +58,6 @@ def _execute_task(
         proyecto_md_path = Path.home() / ".mycontext" / "projects" / str(modules[0].project_id) / "PROYECTO.md"
         if proyecto_md_path.exists():
             project_context = proyecto_md_path.read_text(encoding="utf-8", errors="replace")
-
-    with magna_status(console, "Analizando tarea..."):
-        relevant = _detect_relevant_modules(task_desc, modules, file, project_context)
-
-    if not relevant:
-        relevant = modules
-
-    if file:
-        file_module = next((m for m in modules if m.file_path == file), None)
-        if file_module and file_module not in relevant:
-            relevant = [file_module] + relevant
 
     image_description = None
     if image:
@@ -280,8 +182,15 @@ def _execute_task(
         evidence_parts.append(f"Video de QA ({name}): {desc}")
     evidence_summary = "\n\n".join(evidence_parts) if evidence_parts else None
 
-    with magna_status(console, "Generando plan de implementación..."):
-        brief = _generate_task_brief(task_desc, relevant, file, evidence_summary)
+    with magna_status(console, "Analizando tarea (detective · historiador · vigía)..."):
+        relevant, brief = run_task_graph(task_desc, modules, file, project_context, evidence_summary)
+
+    if not relevant:
+        relevant = modules
+    if file:                                   # guarantee union — se queda FUERA del grafo
+        file_module = next((m for m in modules if m.file_path == file), None)
+        if file_module and file_module not in relevant:
+            relevant = [file_module] + relevant
 
     magna_task_plan(console, relevant, brief)
 
