@@ -56,3 +56,9 @@ knowledge/.claude/
 
 # Imágenes sueltas
 *.png
+
+# CodeGraph — índice local de codebase, se regenera por proyecto
+.codegraph/
+
+# Caché de pip creada accidentalmente en la raíz del repo
+/pip/

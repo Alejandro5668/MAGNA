@@ -1,5 +1,23 @@
 # MAGNA — Flujo de resolución de casos
 
+Diagramas editoriales (`.claude/skills/diagram-design`), en 5 piezas: un overview de las
+4 macro-etapas y un detalle fiel por etapa. Abrí el `.html` en el navegador — son
+autocontenidos, sin dependencias externas.
+
+| Diagrama | Qué muestra |
+|---|---|
+| [**flow-overview.html**](flow-overview.html) | Las 4 etapas como pipeline, con el ciclo de reapertura marcado como loop sobre "Revisión de PR" |
+| [flow-entrada-jira.html](flow-entrada-jira.html) | Ingreso del ticket, auto-fetch de Jira, setup guiado la primera vez |
+| [flow-documentacion.html](flow-documentacion.html) | Chequeo de módulo documentado/desactualizado antes de tocar código |
+| [flow-implementacion.html](flow-implementacion.html) | Detección de módulos con IA → Claude Code → `ctx sync` → PR |
+| [flow-revision-pr.html](flow-revision-pr.html) | Revisión de PR y el ciclo de iteración cuando se reabre |
+
+Fuente original (mermaid, referencia de contenido — los `.html` de arriba son la versión
+para leer):
+
+<details>
+<summary>Ver mermaid fuente</summary>
+
 ```mermaid
 flowchart TD
     START([Caso en Jira])
@@ -76,6 +94,8 @@ flowchart TD
     class APPROVED,APPROVED2,APPROVED3 end_ok
     class START start
 ```
+
+</details>
 
 ## Comandos del flujo
 
