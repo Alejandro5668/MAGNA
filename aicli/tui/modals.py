@@ -39,11 +39,25 @@ _HELP_ROWS = [
     ("Enter",    "Seleccionar / iniciar tarea"),
     ("t",        "Enfocar panel de tickets"),
     ("r",        "Refrescar tickets (en panel)"),
+    ("b",        "Cambiar tablero activo"),
+    ("←/→",      "Mover chip enfocado en la historia"),
+    ("Enter (chip)", "Abrir el sub-ticket con foco de chip"),
     ("p",        "Cambiar proyecto activo"),
     ("?",        "Esta ayuda"),
     ("Esc",      "Volver / Cancelar"),
     ("q",        "Salir"),
 ]
+
+
+def filter_boards(
+    options: list[tuple[str, int, int]], query: str | None,
+) -> list[tuple[str, int, int]]:
+    """Filtro por substring case-insensitive sobre el nombre del tablero.
+    Query vacío/None devuelve todas las opciones sin tocar el orden."""
+    q = (query or "").strip().lower()
+    if not q:
+        return list(options)
+    return [opt for opt in options if q in opt[0].lower()]
 
 # ─── CSS compartido entre modales ─────────────────────────────────────────────
 #  Los modales SÍ pintan fondo (superficie elevada sobre el canvas negro)
@@ -361,6 +375,133 @@ class SelectModal(ModalScreen[str | None]):
             self.dismiss(self._options[idx])
         else:
             self.dismiss(None)
+
+    def action_cancel(self) -> None:
+        self.dismiss(None)
+
+
+# ─── Board Switcher Modal ─────────────────────────────────────────────────────
+
+class BoardSwitcherModal(ModalScreen[str | None]):
+    """Selector de tablero activo — `Input` de filtro en vivo + `OptionList`,
+    misma estructura que `SelectModal`. Up/Down navegan la lista aunque el
+    foco de teclado quede en el `Input` (para poder seguir tipeando);
+    Enter confirma, Esc cancela sin tocar el tablero actual."""
+
+    BINDINGS = [Binding("escape", "cancel", show=False)]
+
+    DEFAULT_CSS = f"""
+    BoardSwitcherModal {{
+        align: center middle;
+    }}
+    #bsm-box {{
+        background: {_ELEVATED};
+        border: double {_ACCENT};
+        padding: 1 3;
+        width: 68;
+        height: auto;
+    }}
+    #bsm-header {{
+        color: {_ACCENT};
+        text-style: bold;
+        text-align: center;
+        height: 1;
+        margin-bottom: 1;
+    }}
+    #bsm-box Input {{
+        background: #000000;
+        border: tall {_BORDER};
+        color: #F1F3F9;
+        height: 3;
+        margin-bottom: 1;
+    }}
+    #bsm-box Input:focus {{
+        border: tall {_ACCENT};
+    }}
+    BoardSwitcherModal OptionList {{
+        background: transparent;
+        border: tall {_BORDER};
+        height: auto;
+        max-height: 12;
+    }}
+    BoardSwitcherModal OptionList:focus > .option-list--option-highlighted {{
+        background: {_SELECT};
+    }}
+    #bsm-hint {{
+        color: {_MUTED};
+        text-align: right;
+        height: 1;
+        margin-top: 1;
+    }}
+    """
+
+    def __init__(self, options: list[tuple[str, int, int]], current: str | None) -> None:
+        super().__init__()
+        self._options = options
+        self._current = current
+
+    def _labels(self, boards: list[tuple[str, int, int]]) -> list[Option]:
+        opts = []
+        for board, total, reopened in boards:
+            label = f"{board}  ({total} ticket{'s' if total != 1 else ''}"
+            label += f", {reopened} reabiertos)" if reopened else ")"
+            opts.append(Option(label, id=board))
+        return opts
+
+    def compose(self) -> ComposeResult:
+        with Container(id="bsm-box"):
+            yield Static("━━━  MAGNA  ━━━", id="bsm-header")
+            yield Input(placeholder="Filtrar tablero...")
+            yield OptionList(*self._labels(self._options))
+            yield Label(
+                f"[bold {_ACCENT}][[↵]][/bold {_ACCENT}] [{_SEC}]seleccionar[/{_SEC}]"
+                f"  [{_MUTED}]·[/{_MUTED}]  [bold {_ERROR}][[esc]][/bold {_ERROR}] [{_SEC}]cancelar[/{_SEC}]",
+                id="bsm-hint", markup=True,
+            )
+
+    def on_mount(self) -> None:
+        self.query_one(Input).focus()
+        self._highlight_current_or_first()
+
+    def _highlight_current_or_first(self) -> None:
+        opt_list = self.query_one(OptionList)
+        if opt_list.option_count == 0:
+            return
+        if self._current:
+            for i, option in enumerate(opt_list.options):
+                if option.id == self._current:
+                    opt_list.highlighted = i
+                    return
+        opt_list.highlighted = 0
+
+    def on_input_changed(self, event: Input.Changed) -> None:
+        opt_list = self.query_one(OptionList)
+        opt_list.clear_options()
+        opt_list.add_options(self._labels(filter_boards(self._options, event.value)))
+        # Siempre queda algo resaltado tras filtrar — si no, Enter no tiene
+        # sobre qué actuar (state.yaml: Enter confirma la selección).
+        self._highlight_current_or_first()
+
+    def on_key(self, event) -> None:
+        opt_list = self.query_one(OptionList)
+        if event.key in ("up", "down"):
+            if opt_list.option_count == 0:
+                return
+            event.stop()
+            if opt_list.highlighted is None:
+                opt_list.highlighted = 0
+            elif event.key == "down":
+                opt_list.highlighted = min(opt_list.option_count - 1, opt_list.highlighted + 1)
+            else:
+                opt_list.highlighted = max(0, opt_list.highlighted - 1)
+        elif event.key == "enter":
+            if opt_list.highlighted is not None and opt_list.option_count > 0:
+                event.stop()
+                option = opt_list.get_option_at_index(opt_list.highlighted)
+                self.dismiss(option.id)
+
+    def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
+        self.dismiss(event.option.id)
 
     def action_cancel(self) -> None:
         self.dismiss(None)
