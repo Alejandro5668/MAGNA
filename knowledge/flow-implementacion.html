@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>MAGNA — Implementación con IA</title>
+  <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Geist:wght@400;500;600&family=Geist+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --color-paper:   #2d3142;
+      --color-ink:     #f5f5f5;
+      --color-muted:   #bfc0c0;
+      --color-accent:  #f08a59;
+      --font-sans:     'Geist', system-ui, sans-serif;
+      --font-serif:    'Instrument Serif', serif;
+      --font-mono:     'Geist Mono', ui-monospace, monospace;
+    }
+    body {
+      font-family: var(--font-sans);
+      background: var(--color-paper);
+      color: var(--color-ink);
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 3rem 2rem;
+    }
+    .frame { max-width: 1280px; width: 100%; }
+    .eyebrow {
+      font-family: var(--font-mono);
+      font-size: 0.66rem;
+      font-weight: 500;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+      color: var(--color-muted);
+      margin-bottom: 0.5rem;
+    }
+    h1 {
+      font-family: var(--font-serif);
+      font-size: clamp(1.5rem, 2.4vw + 0.75rem, 2rem);
+      font-weight: 400;
+      letter-spacing: -0.02em;
+      line-height: 1.15;
+      color: var(--color-ink);
+      margin-bottom: 0.5rem;
+    }
+    p.sub {
+      font-family: var(--font-sans);
+      font-size: 0.85rem;
+      color: var(--color-muted);
+      margin-bottom: 1.5rem;
+      max-width: 760px;
+    }
+    svg { width: 100%; min-width: 900px; display: block; }
+    footer {
+      font-family: var(--font-mono);
+      font-size: 0.68rem;
+      color: var(--color-muted);
+      border-top: 1px solid rgba(245,245,245,0.12);
+      margin-top: 1.25rem;
+      padding-top: 0.75rem;
+    }
+  </style>
+</head>
+<body>
+  <div class="frame">
+    <p class="eyebrow">Flowchart · Etapa 3 de 4 · Diagram Design</p>
+    <h1>Implementación con IA</h1>
+    <p class="sub">Con el módulo documentado, MAGNA arma el plan, lanza Claude Code con contexto completo y sincroniza la documentación antes de abrir el PR.</p>
+
+    <svg viewBox="0 0 1280 720" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="flow-impl-title flow-impl-desc">
+      <title id="flow-impl-title">Etapa 3 — Implementación con IA</title>
+      <desc id="flow-impl-desc">La detección de módulos con IA genera un plan de implementación, Claude Code ejecuta el trabajo en una sesión de terminal identificada, ctx sync actualiza la documentación post-tarea y finalmente se crea el PR.</desc>
+      <defs>
+        <marker id="arrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#bfc0c0"/></marker>
+        <marker id="arrow-accent" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#f08a59"/></marker>
+      </defs>
+
+      <rect width="100%" height="100%" fill="#2d3142"/>
+
+      <text x="640" y="280" fill="#8e98ac" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.10em">← VIENE DE: DOCUMENTACIÓN PREVIA</text>
+
+      <!-- ============ ARROWS (straight, all on the same spine y=360) ============ -->
+      <line x1="340" y1="360" x2="380" y2="360" stroke="#bfc0c0" stroke-width="1.2" marker-end="url(#arrow)"/>
+      <line x1="620" y1="360" x2="660" y2="360" stroke="#f08a59" stroke-width="1.4" marker-end="url(#arrow-accent)"/>
+      <line x1="900" y1="360" x2="940" y2="360" stroke="#bfc0c0" stroke-width="1.2" marker-end="url(#arrow)"/>
+
+      <!-- ============ NODES ============ -->
+      <!-- DETECT -->
+      <rect x="100" y="328" width="240" height="64" rx="6" fill="#393e53" stroke="#f5f5f5" stroke-width="1"/>
+      <text x="220" y="352" fill="#f5f5f5" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Detección de módulos con IA</text>
+      <text x="220" y="368" fill="#bfc0c0" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">plan de implementación</text>
+
+      <!-- WORK (focal) -->
+      <rect x="380" y="328" width="240" height="64" rx="6" fill="rgba(240,138,89,0.10)" stroke="#f08a59" stroke-width="1"/>
+      <text x="500" y="352" fill="#f5f5f5" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Claude Code</text>
+      <text x="500" y="368" fill="#f08a59" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">terminal: MAGNA · SOL-515</text>
+
+      <!-- SYNC -->
+      <rect x="660" y="328" width="240" height="64" rx="6" fill="#393e53" stroke="#f5f5f5" stroke-width="1"/>
+      <text x="780" y="352" fill="#f5f5f5" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">ctx sync</text>
+      <text x="780" y="368" fill="#bfc0c0" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">documentación post-tarea</text>
+
+      <!-- PR -->
+      <rect x="940" y="328" width="240" height="64" rx="6" fill="#393e53" stroke="#f5f5f5" stroke-width="1"/>
+      <text x="1060" y="364" fill="#f5f5f5" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Se crea PR</text>
+
+      <text x="640" y="460" fill="#8e98ac" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.10em">SIGUE A: REVISIÓN DE PR →</text>
+
+      <!-- ============ LEGEND ============ -->
+      <line x1="40" y1="600" x2="1240" y2="600" stroke="rgba(245,245,245,0.10)" stroke-width="0.8"/>
+      <text x="40" y="616" fill="#bfc0c0" font-size="8" font-family="'Geist Mono', monospace" letter-spacing="0.18em">LEGEND</text>
+
+      <rect x="140" y="602" width="24" height="12" rx="2" fill="#393e53" stroke="#f5f5f5" stroke-width="1"/>
+      <text x="172" y="612" fill="#bfc0c0" font-size="8.5" font-family="'Geist', sans-serif">Paso</text>
+
+      <rect x="280" y="602" width="24" height="12" rx="6" fill="rgba(240,138,89,0.10)" stroke="#f08a59" stroke-width="1"/>
+      <text x="312" y="612" fill="#bfc0c0" font-size="8.5" font-family="'Geist', sans-serif">Paso focal — el trabajo en sí</text>
+    </svg>
+
+    <footer>MAGNA · knowledge/flow.md · redibujado desde Mermaid — 4 de 5 · zona: implementación con IA</footer>
+  </div>
+</body>
+</html>

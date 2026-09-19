@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>MAGNA — Flujo de resolución de casos (overview)</title>
+  <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Geist:wght@400;500;600&family=Geist+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --color-paper:   #2d3142;
+      --color-ink:     #f5f5f5;
+      --color-muted:   #bfc0c0;
+      --color-accent:  #f08a59;
+      --font-sans:     'Geist', system-ui, sans-serif;
+      --font-serif:    'Instrument Serif', serif;
+      --font-mono:     'Geist Mono', ui-monospace, monospace;
+    }
+    body {
+      font-family: var(--font-sans);
+      background: var(--color-paper);
+      color: var(--color-ink);
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 3rem 2rem;
+    }
+    .frame { max-width: 1280px; width: 100%; }
+    .eyebrow {
+      font-family: var(--font-mono);
+      font-size: 0.66rem;
+      font-weight: 500;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+      color: var(--color-muted);
+      margin-bottom: 0.5rem;
+    }
+    h1 {
+      font-family: var(--font-serif);
+      font-size: clamp(1.5rem, 2.4vw + 0.75rem, 2rem);
+      font-weight: 400;
+      letter-spacing: -0.02em;
+      line-height: 1.15;
+      color: var(--color-ink);
+      margin-bottom: 0.5rem;
+    }
+    p.sub {
+      font-family: var(--font-sans);
+      font-size: 0.85rem;
+      color: var(--color-muted);
+      margin-bottom: 1.5rem;
+      max-width: 760px;
+    }
+    svg { width: 100%; min-width: 900px; display: block; }
+    footer {
+      font-family: var(--font-mono);
+      font-size: 0.68rem;
+      color: var(--color-muted);
+      border-top: 1px solid rgba(245,245,245,0.12);
+      margin-top: 1.25rem;
+      padding-top: 0.75rem;
+    }
+  </style>
+</head>
+<body>
+  <div class="frame">
+    <p class="eyebrow">Flowchart · Overview · Diagram Design</p>
+    <h1>MAGNA — Flujo de resolución de casos</h1>
+    <p class="sub">Vista de conjunto de las cuatro etapas, desde el ticket de Jira hasta el PR aprobado. Cada etapa se detalla en un diagrama aparte.</p>
+
+    <svg viewBox="0 0 1280 720" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="flow-overview-title flow-overview-desc">
+      <title id="flow-overview-title">Flujo de resolución de casos de MAGNA — vista general</title>
+      <desc id="flow-overview-desc">Un caso de Jira avanza por cuatro etapas — entrada, documentación previa, implementación con IA y revisión de PR — hasta terminar en un PR aprobado; la etapa de revisión puede reabrirse e iterar sobre sí misma.</desc>
+      <defs>
+        <marker id="arrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#bfc0c0"/></marker>
+        <marker id="arrow-accent" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#f08a59"/></marker>
+      </defs>
+
+      <rect width="100%" height="100%" fill="#2d3142"/>
+
+      <!-- ============ ARROWS (drawn before boxes) ============ -->
+      <!-- START -> Z1 -->
+      <line x1="212" y1="360" x2="236" y2="360" stroke="#bfc0c0" stroke-width="1.2" marker-end="url(#arrow)"/>
+      <!-- Z1 -> Z2 -->
+      <line x1="420" y1="360" x2="444" y2="360" stroke="#bfc0c0" stroke-width="1.2" marker-end="url(#arrow)"/>
+      <!-- Z2 -> Z3 -->
+      <line x1="628" y1="360" x2="652" y2="360" stroke="#bfc0c0" stroke-width="1.2" marker-end="url(#arrow)"/>
+      <!-- Z3 -> Z4 -->
+      <line x1="836" y1="360" x2="860" y2="360" stroke="#bfc0c0" stroke-width="1.2" marker-end="url(#arrow)"/>
+      <!-- Z4 -> APPROVED -->
+      <line x1="1044" y1="360" x2="1068" y2="360" stroke="#bfc0c0" stroke-width="1.2" marker-end="url(#arrow)"/>
+
+      <!-- Z4 self-loop: "PR reabierto — iteración" (dashed = return/rework flow) -->
+      <path d="M920,324 V268 Q920,260 928,260 H972 Q980,260 980,268 V324"
+            fill="none" stroke="#bfc0c0" stroke-width="1.2" stroke-dasharray="5,4" marker-end="url(#arrow)"/>
+      <rect x="864" y="248" width="152" height="12" rx="2" fill="#2d3142"/>
+      <text x="940" y="257" fill="#bfc0c0" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">PR REABIERTO · ITERA</text>
+
+      <!-- ============ NODES ============ -->
+      <!-- START (oval) -->
+      <rect x="40" y="332" width="172" height="56" rx="28" fill="rgba(245,245,245,0.03)" stroke="rgba(245,245,245,0.30)" stroke-width="1"/>
+      <text x="126" y="364" fill="#f5f5f5" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Caso en Jira</text>
+
+      <!-- Z1 -->
+      <rect x="236" y="324" width="184" height="72" rx="6" fill="#393e53" stroke="#f5f5f5" stroke-width="1"/>
+      <rect x="248" y="332" width="20" height="12" rx="2" fill="transparent" stroke="rgba(245,245,245,0.40)" stroke-width="0.8"/>
+      <text x="258" y="341" fill="rgba(245,245,245,0.8)" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle">01</text>
+      <text x="328" y="358" fill="#f5f5f5" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Entrada y Jira</text>
+      <text x="328" y="376" fill="#bfc0c0" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">ctx task</text>
+
+      <!-- Z2 -->
+      <rect x="444" y="324" width="184" height="72" rx="6" fill="#393e53" stroke="#f5f5f5" stroke-width="1"/>
+      <rect x="456" y="332" width="20" height="12" rx="2" fill="transparent" stroke="rgba(245,245,245,0.40)" stroke-width="0.8"/>
+      <text x="466" y="341" fill="rgba(245,245,245,0.8)" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle">02</text>
+      <text x="536" y="358" fill="#f5f5f5" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Documentación previa</text>
+      <text x="536" y="376" fill="#bfc0c0" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">ctx file · ctx archive</text>
+
+      <!-- Z3 -->
+      <rect x="652" y="324" width="184" height="72" rx="6" fill="#393e53" stroke="#f5f5f5" stroke-width="1"/>
+      <rect x="664" y="332" width="20" height="12" rx="2" fill="transparent" stroke="rgba(245,245,245,0.40)" stroke-width="0.8"/>
+      <text x="674" y="341" fill="rgba(245,245,245,0.8)" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle">03</text>
+      <text x="744" y="358" fill="#f5f5f5" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Implementación con IA</text>
+      <text x="744" y="376" fill="#bfc0c0" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">Claude Code · ctx sync</text>
+
+      <!-- Z4 -->
+      <rect x="860" y="324" width="184" height="72" rx="6" fill="#393e53" stroke="#f5f5f5" stroke-width="1"/>
+      <rect x="872" y="332" width="20" height="12" rx="2" fill="transparent" stroke="rgba(245,245,245,0.40)" stroke-width="0.8"/>
+      <text x="882" y="341" fill="rgba(245,245,245,0.8)" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle">04</text>
+      <text x="952" y="358" fill="#f5f5f5" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Revisión de PR</text>
+      <text x="952" y="376" fill="#bfc0c0" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">ctx revision · ctx resume</text>
+
+      <!-- APPROVED (oval, focal) -->
+      <rect x="1068" y="332" width="172" height="56" rx="28" fill="rgba(240,138,89,0.10)" stroke="#f08a59" stroke-width="1"/>
+      <text x="1154" y="358" fill="#f5f5f5" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">PR aprobado</text>
+      <text x="1154" y="374" fill="#f08a59" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">FIN</text>
+
+      <!-- ============ LEGEND ============ -->
+      <line x1="40" y1="640" x2="1240" y2="640" stroke="rgba(245,245,245,0.10)" stroke-width="0.8"/>
+      <text x="40" y="656" fill="#bfc0c0" font-size="8" font-family="'Geist Mono', monospace" letter-spacing="0.18em">LEGEND</text>
+
+      <rect x="140" y="650" width="24" height="12" rx="6" fill="rgba(245,245,245,0.03)" stroke="rgba(245,245,245,0.30)" stroke-width="1"/>
+      <text x="172" y="660" fill="#bfc0c0" font-size="8.5" font-family="'Geist', sans-serif">Inicio / fin</text>
+
+      <rect x="300" y="650" width="24" height="12" rx="2" fill="#393e53" stroke="#f5f5f5" stroke-width="1"/>
+      <text x="332" y="660" fill="#bfc0c0" font-size="8.5" font-family="'Geist', sans-serif">Etapa (agrupa varios pasos)</text>
+
+      <rect x="580" y="650" width="24" height="12" rx="6" fill="rgba(240,138,89,0.10)" stroke="#f08a59" stroke-width="1"/>
+      <text x="612" y="660" fill="#bfc0c0" font-size="8.5" font-family="'Geist', sans-serif">Resultado buscado</text>
+
+      <line x1="820" y1="656" x2="848" y2="656" stroke="#bfc0c0" stroke-width="1.2" stroke-dasharray="5,4" marker-end="url(#arrow)"/>
+      <text x="856" y="660" fill="#bfc0c0" font-size="8.5" font-family="'Geist', sans-serif">Reapertura / iteración</text>
+    </svg>
+
+    <footer>MAGNA · knowledge/flow.md · redibujado desde Mermaid — 1 de 5 · overview</footer>
+  </div>
+</body>
+</html>

@@ -1,0 +1,216 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>MAGNA — Revisión de PR</title>
+  <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Geist:wght@400;500;600&family=Geist+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --color-paper:   #2d3142;
+      --color-ink:     #f5f5f5;
+      --color-muted:   #bfc0c0;
+      --color-accent:  #f08a59;
+      --font-sans:     'Geist', system-ui, sans-serif;
+      --font-serif:    'Instrument Serif', serif;
+      --font-mono:     'Geist Mono', ui-monospace, monospace;
+    }
+    body {
+      font-family: var(--font-sans);
+      background: var(--color-paper);
+      color: var(--color-ink);
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 3rem 2rem;
+    }
+    .frame { max-width: 1280px; width: 100%; }
+    .eyebrow {
+      font-family: var(--font-mono);
+      font-size: 0.66rem;
+      font-weight: 500;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+      color: var(--color-muted);
+      margin-bottom: 0.5rem;
+    }
+    h1 {
+      font-family: var(--font-serif);
+      font-size: clamp(1.5rem, 2.4vw + 0.75rem, 2rem);
+      font-weight: 400;
+      letter-spacing: -0.02em;
+      line-height: 1.15;
+      color: var(--color-ink);
+      margin-bottom: 0.5rem;
+    }
+    p.sub {
+      font-family: var(--font-sans);
+      font-size: 0.85rem;
+      color: var(--color-muted);
+      margin-bottom: 1.5rem;
+      max-width: 760px;
+    }
+    svg { width: 100%; min-width: 900px; display: block; }
+    footer {
+      font-family: var(--font-mono);
+      font-size: 0.68rem;
+      color: var(--color-muted);
+      border-top: 1px solid rgba(245,245,245,0.12);
+      margin-top: 1.25rem;
+      padding-top: 0.75rem;
+    }
+  </style>
+</head>
+<body>
+  <div class="frame">
+    <p class="eyebrow">Flowchart · Etapa 4 de 4 · Diagram Design</p>
+    <h1>Revisión de PR</h1>
+    <p class="sub">Comentarios críticos disparan una ronda de revisión con Claude; si el PR se reabre, <code>ctx resume</code> retoma con el historial completo y el ciclo puede iterar más de una vez.</p>
+
+    <svg viewBox="0 0 1280 720" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="flow-rev-title flow-rev-desc">
+      <title id="flow-rev-title">Etapa 4 — Revisión de PR</title>
+      <desc id="flow-rev-desc">Primera revisión: si no hay comentarios críticos el PR queda aprobado; si los hay, se resuelven con Claude y, si quedan resueltos, el PR queda aprobado. Si el PR se reabre, ctx resume retoma con el historial de rondas anteriores, Claude Code vuelve a trabajar con contexto acumulado, se sincroniza y se abre un nuevo PR — cuya revisión puede aprobar el PR o volver a iterar sobre la misma resolución de comentarios.</desc>
+      <defs>
+        <marker id="arrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#bfc0c0"/></marker>
+        <marker id="arrow-accent" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#f08a59"/></marker>
+      </defs>
+
+      <rect width="100%" height="100%" fill="#2d3142"/>
+
+      <text x="280" y="76" fill="#8e98ac" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.10em">← DESDE: SE CREA PR</text>
+
+      <!-- ============ ZONES (drawn before arrows/nodes) ============ -->
+      <rect x="40" y="88" width="580" height="496" rx="8" fill="rgba(245,245,245,0.02)" stroke="rgba(245,245,245,0.10)" stroke-width="0.8"/>
+      <rect x="48" y="92" width="140" height="12" rx="2" fill="#2d3142"/>
+      <text x="118" y="101" fill="rgba(245,245,245,0.40)" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.14em">PRIMERA REVISIÓN</text>
+
+      <rect x="660" y="88" width="580" height="512" rx="8" fill="rgba(245,245,245,0.02)" stroke="rgba(245,245,245,0.10)" stroke-width="0.8"/>
+      <rect x="668" y="92" width="200" height="12" rx="2" fill="#2d3142"/>
+      <text x="768" y="101" fill="rgba(245,245,245,0.40)" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.14em">ITERACIÓN · PR REABIERTO</text>
+
+      <!-- ============ ARROWS ============ -->
+      <!-- entry stub -->
+      <line x1="280" y1="100" x2="280" y2="132" stroke="#bfc0c0" stroke-width="1.2" marker-end="url(#arrow)"/>
+
+      <!-- PRCHECK --No--> APPROVED -->
+      <line x1="352" y1="180" x2="400" y2="180" stroke="#bfc0c0" stroke-width="1.2" marker-end="url(#arrow)"/>
+      <rect x="358" y="160" width="32" height="12" rx="2" fill="#2d3142"/>
+      <text x="374" y="169" fill="#bfc0c0" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.10em">NO</text>
+
+      <!-- PRCHECK --Sí--> REVISION -->
+      <line x1="280" y1="228" x2="280" y2="308" stroke="#bfc0c0" stroke-width="1.2" marker-end="url(#arrow)"/>
+      <rect x="294" y="262" width="24" height="12" rx="2" fill="#2d3142"/>
+      <text x="306" y="271" fill="#bfc0c0" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.10em">SÍ</text>
+
+      <!-- REVISION -> RESOLVED -->
+      <line x1="280" y1="372" x2="280" y2="452" stroke="#bfc0c0" stroke-width="1.2" marker-end="url(#arrow)"/>
+
+      <!-- RESOLVED --Sí--> APPROVED2 -->
+      <line x1="352" y1="500" x2="400" y2="500" stroke="#bfc0c0" stroke-width="1.2" marker-end="url(#arrow)"/>
+      <rect x="358" y="480" width="32" height="12" rx="2" fill="#2d3142"/>
+      <text x="374" y="489" fill="#bfc0c0" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.10em">SÍ</text>
+
+      <!-- RESOLVED --PR reabierto--> RESUME (elbow: right + up, routed through the inter-zone gap) -->
+      <path d="M280,548 H642 Q650,548 650,540 V158 Q650,150 658,150 H780" fill="none" stroke="#bfc0c0" stroke-width="1.2" marker-end="url(#arrow)"/>
+      <rect x="454" y="528" width="96" height="12" rx="2" fill="#2d3142"/>
+      <text x="502" y="537" fill="#bfc0c0" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">PR REABIERTO</text>
+
+      <!-- RESUME -> REWORK -->
+      <line x1="900" y1="182" x2="900" y2="214" stroke="#bfc0c0" stroke-width="1.2" marker-end="url(#arrow)"/>
+      <!-- REWORK -> SYNC2 -->
+      <line x1="900" y1="278" x2="900" y2="310" stroke="#bfc0c0" stroke-width="1.2" marker-end="url(#arrow)"/>
+      <!-- SYNC2 -> PR2 -->
+      <line x1="900" y1="374" x2="900" y2="406" stroke="#bfc0c0" stroke-width="1.2" marker-end="url(#arrow)"/>
+      <!-- PR2 -> PRCHECK2 -->
+      <line x1="900" y1="454" x2="900" y2="486" stroke="#bfc0c0" stroke-width="1.2" marker-end="url(#arrow)"/>
+
+      <!-- PRCHECK2 --No--> APPROVED3 -->
+      <line x1="972" y1="534" x2="1050" y2="534" stroke="#bfc0c0" stroke-width="1.2" marker-end="url(#arrow)"/>
+      <rect x="994" y="514" width="32" height="12" rx="2" fill="#2d3142"/>
+      <text x="1010" y="523" fill="#bfc0c0" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.10em">NO</text>
+
+      <!-- PRCHECK2 --Sí, iteración--> REVISION (loop back — the meaningful cycle, accent) -->
+      <path d="M828,534 H648 Q640,534 640,526 V348 Q640,340 632,340 H400" fill="none" stroke="#f08a59" stroke-width="1.4" marker-end="url(#arrow-accent)"/>
+      <rect x="700" y="514" width="112" height="12" rx="2" fill="#2d3142"/>
+      <text x="756" y="523" fill="#f08a59" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">SÍ — ITERACIÓN</text>
+
+      <!-- ============ NODES ============ -->
+      <!-- PRCHECK -->
+      <polygon points="280,132 352,180 280,228 208,180" fill="#393e53" stroke="#f5f5f5" stroke-width="1"/>
+      <text x="280" y="176" fill="#f5f5f5" font-size="11" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">¿Hay comentarios</text>
+      <text x="280" y="190" fill="#f5f5f5" font-size="11" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">críticos?</text>
+
+      <!-- APPROVED -->
+      <rect x="400" y="156" width="200" height="48" rx="24" fill="rgba(245,245,245,0.03)" stroke="rgba(245,245,245,0.30)" stroke-width="1"/>
+      <text x="500" y="176" fill="#f5f5f5" font-size="11" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">PR aprobado</text>
+      <text x="500" y="192" fill="#bfc0c0" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">FIN</text>
+
+      <!-- REVISION -->
+      <rect x="160" y="308" width="240" height="64" rx="6" fill="#393e53" stroke="#f5f5f5" stroke-width="1"/>
+      <text x="280" y="330" fill="#f5f5f5" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">ctx revision</text>
+      <text x="280" y="346" fill="#bfc0c0" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">leer comentarios del PR</text>
+      <text x="280" y="359" fill="#bfc0c0" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">resolver críticos con Claude</text>
+
+      <!-- RESOLVED -->
+      <polygon points="280,452 352,500 280,548 208,500" fill="#393e53" stroke="#f5f5f5" stroke-width="1"/>
+      <text x="280" y="496" fill="#f5f5f5" font-size="11" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">¿Críticos</text>
+      <text x="280" y="510" fill="#f5f5f5" font-size="11" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">resueltos?</text>
+
+      <!-- APPROVED2 -->
+      <rect x="400" y="476" width="200" height="48" rx="24" fill="rgba(245,245,245,0.03)" stroke="rgba(245,245,245,0.30)" stroke-width="1"/>
+      <text x="500" y="496" fill="#f5f5f5" font-size="11" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">PR aprobado</text>
+      <text x="500" y="512" fill="#bfc0c0" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">FIN</text>
+
+      <!-- RESUME -->
+      <rect x="780" y="118" width="240" height="64" rx="6" fill="#393e53" stroke="#f5f5f5" stroke-width="1"/>
+      <text x="900" y="140" fill="#f5f5f5" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">ctx resume</text>
+      <text x="900" y="156" fill="#bfc0c0" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">retomar ticket con historial</text>
+      <text x="900" y="169" fill="#bfc0c0" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">de rondas anteriores</text>
+
+      <!-- REWORK -->
+      <rect x="780" y="214" width="240" height="64" rx="6" fill="#393e53" stroke="#f5f5f5" stroke-width="1"/>
+      <text x="900" y="240" fill="#f5f5f5" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Claude Code retoma</text>
+      <text x="900" y="256" fill="#bfc0c0" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">con contexto acumulado</text>
+
+      <!-- SYNC2 -->
+      <rect x="780" y="310" width="240" height="64" rx="6" fill="#393e53" stroke="#f5f5f5" stroke-width="1"/>
+      <text x="900" y="334" fill="#f5f5f5" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">ctx sync</text>
+      <text x="900" y="350" fill="#bfc0c0" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">sincronizar nueva ronda</text>
+
+      <!-- PR2 -->
+      <rect x="800" y="406" width="200" height="48" rx="6" fill="#393e53" stroke="#f5f5f5" stroke-width="1"/>
+      <text x="900" y="434" fill="#f5f5f5" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Se crea nuevo PR</text>
+
+      <!-- PRCHECK2 -->
+      <polygon points="900,486 972,534 900,582 828,534" fill="#393e53" stroke="#f5f5f5" stroke-width="1"/>
+      <text x="900" y="530" fill="#f5f5f5" font-size="11" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">¿Hay comentarios</text>
+      <text x="900" y="544" fill="#f5f5f5" font-size="11" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">críticos?</text>
+
+      <!-- APPROVED3 -->
+      <rect x="1050" y="510" width="180" height="48" rx="24" fill="rgba(245,245,245,0.03)" stroke="rgba(245,245,245,0.30)" stroke-width="1"/>
+      <text x="1140" y="530" fill="#f5f5f5" font-size="11" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">PR aprobado</text>
+      <text x="1140" y="546" fill="#bfc0c0" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">FIN</text>
+
+      <!-- ============ LEGEND ============ -->
+      <line x1="40" y1="648" x2="1240" y2="648" stroke="rgba(245,245,245,0.10)" stroke-width="0.8"/>
+      <text x="40" y="664" fill="#bfc0c0" font-size="8" font-family="'Geist Mono', monospace" letter-spacing="0.18em">LEGEND</text>
+
+      <polygon points="152,652 164,646 176,652 164,658" fill="#393e53" stroke="#f5f5f5" stroke-width="1"/>
+      <text x="188" y="656" fill="#bfc0c0" font-size="8.5" font-family="'Geist', sans-serif">Decisión</text>
+
+      <rect x="300" y="650" width="24" height="12" rx="2" fill="#393e53" stroke="#f5f5f5" stroke-width="1"/>
+      <text x="332" y="660" fill="#bfc0c0" font-size="8.5" font-family="'Geist', sans-serif">Paso</text>
+
+      <rect x="440" y="650" width="24" height="12" rx="6" fill="rgba(245,245,245,0.03)" stroke="rgba(245,245,245,0.30)" stroke-width="1"/>
+      <text x="472" y="660" fill="#bfc0c0" font-size="8.5" font-family="'Geist', sans-serif">PR aprobado (fin)</text>
+
+      <line x1="620" y1="656" x2="648" y2="656" stroke="#f08a59" stroke-width="1.4" marker-end="url(#arrow-accent)"/>
+      <text x="656" y="660" fill="#bfc0c0" font-size="8.5" font-family="'Geist', sans-serif">Reapertura → itera sobre la revisión</text>
+    </svg>
+
+    <footer>MAGNA · knowledge/flow.md · redibujado desde Mermaid — 5 de 5 · zona: revisión de PR</footer>
+  </div>
+</body>
+</html>

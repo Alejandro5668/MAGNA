@@ -152,7 +152,7 @@ CLI completamente funcional y distribuida como `.exe`. Probada en proyectos real
 
 ## Decisiones resueltas
 
-Ver `knowledge/decisions.md` — DEC-001 a DEC-057.
+Ver `knowledge/decisions.md` — DEC-001 a DEC-080.
 
 ---
 
@@ -162,30 +162,6 @@ Ver `knowledge/decisions.md` — DEC-001 a DEC-057.
 - [x] Tab CALIDAD: tasa de reapertura con color semántico, archivos más reabiertos, motivos frecuentes
 - [x] Tab AHORA: proyecto + ticket activo + último sync (simple, accionable)
 - [x] Eliminada animación senoidal decorativa — sparkline usa datos reales de Activity
-
----
-
-## Backlog — Open Source (rama main)
-
-> Trabajo en `main`. `personal` queda congelada con el estado actual como daily driver.
-> Ver DEC-056 y DEC-057 para la estrategia completa.
-
-### OS-1 — Stack profiles (próxima sesión)
-- [ ] `StackProfile` dataclass en `aicli/services/stack_profile.py`
-  - Campos: `name`, `encoding`, `hints`, `role_template`, `ignore_extras`
-- [ ] Perfiles built-in: `php_vanilla` (actual), `laravel`, `nextjs`, `python`, `generic`
-- [ ] `ctx init` selecciona perfil desde `detectar_stack()` en lugar de PHP hardcodeado
-- [ ] Flag `--stack <nombre>` para override manual
-
-### OS-2 — role.md generado con IA (después de OS-1 estable)
-- [ ] `ctx init` genera `role.md` leyendo muestras del código real
-- [ ] Reemplaza `_ROL_DEFAULT` hardcodeado en `init.py`
-- [ ] El `role.md` manual de `personal` no se toca
-
-### OS-3 — ctx profile comando (cuando haya usuarios externos)
-- [ ] Muestra el perfil detectado por MAGNA
-- [ ] Permite editar `role.md` desde la TUI
-- [ ] Transparencia para la comunidad open source
 
 ---
 

@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>MAGNA — Entrada y Jira</title>
+  <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Geist:wght@400;500;600&family=Geist+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --color-paper:   #2d3142;
+      --color-ink:     #f5f5f5;
+      --color-muted:   #bfc0c0;
+      --color-accent:  #f08a59;
+      --font-sans:     'Geist', system-ui, sans-serif;
+      --font-serif:    'Instrument Serif', serif;
+      --font-mono:     'Geist Mono', ui-monospace, monospace;
+    }
+    body {
+      font-family: var(--font-sans);
+      background: var(--color-paper);
+      color: var(--color-ink);
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 3rem 2rem;
+    }
+    .frame { max-width: 1280px; width: 100%; }
+    .eyebrow {
+      font-family: var(--font-mono);
+      font-size: 0.66rem;
+      font-weight: 500;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+      color: var(--color-muted);
+      margin-bottom: 0.5rem;
+    }
+    h1 {
+      font-family: var(--font-serif);
+      font-size: clamp(1.5rem, 2.4vw + 0.75rem, 2rem);
+      font-weight: 400;
+      letter-spacing: -0.02em;
+      line-height: 1.15;
+      color: var(--color-ink);
+      margin-bottom: 0.5rem;
+    }
+    p.sub {
+      font-family: var(--font-sans);
+      font-size: 0.85rem;
+      color: var(--color-muted);
+      margin-bottom: 1.5rem;
+      max-width: 760px;
+    }
+    svg { width: 100%; min-width: 900px; display: block; }
+    footer {
+      font-family: var(--font-mono);
+      font-size: 0.68rem;
+      color: var(--color-muted);
+      border-top: 1px solid rgba(245,245,245,0.12);
+      margin-top: 1.25rem;
+      padding-top: 0.75rem;
+    }
+  </style>
+</head>
+<body>
+  <div class="frame">
+    <p class="eyebrow">Flowchart · Etapa 1 de 4 · Diagram Design</p>
+    <h1>Entrada y Jira</h1>
+    <p class="sub">Ingreso del ticket y auto-fetch de Jira, con soporte para setup guiado la primera vez y para omitir el ticket por completo.</p>
+
+    <svg viewBox="0 0 1280 720" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="flow-entrada-title flow-entrada-desc">
+      <title id="flow-entrada-title">Etapa 1 — Entrada y Jira</title>
+      <desc id="flow-entrada-desc">Desde un caso en Jira, ctx task pide el ticket y verifica si Jira está configurado: la primera vez guía el setup y luego trae el ticket automáticamente; si ya está configurado lo trae directo; si se omite el ticket, se salta directo al TextArea editable.</desc>
+      <defs>
+        <marker id="arrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#bfc0c0"/></marker>
+        <marker id="arrow-accent" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#f08a59"/></marker>
+      </defs>
+
+      <rect width="100%" height="100%" fill="#2d3142"/>
+
+      <!-- orientation caption -->
+      <text x="640" y="60" fill="#8e98ac" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.10em">INICIO DEL FLUJO</text>
+
+      <!-- ============ ARROWS ============ -->
+      <!-- START -> TASK_ENTRY -->
+      <line x1="640" y1="92" x2="640" y2="136" stroke="#bfc0c0" stroke-width="1.2" marker-end="url(#arrow)"/>
+      <!-- TASK_ENTRY -> JIRA_CFG -->
+      <line x1="640" y1="188" x2="640" y2="220" stroke="#bfc0c0" stroke-width="1.2" marker-end="url(#arrow)"/>
+
+      <!-- JIRA_CFG --Primera vez--> JIRA_SETUP (straight, same y) -->
+      <line x1="568" y1="268" x2="240" y2="268" stroke="#bfc0c0" stroke-width="1.2" marker-end="url(#arrow)"/>
+      <rect x="360" y="248" width="88" height="12" rx="2" fill="#2d3142"/>
+      <text x="404" y="257" fill="#bfc0c0" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">PRIMERA VEZ</text>
+
+      <!-- JIRA_SETUP -> JIRA_FETCH (elbow: down + right, entering left edge) -->
+      <path d="M240,300 V456 Q240,464 248,464 H520" fill="none" stroke="#bfc0c0" stroke-width="1.2" marker-end="url(#arrow)"/>
+
+      <!-- JIRA_CFG --Sí--> JIRA_FETCH (straight vertical, same x) -->
+      <line x1="640" y1="316" x2="640" y2="432" stroke="#bfc0c0" stroke-width="1.2" marker-end="url(#arrow)"/>
+      <rect x="654" y="366" width="20" height="12" rx="2" fill="#2d3142"/>
+      <text x="664" y="375" fill="#bfc0c0" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">SÍ</text>
+
+      <!-- JIRA_CFG --Omitir ticket--> TASK_DESC (dogleg to the right, around JIRA_FETCH) -->
+      <path d="M712,268 H872 Q880,268 880,276 V576 Q880,584 872,584 H770" fill="none" stroke="#bfc0c0" stroke-width="1.2" stroke-dasharray="5,4" marker-end="url(#arrow)"/>
+      <rect x="896" y="410" width="96" height="12" rx="2" fill="#2d3142"/>
+      <text x="944" y="419" fill="#bfc0c0" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">OMITIR TICKET</text>
+
+      <!-- JIRA_FETCH -> TASK_DESC (straight vertical, same x) -->
+      <line x1="640" y1="496" x2="640" y2="560" stroke="#bfc0c0" stroke-width="1.2" marker-end="url(#arrow)"/>
+
+      <!-- ============ NODES ============ -->
+      <!-- START (oval) -->
+      <rect x="560" y="64" width="160" height="28" rx="14" fill="rgba(245,245,245,0.03)" stroke="rgba(245,245,245,0.30)" stroke-width="1"/>
+      <text x="640" y="82" fill="#f5f5f5" font-size="11" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Caso en Jira</text>
+
+      <!-- TASK_ENTRY -->
+      <rect x="520" y="136" width="240" height="52" rx="6" fill="#393e53" stroke="#f5f5f5" stroke-width="1"/>
+      <text x="640" y="158" fill="#f5f5f5" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">ctx task</text>
+      <text x="640" y="175" fill="#bfc0c0" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">Ingresar Ticket ID</text>
+
+      <!-- JIRA_CFG (diamond) -->
+      <polygon points="640,220 712,268 640,316 568,268" fill="#393e53" stroke="#f5f5f5" stroke-width="1"/>
+      <text x="640" y="264" fill="#f5f5f5" font-size="11" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">¿Jira</text>
+      <text x="640" y="278" fill="#f5f5f5" font-size="11" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">configurado?</text>
+
+      <!-- JIRA_SETUP (optional / conditional — dashed) -->
+      <rect x="40" y="236" width="200" height="64" rx="6" fill="rgba(245,245,245,0.02)" stroke="rgba(245,245,245,0.20)" stroke-width="1" stroke-dasharray="4,3"/>
+      <text x="140" y="260" fill="#f5f5f5" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Setup guiado</text>
+      <text x="140" y="275" fill="#bfc0c0" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">URL · Email · Token</text>
+      <text x="140" y="288" fill="#bfc0c0" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">→ guardado en .env</text>
+
+      <!-- JIRA_FETCH (focal) -->
+      <rect x="520" y="432" width="240" height="64" rx="6" fill="rgba(240,138,89,0.10)" stroke="#f08a59" stroke-width="1"/>
+      <text x="640" y="456" fill="#f5f5f5" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Fetch automático</text>
+      <text x="640" y="472" fill="#bfc0c0" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">Descripción · Imágenes</text>
+      <text x="640" y="485" fill="#bfc0c0" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">pre-cargado en TextArea</text>
+
+      <!-- TASK_DESC (input treatment) -->
+      <rect x="510" y="560" width="260" height="48" rx="6" fill="rgba(191,192,192,0.10)" stroke="#8e98ac" stroke-width="1"/>
+      <text x="640" y="582" fill="#f5f5f5" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">TextArea multilinea</text>
+      <text x="640" y="598" fill="#bfc0c0" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">editable · ctrl+↵ confirmar</text>
+
+      <!-- orientation caption (out) -->
+      <text x="640" y="700" fill="#8e98ac" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.10em">SIGUE A: DOCUMENTACIÓN PREVIA →</text>
+
+      <!-- ============ LEGEND ============ -->
+      <line x1="40" y1="640" x2="1240" y2="640" stroke="rgba(245,245,245,0.10)" stroke-width="0.8"/>
+      <text x="40" y="656" fill="#bfc0c0" font-size="8" font-family="'Geist Mono', monospace" letter-spacing="0.18em">LEGEND</text>
+
+      <rect x="140" y="650" width="24" height="12" rx="6" fill="rgba(245,245,245,0.03)" stroke="rgba(245,245,245,0.30)" stroke-width="1"/>
+      <text x="172" y="660" fill="#bfc0c0" font-size="8.5" font-family="'Geist', sans-serif">Inicio</text>
+
+      <rect x="280" y="650" width="24" height="12" rx="2" fill="#393e53" stroke="#f5f5f5" stroke-width="1"/>
+      <text x="312" y="660" fill="#bfc0c0" font-size="8.5" font-family="'Geist', sans-serif">Paso</text>
+
+      <polygon points="428,656 440,650 452,656 440,662" fill="#393e53" stroke="#f5f5f5" stroke-width="1"/>
+      <text x="464" y="660" fill="#bfc0c0" font-size="8.5" font-family="'Geist', sans-serif">Decisión</text>
+
+      <rect x="580" y="650" width="24" height="12" rx="2" fill="rgba(245,245,245,0.02)" stroke="rgba(245,245,245,0.20)" stroke-width="1" stroke-dasharray="4,3"/>
+      <text x="612" y="660" fill="#bfc0c0" font-size="8.5" font-family="'Geist', sans-serif">Paso condicional (1ª vez)</text>
+
+      <rect x="820" y="650" width="24" height="12" rx="6" fill="rgba(240,138,89,0.10)" stroke="#f08a59" stroke-width="1"/>
+      <text x="852" y="660" fill="#bfc0c0" font-size="8.5" font-family="'Geist', sans-serif">Automatización clave</text>
+
+      <rect x="1030" y="650" width="24" height="12" rx="6" fill="rgba(191,192,192,0.10)" stroke="#8e98ac" stroke-width="1"/>
+      <text x="1062" y="660" fill="#bfc0c0" font-size="8.5" font-family="'Geist', sans-serif">Entrada del usuario</text>
+    </svg>
+
+    <footer>MAGNA · knowledge/flow.md · redibujado desde Mermaid — 2 de 5 · zona: entrada / jira</footer>
+  </div>
+</body>
+</html>

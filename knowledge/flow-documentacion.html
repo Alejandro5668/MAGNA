@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>MAGNA — Documentación previa</title>
+  <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Geist:wght@400;500;600&family=Geist+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --color-paper:   #2d3142;
+      --color-ink:     #f5f5f5;
+      --color-muted:   #bfc0c0;
+      --color-accent:  #f08a59;
+      --font-sans:     'Geist', system-ui, sans-serif;
+      --font-serif:    'Instrument Serif', serif;
+      --font-mono:     'Geist Mono', ui-monospace, monospace;
+    }
+    body {
+      font-family: var(--font-sans);
+      background: var(--color-paper);
+      color: var(--color-ink);
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 3rem 2rem;
+    }
+    .frame { max-width: 1280px; width: 100%; }
+    .eyebrow {
+      font-family: var(--font-mono);
+      font-size: 0.66rem;
+      font-weight: 500;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+      color: var(--color-muted);
+      margin-bottom: 0.5rem;
+    }
+    h1 {
+      font-family: var(--font-serif);
+      font-size: clamp(1.5rem, 2.4vw + 0.75rem, 2rem);
+      font-weight: 400;
+      letter-spacing: -0.02em;
+      line-height: 1.15;
+      color: var(--color-ink);
+      margin-bottom: 0.5rem;
+    }
+    p.sub {
+      font-family: var(--font-sans);
+      font-size: 0.85rem;
+      color: var(--color-muted);
+      margin-bottom: 1.5rem;
+      max-width: 760px;
+    }
+    svg { width: 100%; min-width: 900px; display: block; }
+    footer {
+      font-family: var(--font-mono);
+      font-size: 0.68rem;
+      color: var(--color-muted);
+      border-top: 1px solid rgba(245,245,245,0.12);
+      margin-top: 1.25rem;
+      padding-top: 0.75rem;
+    }
+  </style>
+</head>
+<body>
+  <div class="frame">
+    <p class="eyebrow">Flowchart · Etapa 2 de 4 · Diagram Design</p>
+    <h1>Documentación previa</h1>
+    <p class="sub">Antes de tocar código, MAGNA verifica si el módulo ya está documentado y si algún archivo quedó desactualizado por una tarea anterior.</p>
+
+    <svg viewBox="0 0 1280 720" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="flow-doc-title flow-doc-desc">
+      <title id="flow-doc-title">Etapa 2 — Documentación previa</title>
+      <desc id="flow-doc-desc">Si el módulo no está documentado, ctx file documenta la carpeta completa y ctx archive la analiza en profundidad; si ya está documentado pero el archivo fue modificado, ctx archive refresca la documentación; en cualquier otro caso continúa directo. Las tres rutas convergen antes de la etapa de implementación con IA.</desc>
+      <defs>
+        <marker id="arrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#bfc0c0"/></marker>
+        <marker id="arrow-accent" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#f08a59"/></marker>
+      </defs>
+
+      <rect width="100%" height="100%" fill="#2d3142"/>
+
+      <text x="640" y="56" fill="#8e98ac" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.10em">← VIENE DE: ENTRADA Y JIRA</text>
+
+      <!-- ============ ARROWS ============ -->
+      <!-- CHECK --No--> FILE -->
+      <line x1="568" y1="140" x2="420" y2="140" stroke="#bfc0c0" stroke-width="1.2" marker-end="url(#arrow)"/>
+      <rect x="478" y="120" width="32" height="12" rx="2" fill="#2d3142"/>
+      <text x="494" y="129" fill="#bfc0c0" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.10em">NO</text>
+
+      <!-- FILE -> ARC1 -->
+      <line x1="320" y1="164" x2="320" y2="236" stroke="#bfc0c0" stroke-width="1.2" marker-end="url(#arrow)"/>
+
+      <!-- CHECK --Sí--> STALE -->
+      <line x1="712" y1="140" x2="888" y2="140" stroke="#bfc0c0" stroke-width="1.2" marker-end="url(#arrow)"/>
+      <rect x="784" y="120" width="32" height="12" rx="2" fill="#2d3142"/>
+      <text x="800" y="129" fill="#bfc0c0" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.10em">SÍ</text>
+
+      <!-- STALE --Sí--> ARC2 (elbow: right + down, entering top edge) -->
+      <path d="M1032,140 H1068 Q1076,140 1076,148 V240 Q1076,248 1084,248 H1120" fill="none" stroke="#bfc0c0" stroke-width="1.2" marker-end="url(#arrow)"/>
+      <rect x="1034" y="120" width="32" height="12" rx="2" fill="#2d3142"/>
+      <text x="1050" y="129" fill="#bfc0c0" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.10em">SÍ</text>
+
+      <!-- STALE --No--> merge dot (straight vertical) -->
+      <line x1="960" y1="188" x2="960" y2="456" stroke="#bfc0c0" stroke-width="1.2" marker-end="url(#arrow)"/>
+      <rect x="972" y="314" width="26" height="12" rx="2" fill="#2d3142"/>
+      <text x="985" y="323" fill="#bfc0c0" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.10em">NO</text>
+
+      <!-- ARC1 -> merge dot (elbow: down + right) -->
+      <path d="M320,284 V452 Q320,460 328,460 H952" fill="none" stroke="#bfc0c0" stroke-width="1.2" marker-end="url(#arrow)"/>
+
+      <!-- ARC2 -> merge dot (elbow: down + left) -->
+      <path d="M1120,312 V452 Q1120,460 1112,460 H968" fill="none" stroke="#bfc0c0" stroke-width="1.2" marker-end="url(#arrow)"/>
+
+      <!-- merge dot -> continues to next stage -->
+      <line x1="960" y1="464" x2="960" y2="520" stroke="#bfc0c0" stroke-width="1.2" marker-end="url(#arrow)"/>
+      <circle cx="960" cy="460" r="4" fill="#f5f5f5"/>
+
+      <!-- ============ NODES ============ -->
+      <!-- CHECK (diamond) -->
+      <polygon points="640,92 712,140 640,188 568,140" fill="#393e53" stroke="#f5f5f5" stroke-width="1"/>
+      <text x="640" y="136" fill="#f5f5f5" font-size="11" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">¿Módulo</text>
+      <text x="640" y="150" fill="#f5f5f5" font-size="11" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">documentado?</text>
+
+      <!-- FILE -->
+      <rect x="220" y="116" width="200" height="48" rx="6" fill="#393e53" stroke="#f5f5f5" stroke-width="1"/>
+      <text x="320" y="138" fill="#f5f5f5" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">ctx file</text>
+      <text x="320" y="154" fill="#bfc0c0" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">documentar carpeta completa</text>
+
+      <!-- ARC1 (focal) -->
+      <rect x="220" y="236" width="200" height="48" rx="6" fill="rgba(240,138,89,0.10)" stroke="#f08a59" stroke-width="1"/>
+      <text x="320" y="258" fill="#f5f5f5" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">ctx archive</text>
+      <text x="320" y="274" fill="#bfc0c0" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">analizar en profundidad</text>
+
+      <!-- STALE (diamond) -->
+      <polygon points="960,92 1032,140 960,188 888,140" fill="#393e53" stroke="#f5f5f5" stroke-width="1"/>
+      <text x="960" y="136" fill="#f5f5f5" font-size="11" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">¿Archivo</text>
+      <text x="960" y="150" fill="#f5f5f5" font-size="11" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">modificado?</text>
+
+      <!-- ARC2 -->
+      <rect x="1020" y="248" width="200" height="64" rx="6" fill="#393e53" stroke="#f5f5f5" stroke-width="1"/>
+      <text x="1120" y="272" fill="#f5f5f5" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">ctx archive</text>
+      <text x="1120" y="288" fill="#bfc0c0" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">refrescar</text>
+      <text x="1120" y="301" fill="#bfc0c0" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">documentación</text>
+
+      <!-- exit caption -->
+      <rect x="908" y="494" width="220" height="14" rx="2" fill="#2d3142"/>
+      <text x="1018" y="505" fill="#8e98ac" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">→ IMPLEMENTACIÓN CON IA</text>
+
+      <!-- ============ LEGEND ============ -->
+      <line x1="40" y1="600" x2="1240" y2="600" stroke="rgba(245,245,245,0.10)" stroke-width="0.8"/>
+      <text x="40" y="616" fill="#bfc0c0" font-size="8" font-family="'Geist Mono', monospace" letter-spacing="0.18em">LEGEND</text>
+
+      <polygon points="152,604 164,598 176,604 164,610" fill="#393e53" stroke="#f5f5f5" stroke-width="1"/>
+      <text x="188" y="608" fill="#bfc0c0" font-size="8.5" font-family="'Geist', sans-serif">Decisión</text>
+
+      <rect x="300" y="602" width="24" height="12" rx="2" fill="#393e53" stroke="#f5f5f5" stroke-width="1"/>
+      <text x="332" y="612" fill="#bfc0c0" font-size="8.5" font-family="'Geist', sans-serif">Paso</text>
+
+      <rect x="440" y="602" width="24" height="12" rx="6" fill="rgba(240,138,89,0.10)" stroke="#f08a59" stroke-width="1"/>
+      <text x="472" y="612" fill="#bfc0c0" font-size="8.5" font-family="'Geist', sans-serif">Paso de mayor profundidad</text>
+
+      <circle cx="720" cy="608" r="4" fill="#f5f5f5"/>
+      <text x="734" y="612" fill="#bfc0c0" font-size="8.5" font-family="'Geist', sans-serif">Punto de convergencia</text>
+    </svg>
+
+    <footer>MAGNA · knowledge/flow.md · redibujado desde Mermaid — 3 de 5 · zona: documentación previa</footer>
+  </div>
+</body>
+</html>
