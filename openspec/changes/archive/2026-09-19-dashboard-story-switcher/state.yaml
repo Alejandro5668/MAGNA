@@ -1,0 +1,112 @@
+change: dashboard-story-switcher
+project: aicli
+artifact_store: hybrid
+execution_mode: auto
+delivery_strategy: single-pr
+review_budget_lines: 400
+sequence: independent (not part of the prompt-caching/structured-tool-output/module-semantic-prefilter/task-context-multiagent AI-layer chain)
+depends_on: []
+blocks: []
+
+context: >
+  Follow-up to a direct (non-SDD) change already shipped this session: TicketPanel
+  in aicli/tui/widgets.py was restructured from a flat ticket list to board-prefix
+  grouping with a 4-min auto-refresh (see Engram decision "TicketPanel: agrupación
+  por tablero + refresh automático cada 4 min"). User then asked for something
+  bigger: board-switching UX + story/sibling-subtask hierarchy, validated through
+  two rounds of interactive HTML mockups (published as a Claude Artifact) before
+  committing to "Option B": a full-width single-board view with story cards
+  (each story = one card, its sibling sub-tasks shown as inline status chips),
+  reopened tickets pinned in a strip above the cards, and a command-palette-style
+  board switcher (press "b", fuzzy-filter, Enter to jump) instead of a persistent
+  board rail. User explicitly approved this direction and asked to implement it
+  "lo mejor posible, sacándole y aprovechando todas las herramientas que tenemos
+  a la mano" (make the most of it, using every tool available) and authorized
+  SDD if the change turns out large enough — which it is.
+
+pre_validated_ux: >
+  The interaction model was already validated with the user via two interactive
+  mockup rounds (not just described — actually clicked/keyboard-navigated by the
+  user in a published HTML artifact) before this SDD change started:
+  - Up/Down arrow moves focus among: reopened-ticket rows, story cards, loose
+    (no-parent) ticket rows.
+  - Left/Right arrow moves a sub-focus across a focused story card's sibling
+    chips (done/current/todo/blocked visual states).
+  - Enter opens whichever is focused (a reopened row, a loose ticket, or the
+    currently sub-focused chip inside a story card).
+  - "b" opens a board-switcher overlay; typing filters a fuzzy list of boards
+    with ticket + reopened counts; Up/Down moves selection, Enter confirms and
+    switches the active board, Esc cancels.
+  - Reopened tickets are always pinned in their own labeled section above the
+    story cards, never mixed into the story/loose list.
+  Treat this as validated product requirements, not something to re-litigate in
+  explore/propose — the job is to figure out how to build it against the real
+  Textual/jira.py code, not whether this is the right UX.
+
+known_groundwork_from_this_session: >
+  - aicli/services/jira.py already has fetch_issue() (returns fields.parent as
+    {key, summary} when the issue is a sub-task) and fetch_subtasks(parent_key)
+    (hits /rest/api/3/issue/{parent_key}?fields=subtasks, returns sibling cards
+    with id/summary/status/tipo — status per sibling is free, assignee per
+    sibling is NOT included in this lightweight response).
+  - fetch_my_issues() (used by TicketPanel today) requests only
+    fields: ["summary","status","priority"] — does NOT request "parent", so the
+    dashboard cannot see hierarchy without adding that field to the request.
+  - This hierarchy fetch is already wired into ctx resume/ctx task as a
+    one-shot questionary/request_select prompt ("¿seguís con este ticket o
+    saltás a un hermano?") in aicli/tui/screens.py's _resume_jira_context
+    (~line 243) — it has never been a persistent, browsable view. This change
+    surfaces existing capability, it is not new Jira API surface.
+  - aicli/tui/widgets.py's TicketPanel (just modified this session) has the
+    board-prefix-grouping logic (_group_by_board) and the 4-min
+    set_interval-based auto-refresh already in place — this change likely
+    REPLACES _group_by_board's tree-like rendering with the new card+chip
+    layout, but should keep the same fetch/refresh/selection-preservation
+    scaffolding where it still applies.
+  - aicli/tui/modals.py already has native modal patterns (ConfirmModal,
+    InputModal per DEC-051, and reportedly a SelectModal) — the board-switcher
+    overlay should reuse whichever of these fits (likely closest to a
+    fuzzy-filterable SelectModal) rather than building a new modal paradigm
+    from scratch. Verify exact modal APIs available in modals.py.
+
+phases:
+  explore:
+    status: done
+    engram_topic: sdd/dashboard-story-switcher/explore
+    openspec_path: openspec/changes/dashboard-story-switcher/exploration.md
+    note: "Orchestrator materialized file (agent lacks Write, expected). Spot-checked can_focus=False claim against real widgets.py:46 - accurate. Key architectural finding: ListView can't do 2D nav, must replace with bespoke dual-reactive-index pattern like ProjectScreen. Open decision for propose: fuzzy-match stdlib vs new dependency."
+  propose:
+    status: done
+    engram_id: 276
+    openspec_path: openspec/changes/dashboard-story-switcher/proposal.md
+    note: "Verified 'b' unbound in MainScreen.BINDINGS (screens.py:1386-1403) myself earlier this session - accurate. ~590 lines estimated, over 400 budget - needs PR-split decision (2-slice: A~250 board switch on existing ListView, B~340 card/chip render+2D nav). 3 UX questions deferred (empty states, active-board persistence, card Enter semantics) - not covered by validated mockup, need real user answer before spec. PAUSED."
+  spec:
+    status: done
+    engram_id: 278
+    openspec_path: specs/tui-ticket-dashboard/spec.md
+    note: "8 requirements, 20 scenarios. All 4 user_decisions incorporated verbatim. File existence verified."
+    user_decisions:
+      delivery: "single-pr with size:exception — ~590 lines accepted as one PR, no split."
+      empty_error_states: "Empty board: simple message ('Sin tickets asignados en <BOARD>'). A single story's fetch_subtasks failure degrades that one card to a plain flat row (no chips) rather than breaking the whole panel."
+      initial_board_and_persistence: "Active board on launch = the board of the currently active ticket (ticket_activo_<pid>.json) if any, else first board alphabetically. NEVER persisted across app restarts — no new state file."
+      enter_semantics: "Enter always targets whichever chip currently has sub-focus — single, consistent meaning for Enter across the whole screen. No separate 'open the story itself' action."
+  design:
+    status: done
+    engram_id: 280
+    openspec_path: openspec/changes/dashboard-story-switcher/design.md
+    note: "Retry succeeded (1st attempt hit an API session-limit error, unrelated to quality). Verified action_focus_tickets targets #tp-list (screens.py:1546-1550) - accurate, real integration gap the design correctly caught (that id disappears with the ListView removal). Line estimate revised 590->~640 due to 3 newly-found wiring gaps (action_focus_tickets, jump_top/bottom, _HELP_ROWS) - still single-pr with already-accepted size:exception, no new split needed."
+  tasks:
+    status: done
+    engram_id: 281
+    openspec_path: openspec/changes/dashboard-story-switcher/tasks.md
+    note: "6 phases, 24 tasks. TDD-ordered (RED/GREEN pairs for jira.py parent parsing, unique_parent_keys, resolve_initial_board, build_board_rows, move_focus/move_sub/target_ticket_id, filter_boards). All 3 design-found integration gaps (action_focus_tickets retarget, jump_top/jump_bottom TicketPanel branch, _HELP_ROWS entries) are explicit standalone tasks (5.3, 5.4, 4.4). tests/test_ticket_panel_grouping.py explicitly retired (task 2.9) since _group_by_board is removed by design, not left silently broken. Line forecast revised 640->750-850 once new TDD test files are counted; size:exception (already FINAL in state.yaml) still holds, no new split decision needed."
+  apply:
+    status: done
+    engram_id: 282
+    note: "30/30 tasks, single batch, no continuation needed. 109/109 full suite independently re-confirmed. Found+fixed a real bug (BoardSwitcherModal Enter with nothing highlighted used to hang forever). 3 disclosed deviations: (1) degraded-card path untriggerable end-to-end since fetch_subtasks never raises (jira.py convention, out of scope); (2) LOST FEATURE: the legacy active-ticket ▶ badge from ticket_activo_<pid>.json is gone, Row/chip shape has no field for it, ▶ now only reflects keyboard focus - real regression worth user attention; (3) 2 extra small methods beyond design's literal interface (focus_first/focus_last, active_board getter), no signature changes to the 6 specified pure functions. No live interactive TUI pass was possible (no terminal in sandbox) - recommend a real interactive check before considering this fully done. PAUSED here per user request - sdd-verify NOT launched."
+  verify:
+    status: done
+    engram_id: 285
+    note: "passed-with-notes. 0 critical, 3 warnings (W1: active-ticket badge loss, not a spec violation, disclosed follow-up; W2: degraded-card path currently untriggerable since fetch_subtasks never raises, functionally equivalent though, disclosed follow-up; W3: reproducible Textual compositor crash (render_strips AttributeError) on TicketPanel mount in the App.run_test() harness, bisected to can_focus=True + :focus/:focus-within CSS - inconsistent with apply's own manual check which said the same error reproduced even on an unrelated minimal widget, so root cause (harness-only vs real) was left genuinely unresolved). User was asked to do a real-terminal keyboard-nav check before archive to resolve W3 one way or the other. USER EXPLICITLY WAIVED this manual check and asked to proceed to archive accepting the risk as-is - this is NOT a completed live verification, it's a deliberate user decision to accept an unresolved risk. Recorded honestly for the archive record."
+  archive:
+    status: pending

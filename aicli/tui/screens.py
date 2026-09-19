@@ -23,7 +23,7 @@ from textual.message import Message
 from textual.reactive import reactive
 
 from .modals import (
-    HelpScreen, InputModal, TextAreaModal, ConfirmModal, JiraCardModal,
+    HelpScreen, InputModal, TextAreaModal, ConfirmModal, JiraCardModal, BoardSwitcherModal,
 )
 from .widgets import TicketPanel
 
@@ -1397,6 +1397,7 @@ class MainScreen(Screen):
         Binding("h", "collapse_section", show=False),
         Binding("l", "expand_section",   show=False),
         Binding("t", "focus_tickets",    show=False),
+        Binding("b", "board",            show=False),
         Binding("p", "change_proj",      "Project"),
         Binding("q", "app.quit",         "Quit"),
         Binding("?", "help",             "Help"),
@@ -1535,6 +1536,8 @@ class MainScreen(Screen):
             focused.highlighted = 0
         elif isinstance(focused, ListView) and len(focused) > 0:
             focused.index = 0
+        elif isinstance(focused, TicketPanel):
+            focused.focus_first()
 
     def action_jump_bottom(self) -> None:
         focused = self.focused
@@ -1542,12 +1545,33 @@ class MainScreen(Screen):
             focused.highlighted = focused.option_count - 1
         elif isinstance(focused, ListView) and len(focused) > 0:
             focused.index = len(focused) - 1
+        elif isinstance(focused, TicketPanel):
+            focused.focus_last()
 
     def action_focus_tickets(self) -> None:
         try:
-            self.query_one("#tp-list", ListView).focus()
+            self.query_one(TicketPanel).focus()
         except Exception:
             pass
+
+    def action_board(self) -> None:
+        self._worker_board()
+
+    @work
+    async def _worker_board(self) -> None:
+        try:
+            panel = self.query_one(TicketPanel)
+        except Exception:
+            return
+        options = panel.board_options()
+        if not options:
+            self.app.notify("Sin tableros disponibles todavía.", severity="warning", timeout=4)
+            return
+        board = await self.app.push_screen_wait(
+            BoardSwitcherModal(options, panel.active_board())
+        )
+        if board:
+            panel.set_board(board)
 
     async def _offer_sync(self, out_screen, tui_console, loop) -> None:
         """Ofrece sync post-Claude. ticket_id pre-llenado via read_active_ticket()."""

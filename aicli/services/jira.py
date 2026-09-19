@@ -198,7 +198,7 @@ def fetch_my_issues() -> dict:
     try:
         resp = httpx.post(
             url, headers=_headers(),
-            json={"jql": jql, "maxResults": 20, "fields": ["summary", "status", "priority"]},
+            json={"jql": jql, "maxResults": 20, "fields": ["summary", "status", "priority", "parent"]},
             timeout=10,
         )
         if resp.status_code != 200:
@@ -209,11 +209,21 @@ def fetch_my_issues() -> dict:
 
         for issue in resp.json().get("issues", []):
             f = issue.get("fields", {})
+
+            parent_raw = f.get("parent")
+            parent = None
+            if parent_raw:
+                parent = {
+                    "key": parent_raw.get("key", ""),
+                    "summary": (parent_raw.get("fields") or {}).get("summary", ""),
+                }
+
             item = {
                 "id": issue.get("key", ""),
                 "summary": f.get("summary", ""),
                 "status": (f.get("status") or {}).get("name", ""),
                 "priority": (f.get("priority") or {}).get("name", ""),
+                "parent": parent,
             }
             status_cat = (f.get("status") or {}).get("statusCategory", {}).get("key", "")
             status_lower = item["status"].lower()
