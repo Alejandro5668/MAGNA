@@ -1,5 +1,7 @@
 from __future__ import annotations
+import os
 from pathlib import Path
+from typing import NamedTuple, Sequence
 
 from rich.text import Text
 from textual.app import ComposeResult
@@ -29,15 +31,10 @@ _SEC      = "#AAB4D4"
 _MUTED    = "#5E6A94"
 
 _HELP_ROWS = [
-    ("1 – 7",    "Ejecutar comando directamente"),
-    ("j / ↓",    "Bajar en menú / tickets"),
-    ("k / ↑",    "Subir en menú / tickets"),
+    ("/",        "Abrir paleta de comandos"),
     ("g",        "Ir al primer ítem"),
     ("G",        "Ir al último ítem"),
-    ("h",        "Colapsar sección"),
-    ("l",        "Expandir sección"),
     ("Enter",    "Seleccionar / iniciar tarea"),
-    ("t",        "Enfocar panel de tickets"),
     ("r",        "Refrescar tickets (en panel)"),
     ("b",        "Cambiar tablero activo"),
     ("←/→",      "Mover chip enfocado en la historia"),
@@ -58,6 +55,31 @@ def filter_boards(
     if not q:
         return list(options)
     return [opt for opt in options if q in opt[0].lower()]
+
+
+# ─── Command Palette ───────────────────────────────────────────────────────────
+
+class PaletteEntry(NamedTuple):
+    """Fila plana del catálogo de la paleta de comandos — mezcla comandos
+    (`kind="cmd"`) y acciones de settings (`kind="setting"`: credenciales,
+    reglas, test de Gemini, logs)."""
+    kind: str            # "cmd" | "setting"
+    id: str              # "task" | "k:GEMINI_API_KEY" | "rules:add" | ...
+    category: str        # "COMANDO" | "CREDENCIAL" | "REGLAS" | "SISTEMA"
+    name: str
+    desc: str
+    env_key: str | None = None      # solo CREDENCIAL: drive del badge ✓/✗ en vivo
+
+
+def filter_entries(
+    entries: Sequence[PaletteEntry], query: str | None,
+) -> list[PaletteEntry]:
+    """Filtro por substring case-insensitive sobre f'{name} {desc}'.
+    Query vacío/None/solo-espacios devuelve todas las entradas sin tocar el orden."""
+    q = (query or "").strip().lower()
+    if not q:
+        return list(entries)
+    return [e for e in entries if q in f"{e.name} {e.desc}".lower()]
 
 # ─── CSS compartido entre modales ─────────────────────────────────────────────
 #  Los modales SÍ pintan fondo (superficie elevada sobre el canvas negro)
@@ -305,7 +327,8 @@ class TextAreaModal(ModalScreen[str | None]):
 class SelectModal(ModalScreen[str | None]):
     """Modal de selección de una opción entre varias — usado por el
     `kind:"select"` de un `awaiting_input` del pipeline de QA (ver
-    TicketPanel._poll_qa). Reusa OptionList, mismo widget que SettingsScreen."""
+    TicketPanel._poll_qa) y por `MainScreen._worker_setting` (rama
+    `rules-del`)."""
 
     BINDINGS = [Binding("escape", "cancel", show=False)]
 
@@ -502,6 +525,141 @@ class BoardSwitcherModal(ModalScreen[str | None]):
 
     def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
         self.dismiss(event.option.id)
+
+    def action_cancel(self) -> None:
+        self.dismiss(None)
+
+
+class CommandPaletteModal(ModalScreen[tuple[str, str] | None]):
+    """Entry point único de comandos + settings — clon de `BoardSwitcherModal`:
+    misma caja `Input` + `OptionList`, mismo rebuild en `on_input_changed`,
+    mismo ruteo manual up/down/enter en `on_key`. `_labels()` agrega tag de
+    categoría + nombre + descripción y, si la entrada trae `env_key`, el
+    badge ✓/✗ leído en vivo con `os.getenv`. Dismiss `(kind, id)` al
+    confirmar, `None` al cancelar; recuperado indexando `self._filtered`
+    (no encodeado en `Option.id`, porque los ids de settings ya usan `:`)."""
+
+    BINDINGS = [Binding("escape", "cancel", show=False)]
+
+    DEFAULT_CSS = f"""
+    CommandPaletteModal {{
+        align: center middle;
+    }}
+    #cp-box {{
+        background: {_ELEVATED};
+        border: double {_ACCENT};
+        padding: 1 3;
+        width: 78;
+        height: auto;
+    }}
+    #cp-header {{
+        color: {_ACCENT};
+        text-style: bold;
+        text-align: center;
+        height: 1;
+        margin-bottom: 1;
+    }}
+    #cp-box Input {{
+        background: #000000;
+        border: tall {_BORDER};
+        color: #F1F3F9;
+        height: 3;
+        margin-bottom: 1;
+    }}
+    #cp-box Input:focus {{
+        border: tall {_ACCENT};
+    }}
+    CommandPaletteModal OptionList {{
+        background: transparent;
+        border: tall {_BORDER};
+        height: auto;
+        max-height: 16;
+    }}
+    CommandPaletteModal OptionList:focus > .option-list--option-highlighted {{
+        background: {_SELECT};
+    }}
+    #cp-hint {{
+        color: {_MUTED};
+        text-align: right;
+        height: 1;
+        margin-top: 1;
+    }}
+    """
+
+    def __init__(self, entries: Sequence[PaletteEntry]) -> None:
+        super().__init__()
+        self._entries = list(entries)
+        self._filtered: list[PaletteEntry] = list(entries)
+
+    def _labels(self, entries: list[PaletteEntry]) -> list[Option]:
+        if not entries:
+            return [Option("  Sin resultados", disabled=True, id=None)]
+        opts = []
+        for entry in entries:
+            label = Text.assemble(
+                ("  ", ""),
+                (f"{entry.category:<11}", _MUTED),
+                (f"{entry.name:<26}", "bold #F1F3F9"),
+                (entry.desc, _SEC),
+            )
+            if entry.env_key:
+                is_set = bool(os.getenv(entry.env_key))
+                status = "  ✓" if is_set else "  ✗"
+                color  = _OK if is_set else _ERROR
+                label.append(status, style=f"bold {color}")
+            opts.append(Option(label, id=None))
+        return opts
+
+    def compose(self) -> ComposeResult:
+        with Container(id="cp-box"):
+            yield Static("━━━  MAGNA  ━━━", id="cp-header")
+            yield Input(placeholder="Filtrar comandos y settings...")
+            yield OptionList(*self._labels(self._filtered))
+            yield Label(
+                f"[bold {_ACCENT}][[↵]][/bold {_ACCENT}] [{_SEC}]seleccionar[/{_SEC}]"
+                f"  [{_MUTED}]·[/{_MUTED}]  [bold {_ERROR}][[esc]][/bold {_ERROR}] [{_SEC}]cancelar[/{_SEC}]",
+                id="cp-hint", markup=True,
+            )
+
+    def on_mount(self) -> None:
+        self.query_one(Input).focus()
+        opt_list = self.query_one(OptionList)
+        if opt_list.option_count > 0:
+            opt_list.highlighted = 0
+
+    def on_input_changed(self, event: Input.Changed) -> None:
+        self._filtered = filter_entries(self._entries, event.value)
+        opt_list = self.query_one(OptionList)
+        opt_list.clear_options()
+        opt_list.add_options(self._labels(self._filtered))
+        if opt_list.option_count > 0:
+            opt_list.highlighted = 0
+
+    def _confirm(self, index: int) -> None:
+        if not self._filtered or not (0 <= index < len(self._filtered)):
+            return
+        entry = self._filtered[index]
+        self.dismiss((entry.kind, entry.id))
+
+    def on_key(self, event) -> None:
+        opt_list = self.query_one(OptionList)
+        if event.key in ("up", "down"):
+            if opt_list.option_count == 0:
+                return
+            event.stop()
+            if opt_list.highlighted is None:
+                opt_list.highlighted = 0
+            elif event.key == "down":
+                opt_list.highlighted = min(opt_list.option_count - 1, opt_list.highlighted + 1)
+            else:
+                opt_list.highlighted = max(0, opt_list.highlighted - 1)
+        elif event.key == "enter":
+            if opt_list.highlighted is not None and opt_list.option_count > 0:
+                event.stop()
+                self._confirm(opt_list.highlighted)
+
+    def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
+        self._confirm(event.option_index)
 
     def action_cancel(self) -> None:
         self.dismiss(None)

@@ -11,12 +11,10 @@ from textual.app import ComposeResult
 from textual.screen import Screen, ModalScreen
 from textual.widgets import (
     Static, Input, Label, DataTable,
-    Footer, Rule, OptionList, Collapsible, TextArea,
-    ListView, ListItem,
+    Footer, Rule, TextArea,
 )
 from textual.widget import Widget
-from textual.widgets.option_list import Option
-from textual.containers import Container, Vertical, Horizontal
+from textual.containers import Container, Horizontal
 from textual.binding import Binding
 from textual import work
 from textual.message import Message
@@ -24,6 +22,7 @@ from textual.reactive import reactive
 
 from .modals import (
     HelpScreen, InputModal, TextAreaModal, ConfirmModal, JiraCardModal, BoardSwitcherModal,
+    SelectModal, CommandPaletteModal, PaletteEntry,
 )
 from .widgets import TicketPanel
 
@@ -95,22 +94,6 @@ def _save_env_var(key: str, value: str) -> None:
     os.environ[key] = value
 
 
-def _cfg_option(env_key: str) -> Option:
-    label = _ENV_LABELS.get(env_key, env_key)
-    is_set = bool(os.getenv(env_key))
-    status = "✓ configurada" if is_set else "✗ no configurada"
-    color  = _OK if is_set else _ERROR
-    return Option(
-        Text.assemble(
-            ("  ", ""),
-            (f"{label:<28}", "#F1F3F9"),
-            (status, f"bold {color}"),
-        ),
-        id=f"k:{env_key}",
-    )
-
-
-
 def _error_panel(command: str, exc: BaseException, tb: str) -> RichPanel:
     """MAGNA-branded error panel for CommandOutputScreen."""
     body = Text()
@@ -126,24 +109,60 @@ def _error_panel(command: str, exc: BaseException, tb: str) -> RichPanel:
     )
 
 
-_MENU = [
-    ("DOCUMENTATION", [
-        ("1", "file",     "Document folder"),
-        ("2", "archive",  "Analyze file"),
-    ]),
-    ("WORKFLOW", [
-        ("3", "task",     "Claude task context"),
-        ("4", "sync",     "Sync docs post-task"),
-        ("5", "resume",   "Resume ticket"),
-    ]),
-    ("EXPLORE", [
-        ("6", "claude",   "Claude full context"),
-        ("7", "status",   "View architecture"),
-    ]),
-    ("TEAM", [
-        ("s", "settings", "Settings"),
-    ]),
-]
+_PALETTE_ENTRIES: tuple[PaletteEntry, ...] = (
+    # ── Comandos ──────────────────────────────────────────────────────────────
+    PaletteEntry("cmd", "file",    "COMANDO", "file",    "Document folder"),
+    PaletteEntry("cmd", "archive", "COMANDO", "archive", "Analyze file"),
+    PaletteEntry("cmd", "task",    "COMANDO", "task",    "Claude task context"),
+    PaletteEntry("cmd", "sync",    "COMANDO", "sync",    "Sync docs post-task"),
+    PaletteEntry("cmd", "resume",  "COMANDO", "resume",  "Resume ticket"),
+    PaletteEntry("cmd", "claude",  "COMANDO", "claude",  "Claude full context"),
+    PaletteEntry("cmd", "status",  "COMANDO", "status",  "View architecture"),
+    # ── Credenciales ──────────────────────────────────────────────────────────
+    PaletteEntry(
+        "setting", "k:ANTHROPIC_API_KEY", "CREDENCIAL",
+        _ENV_LABELS["ANTHROPIC_API_KEY"], "Configurar credencial de conexión",
+        env_key="ANTHROPIC_API_KEY",
+    ),
+    PaletteEntry(
+        "setting", "k:JIRA_URL", "CREDENCIAL",
+        _ENV_LABELS["JIRA_URL"], "Configurar credencial de conexión",
+        env_key="JIRA_URL",
+    ),
+    PaletteEntry(
+        "setting", "k:JIRA_EMAIL", "CREDENCIAL",
+        _ENV_LABELS["JIRA_EMAIL"], "Configurar credencial de conexión",
+        env_key="JIRA_EMAIL",
+    ),
+    PaletteEntry(
+        "setting", "k:JIRA_TOKEN", "CREDENCIAL",
+        _ENV_LABELS["JIRA_TOKEN"], "Configurar credencial de conexión",
+        env_key="JIRA_TOKEN",
+    ),
+    PaletteEntry(
+        "setting", "k:GEMINI_API_KEY", "CREDENCIAL",
+        _ENV_LABELS["GEMINI_API_KEY"], "Configurar credencial de conexión",
+        env_key="GEMINI_API_KEY",
+    ),
+    # ── Reglas del equipo ─────────────────────────────────────────────────────
+    PaletteEntry(
+        "setting", "rules:add", "REGLAS",
+        "Agregar regla de equipo", "Copiar un archivo .md al directorio de reglas",
+    ),
+    PaletteEntry(
+        "setting", "rules:del", "REGLAS",
+        "Eliminar regla de equipo…", "Elegir y borrar una regla existente",
+    ),
+    # ── Sistema ───────────────────────────────────────────────────────────────
+    PaletteEntry(
+        "setting", "test:gemini", "SISTEMA",
+        "Probar conexión Gemini", "Verificar credenciales de Gemini",
+    ),
+    PaletteEntry(
+        "setting", "logs", "SISTEMA",
+        "Ver logs", "Abrir magna.log",
+    ),
+)
 
 
 def _ask_image_tui(console) -> str | None:
@@ -160,28 +179,26 @@ def _ask_image_tui(console) -> str | None:
 
 
 def _cmd_desc(command: str) -> str:
-    for _, items in _MENU:
-        for _, cmd, desc in items:
-            if cmd == command:
-                return desc
+    for entry in _PALETTE_ENTRIES:
+        if entry.kind == "cmd" and entry.id == command:
+            return entry.desc
     return ""
 
 
-_DESC_MAX = 22  # chars disponibles para descripción antes del wrap
+_SETTING_BRANCHES: dict[str, str] = {
+    "rules:add":   "rules-add",
+    "rules:del":   "rules-del",
+    "test:gemini": "test-gemini",
+    "logs":        "logs",
+}
 
-def _menu_option(key: str, name: str, desc: str) -> Option:
-    d = desc[:_DESC_MAX - 1] + "…" if len(desc) > _DESC_MAX else desc
-    return Option(
-        Text.assemble(
-            ("  ", ""),
-            (key, _ACCENT),
-            ("  ", ""),
-            (f"{name:<10}", f"bold #F1F3F9"),
-            ("  ", ""),
-            (d, _SEC),
-        ),
-        id=name,
-    )
+
+def _setting_branch(opt_id: str) -> str:
+    """Mapea el id de una `PaletteEntry` de settings a su rama de
+    `MainScreen._worker_setting`. Id desconocido → cadena vacía."""
+    if opt_id.startswith("k:"):
+        return "cred"
+    return _SETTING_BRANCHES.get(opt_id, "")
 
 
 # ─── Terminal utilities (run inside suspend) ──────────────────────────────────
@@ -1217,208 +1234,14 @@ class LogScreen(Screen):
         ta.move_cursor(ta.document.end)
 
 
-# ─── Settings Screen ──────────────────────────────────────────────────────────
-
-class SettingsScreen(Screen):
-
-    BINDINGS = [
-        Binding("escape", "app.pop_screen", show=False),
-        Binding("q",      "app.pop_screen", show=False),
-    ]
-
-    DEFAULT_CSS = f"""
-    SettingsScreen {{
-        background: transparent;
-    }}
-    #cfg-logo {{
-        text-align: center;
-        padding: 1 0 0 0;
-    }}
-    #cfg-title {{
-        color: {_SECTION};
-        text-align: center;
-        height: 1;
-    }}
-    #cfg-body {{
-        height: 1fr;
-        border-top: heavy {_BORDER_A};
-        margin-top: 1;
-        overflow-y: auto;
-        padding: 0 6;
-    }}
-    .cfg-section-hdr {{
-        color: {_SECTION};
-        text-style: bold;
-        height: 2;
-        padding: 1 1 0 1;
-    }}
-    OptionList {{
-        background: transparent;
-        border: none;
-        height: auto;
-        padding: 0;
-    }}
-    OptionList > .option-list--option {{
-        padding: 0 1;
-    }}
-    OptionList > .option-list--option-highlighted {{
-        background: transparent;
-    }}
-    OptionList:focus > .option-list--option-highlighted {{
-        background: {_SELECT};
-    }}
-    #cfg-foot {{
-        dock: bottom;
-        color: {_MUTED};
-        text-align: center;
-        height: 2;
-        padding: 0 2;
-        border-top: solid {_BORDER};
-    }}
-    Rule {{
-        color: {_BORDER};
-        margin: 0;
-    }}
-    """
-
-    def _rule_options(self) -> list[Option]:
-        rules_dir = Path.home() / ".mycontext" / "rules"
-        rule_files = sorted(rules_dir.glob("*.md")) if rules_dir.exists() else []
-        items = [
-            Option(
-                Text.assemble(("  ", ""), (f.name, _SEC), ("   ", ""), ("↵ eliminar", _MUTED)),
-                id=f"rules:del:{f.name}",
-            )
-            for f in rule_files
-        ]
-        items.append(
-            Option(Text.assemble(("  ", ""), ("+ Agregar regla...", _ACCENT)), id="rules:add")
-        )
-        return items
-
-    def compose(self) -> ComposeResult:
-        yield Static(_gradient_logo(), id="cfg-logo")
-        yield Static("SETTINGS", id="cfg-title")
-        with Container(id="cfg-body"):
-            yield Static("  ▌  CREDENCIALES", classes="cfg-section-hdr")
-            yield OptionList(
-                _cfg_option("ANTHROPIC_API_KEY"),
-                _cfg_option("JIRA_URL"),
-                _cfg_option("JIRA_EMAIL"),
-                _cfg_option("JIRA_TOKEN"),
-                _cfg_option("GEMINI_API_KEY"),
-                Option(
-                    Text.assemble(("  ", ""), ("Probar conexión Gemini", _SEC), ("          →", _MUTED)),
-                    id="test:gemini",
-                ),
-                id="cfg-creds",
-            )
-            yield Rule()
-            yield Static("  ▌  REGLAS DEL EQUIPO", classes="cfg-section-hdr")
-            yield OptionList(*self._rule_options(), id="cfg-rules")
-            yield Rule()
-            yield Static("  ▌  LOGS", classes="cfg-section-hdr")
-            yield OptionList(
-                Option(
-                    Text.assemble(("  ", ""), ("Ver magna.log", "#F1F3F9"), ("          →", _SEC)),
-                    id="logs",
-                ),
-                id="cfg-logs",
-            )
-        yield Static(
-            f"  [bold {_ACCENT}]↑↓[/bold {_ACCENT}] [{_SEC}]navegar[/{_SEC}]"
-            f"  [bold {_ACCENT}]↵[/bold {_ACCENT}] [{_SEC}]editar · abrir[/{_SEC}]"
-            f"  [bold {_ACCENT}]esc[/bold {_ACCENT}] [{_SEC}]volver[/{_SEC}]",
-            id="cfg-foot", markup=True,
-        )
-
-    def on_mount(self) -> None:
-        self.query_one("#cfg-creds", OptionList).focus()
-
-    def _rebuild_creds(self) -> None:
-        ol = self.query_one("#cfg-creds", OptionList)
-        ol.clear_options()
-        for key in _ENV_LABELS:
-            ol.add_option(_cfg_option(key))
-
-    def _rebuild_rules(self) -> None:
-        ol = self.query_one("#cfg-rules", OptionList)
-        ol.clear_options()
-        for item in self._rule_options():
-            ol.add_option(item)
-
-    def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
-        self._worker_action(event.option.id or "")
-
-    @work
-    async def _worker_action(self, opt_id: str) -> None:
-        if opt_id.startswith("k:"):
-            env_key = opt_id[2:]
-            label   = _ENV_LABELS.get(env_key, env_key)
-            hint    = "configurada — Enter para cambiar" if os.getenv(env_key) else "no configurada"
-            value   = await self.app.push_screen_wait(InputModal(f"{label}  ({hint})", ""))
-            if value and value.strip():
-                _save_env_var(env_key, value.strip())
-                self.app.notify(f"{label} guardada ✓", timeout=3)
-                self._rebuild_creds()
-
-        elif opt_id == "rules:add":
-            file_path_str = await self.app.push_screen_wait(
-                InputModal("Ruta del archivo de reglas (.md)", r"C:\rules\techlead-rules.md")
-            )
-            if not file_path_str:
-                return
-            src = Path(file_path_str.strip())
-            if not src.exists() or src.suffix.lower() != ".md":
-                self.app.notify(f"No encontrado o no es .md: {src}", severity="error", timeout=5)
-                return
-            rules_dir = Path.home() / ".mycontext" / "rules"
-            rules_dir.mkdir(parents=True, exist_ok=True)
-            (rules_dir / src.name).write_bytes(src.read_bytes())
-            self.app.notify(f"Regla agregada: {src.name}", timeout=4)
-            self._rebuild_rules()
-
-        elif opt_id.startswith("rules:del:"):
-            fname     = opt_id[10:]
-            confirmed = await self.app.push_screen_wait(ConfirmModal(f"¿Eliminar {fname}?", default=False))
-            if confirmed:
-                dest = Path.home() / ".mycontext" / "rules" / fname
-                if dest.exists():
-                    dest.unlink()
-                self.app.notify(f"Regla eliminada: {fname}", timeout=4)
-                self._rebuild_rules()
-
-        elif opt_id == "test:gemini":
-            from aicli.services.gemini import test_connection
-            ok, msg = test_connection()
-            if ok:
-                self.app.notify(f"Gemini: {msg}", severity="information", timeout=4)
-            else:
-                logging.warning("Test de conexión Gemini falló: %s", msg)
-                self.app.notify(f"Gemini: {msg}", severity="error", timeout=6)
-
-        elif opt_id == "logs":
-            await self.app.push_screen(LogScreen())
-
-
 # ─── Main Screen ──────────────────────────────────────────────────────────────
 
 class MainScreen(Screen):
 
     BINDINGS = [
-        Binding("1", "cmd('file')",      show=False),
-        Binding("2", "cmd('archive')",   show=False),
-        Binding("3", "cmd('task')",      show=False),
-        Binding("4", "cmd('sync')",      show=False),
-        Binding("5", "cmd('resume')",    show=False),
-        Binding("6", "cmd('claude')",    show=False),
-        Binding("7", "cmd('status')",    show=False),
-        Binding("s", "cmd('settings')",  show=False),
+        Binding("slash", "palette",     "Comandos"),
         Binding("g", "jump_top",         show=False),
         Binding("G", "jump_bottom",      show=False),
-        Binding("h", "collapse_section", show=False),
-        Binding("l", "expand_section",   show=False),
-        Binding("t", "focus_tickets",    show=False),
         Binding("b", "board",            show=False),
         Binding("p", "change_proj",      "Project"),
         Binding("q", "app.quit",         "Quit"),
@@ -1442,66 +1265,6 @@ class MainScreen(Screen):
         height: 1fr;
         border-top: heavy {_BORDER_A};
         margin-top: 1;
-    }}
-
-    /* ── Panel izquierdo — puntillismo azul (hatch) ── */
-    #left {{
-        width: 54;
-        hatch: "·" {_SECTION} 20%;
-        border-right: solid {_BORDER};
-        padding: 0 1;
-        overflow-y: auto;
-    }}
-    #left:focus-within {{
-        border-right: solid {_ACCENT};
-    }}
-
-    /* ── Collapsible — todo transparente, solo texto sobre negro ── */
-    Collapsible {{
-        background: transparent;
-        border: none;
-        margin: 0;
-        padding: 0;
-    }}
-    CollapsibleTitle {{
-        color: {_SECTION};
-        background: transparent;
-        text-style: bold;
-        padding: 0 1;
-        height: 2;
-    }}
-    CollapsibleTitle:focus {{
-        color: {_ACCENT};
-        background: transparent;
-    }}
-    CollapsibleTitle:hover {{
-        color: {_ACCENT};
-        background: transparent;
-    }}
-    Collapsible > Contents {{
-        background: transparent;
-        padding: 0;
-        height: auto;
-    }}
-
-    /* ── OptionList ── */
-    OptionList {{
-        background: transparent;
-        border: none;
-        padding: 0;
-        height: auto;
-    }}
-    OptionList > .option-list--option {{
-        padding: 0 1;
-        height: 1;
-        color: #F1F3F9;
-    }}
-    OptionList > .option-list--option-highlighted {{
-        background: transparent;
-    }}
-    OptionList:focus > .option-list--option-highlighted {{
-        background: {_SELECT};
-        color: {_GLOW};
     }}
 
     /* ── Footer ── */
@@ -1534,47 +1297,98 @@ class MainScreen(Screen):
         yield Static(_gradient_logo(), id="logo")
         yield Static("AI Context Engine", id="tagline")
         with Horizontal(id="body"):
-            with Vertical(id="left"):
-                for section, items in _MENU:
-                    with Collapsible(title=f"▌ {section}", collapsed=False, id=f"col-{section.lower()}"):
-                        yield OptionList(
-                            *[_menu_option(k, n, d) for k, n, d in items],
-                            id=f"ol-{section.lower()}",
-                        )
             yield TicketPanel()
         yield Footer()
 
-    # ── Event handlers ────────────────────────────────────────────────────────
-
-    def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
-        if event.option.id:
-            self.action_cmd(event.option.id)
+    def on_mount(self) -> None:
+        self.query_one(TicketPanel).focus()
 
     # ── Actions ───────────────────────────────────────────────────────────────
 
     def action_jump_top(self) -> None:
         focused = self.focused
-        if isinstance(focused, OptionList) and focused.option_count > 0:
-            focused.highlighted = 0
-        elif isinstance(focused, ListView) and len(focused) > 0:
-            focused.index = 0
-        elif isinstance(focused, TicketPanel):
+        if isinstance(focused, TicketPanel):
             focused.focus_first()
 
     def action_jump_bottom(self) -> None:
         focused = self.focused
-        if isinstance(focused, OptionList) and focused.option_count > 0:
-            focused.highlighted = focused.option_count - 1
-        elif isinstance(focused, ListView) and len(focused) > 0:
-            focused.index = len(focused) - 1
-        elif isinstance(focused, TicketPanel):
+        if isinstance(focused, TicketPanel):
             focused.focus_last()
 
-    def action_focus_tickets(self) -> None:
-        try:
-            self.query_one(TicketPanel).focus()
-        except Exception:
-            pass
+    def action_palette(self) -> None:
+        self._worker_palette()
+
+    @work
+    async def _worker_palette(self) -> None:
+        result = await self.app.push_screen_wait(CommandPaletteModal(_PALETTE_ENTRIES))
+        if result is None:
+            return
+        kind, entry_id = result
+        if kind == "cmd":
+            self.action_cmd(entry_id)
+        elif kind == "setting":
+            self._worker_setting(entry_id)
+
+    @work
+    async def _worker_setting(self, opt_id: str) -> None:
+        """Puerto verbatim, branch por branch, de la antigua rutina de
+        settings (`_worker_action` de la pantalla dedicada ya eliminada) —
+        reusa los mismos modales y `_save_env_var` sin rediseñar comportamiento."""
+        branch = _setting_branch(opt_id)
+
+        if branch == "cred":
+            env_key = opt_id[2:]
+            label   = _ENV_LABELS.get(env_key, env_key)
+            hint    = "configurada — Enter para cambiar" if os.getenv(env_key) else "no configurada"
+            value   = await self.app.push_screen_wait(InputModal(f"{label}  ({hint})", ""))
+            if value and value.strip():
+                _save_env_var(env_key, value.strip())
+                self.app.notify(f"{label} guardada ✓", timeout=3)
+
+        elif branch == "rules-add":
+            file_path_str = await self.app.push_screen_wait(
+                InputModal("Ruta del archivo de reglas (.md)", r"C:\rules\techlead-rules.md")
+            )
+            if not file_path_str:
+                return
+            src = Path(file_path_str.strip())
+            if not src.exists() or src.suffix.lower() != ".md":
+                self.app.notify(f"No encontrado o no es .md: {src}", severity="error", timeout=5)
+                return
+            rules_dir = Path.home() / ".mycontext" / "rules"
+            rules_dir.mkdir(parents=True, exist_ok=True)
+            (rules_dir / src.name).write_bytes(src.read_bytes())
+            self.app.notify(f"Regla agregada: {src.name}", timeout=4)
+
+        elif branch == "rules-del":
+            rules_dir = Path.home() / ".mycontext" / "rules"
+            rule_files = sorted(rules_dir.glob("*.md")) if rules_dir.exists() else []
+            if not rule_files:
+                self.app.notify("Sin reglas de equipo para eliminar.", severity="warning", timeout=4)
+                return
+            fname = await self.app.push_screen_wait(
+                SelectModal("Elegí una regla para eliminar", [f.name for f in rule_files])
+            )
+            if not fname:
+                return
+            confirmed = await self.app.push_screen_wait(ConfirmModal(f"¿Eliminar {fname}?", default=False))
+            if confirmed:
+                dest = rules_dir / fname
+                if dest.exists():
+                    dest.unlink()
+                self.app.notify(f"Regla eliminada: {fname}", timeout=4)
+
+        elif branch == "test-gemini":
+            from aicli.services.gemini import test_connection
+            ok, msg = test_connection()
+            if ok:
+                self.app.notify(f"Gemini: {msg}", severity="information", timeout=4)
+            else:
+                logging.warning("Test de conexión Gemini falló: %s", msg)
+                self.app.notify(f"Gemini: {msg}", severity="error", timeout=6)
+
+        elif branch == "logs":
+            await self.app.push_screen(LogScreen())
 
     def action_board(self) -> None:
         self._worker_board()
@@ -1737,20 +1551,6 @@ class MainScreen(Screen):
 
         out_screen.mark_done()
 
-    def action_collapse_section(self) -> None:
-        self._set_focused_collapsible(True)
-
-    def action_expand_section(self) -> None:
-        self._set_focused_collapsible(False)
-
-    def _set_focused_collapsible(self, collapsed: bool) -> None:
-        node = self.focused
-        while node is not None:
-            if isinstance(node, Collapsible):
-                node.collapsed = collapsed
-                return
-            node = node.parent
-
     def action_help(self) -> None:
         self.app.push_screen(HelpScreen())
 
@@ -1784,10 +1584,6 @@ class MainScreen(Screen):
             await self.app.push_screen(
                 StatusScreen(self._project_name, self._project_path)
             )
-            return
-
-        if command == "settings":
-            await self.app.push_screen(SettingsScreen())
             return
 
         # ── Recoger inputs via InputModal (TUI, sin suspend) ──────────────────
