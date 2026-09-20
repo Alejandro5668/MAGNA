@@ -314,6 +314,34 @@ def download_video_attachments(attachments: list) -> list[str]:
 _EXCEL_MAX_ROWS = 200
 
 
+_DOC_MIME = {
+    "application/pdf",
+    "text/csv",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",  # .docx
+    "application/msword",  # .doc legado
+}
+
+
+def download_doc_attachments(attachments: list) -> list[str]:
+    """Descarga adjuntos PDF/CSV/DOCX al directorio de evidencias, sin analizarlos —
+    Claude Code los lee directamente con sus propias tools. Retorna rutas locales."""
+    import httpx
+    folder = Path.home() / ".mycontext" / "evidencias"
+    paths = []
+    for att in attachments:
+        if att.get("mimeType", "") not in _DOC_MIME:
+            continue
+        try:
+            resp = httpx.get(att["content"], headers=_headers(), timeout=30, follow_redirects=True)
+            if resp.status_code == 200:
+                dest = folder / att.get("filename", "jira_attachment")
+                dest.write_bytes(resp.content)
+                paths.append(str(dest))
+        except Exception as e:
+            logging.warning("jira.download_doc %s — %s", att.get("filename"), e)
+    return paths
+
+
 def excel_to_text(path: str) -> str:
     """Convierte un archivo .xlsx a texto markdown con tablas por hoja."""
     import openpyxl

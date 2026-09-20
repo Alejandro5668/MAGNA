@@ -76,10 +76,12 @@ def _execute_task(
     jira_images: list[tuple[str, str]] = []
     jira_excel:  list[tuple[str, str]] = []
     jira_videos: list[tuple[str, str]] = []
+    jira_docs:   list[tuple[str, str]] = []
     if jira_data and jira_data.get("attachments"):
         from aicli.services.jira import (
             download_image_attachments, download_excel_attachments,
-            download_video_attachments, excel_to_text, _EXCEL_MIME, _VIDEO_MIME,
+            download_video_attachments, download_doc_attachments,
+            excel_to_text, _EXCEL_MIME, _VIDEO_MIME, _DOC_MIME,
         )
         from aicli.services.tickets import get_jira_cache, save_processed_attachments
 
@@ -97,6 +99,8 @@ def _execute_task(
                 jira_excel.append(entry)
             elif cached_type == "video":
                 jira_videos.append(entry)
+            elif cached_type == "doc":
+                jira_docs.append(entry)
 
         pending = [a for a in attachments if str(a.get("id")) not in processed]
         if pending and len(pending) < len(attachments):
@@ -111,21 +115,25 @@ def _execute_task(
             local_paths = download_image_attachments(pending)
             excel_paths = download_excel_attachments(pending)
             video_paths = download_video_attachments(pending)
+            doc_paths = download_doc_attachments(pending)
 
         if local_paths:
-            magna_ok(console, f"{len(local_paths)} imagen(es) descargada(s) de Jira")
+            magna_ok(console, f"{len(local_paths)} imagen(es) descargada(s) de Jira — Claude Code las leerá directamente")
         for img_path in local_paths:
             name = Path(img_path).name
-            with magna_status(console, f"Analizando {name}..."):
-                try:
-                    desc, tokens_j = describe_image(img_path)
-                    jira_images.append((name, desc))
-                    magna_ok(console, f"{name} · {tokens_j:,} tokens")
-                    att_id = id_by_filename.get(name)
-                    if att_id:
-                        new_cache_entries[att_id] = {"type": "image", "name": name, "text": desc}
-                except Exception as e:
-                    magna_warn(console, f"No se pudo analizar {name}: {e}")
+            jira_images.append((name, img_path))
+            att_id = id_by_filename.get(name)
+            if att_id:
+                new_cache_entries[att_id] = {"type": "image", "name": name, "text": img_path}
+
+        if doc_paths:
+            magna_ok(console, f"{len(doc_paths)} documento(s) descargado(s) de Jira — Claude Code los leerá directamente")
+        for doc_path in doc_paths:
+            name = Path(doc_path).name
+            jira_docs.append((name, doc_path))
+            att_id = id_by_filename.get(name)
+            if att_id:
+                new_cache_entries[att_id] = {"type": "doc", "name": name, "text": doc_path}
 
         if excel_paths:
             magna_ok(console, f"{len(excel_paths)} Excel descargado(s) de Jira")
@@ -167,6 +175,7 @@ def _execute_task(
             if not a.get("mimeType", "").startswith("image/")
             and a.get("mimeType", "") not in _EXCEL_MIME
             and a.get("mimeType", "") not in _VIDEO_MIME
+            and a.get("mimeType", "") not in _DOC_MIME
         ]
         if non_other:
             magna_info(console, f"{len(non_other)} adjunto(s) de otro tipo incluido(s) como metadata")
@@ -174,12 +183,14 @@ def _execute_task(
     evidence_parts: list[str] = []
     if image_description:
         evidence_parts.append(f"Imagen de referencia: {image_description}")
-    for name, desc in jira_images:
-        evidence_parts.append(f"Imagen de Jira ({name}): {desc}")
+    for name, path in jira_images:
+        evidence_parts.append(f"Imagen de Jira adjunta ({name}), sin analizar — ruta local: {path}")
     for name, desc in jira_excel:
         evidence_parts.append(f"Excel de Jira ({name}): {desc[:500]}")
     for name, desc in jira_videos:
         evidence_parts.append(f"Video de QA ({name}): {desc}")
+    for name, path in jira_docs:
+        evidence_parts.append(f"Documento de Jira adjunto ({name}), sin analizar — ruta local: {path}")
     evidence_summary = "\n\n".join(evidence_parts) if evidence_parts else None
 
     with magna_status(console, "Analizando tarea (detective · historiador · vigía)..."):
@@ -214,12 +225,12 @@ def _execute_task(
     if suspend_fn:
         suspend_fn(lambda: launch_claude(
             context, task_desc, brief, file, image_description,
-            ticket_history, ticket_id, jira_data, jira_images, jira_excel, jira_videos,
+            ticket_history, ticket_id, jira_data, jira_images, jira_excel, jira_videos, jira_docs,
         ))
     else:
         launch_claude(
             context, task_desc, brief, file, image_description,
-            ticket_history, ticket_id, jira_data, jira_images, jira_excel, jira_videos,
+            ticket_history, ticket_id, jira_data, jira_images, jira_excel, jira_videos, jira_docs,
         )
 
 

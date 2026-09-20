@@ -143,6 +143,7 @@ def launch_claude(
     jira_images: list | None = None,
     jira_excel: list | None = None,
     jira_videos: list | None = None,
+    jira_docs: list | None = None,
     question_mode: bool = False,
 ) -> None:
     from datetime import datetime
@@ -172,9 +173,9 @@ def launch_claude(
                 fecha = comment.get("created", "")
                 jira_sec += f"\n**{autor}** ({fecha}):\n{comment.get('body', '')}\n"
         if jira_images:
-            jira_sec += "\n## Evidencia adjunta (analizada)\n"
-            for name, desc in jira_images:
-                jira_sec += f"\n**{name}:**\n{desc}\n"
+            jira_sec += "\n## Imágenes adjuntas (sin analizar — abrilas vos con tu tool Read si son relevantes)\n"
+            for name, local_path in jira_images:
+                jira_sec += f"- {name} → {local_path}\n"
         if jira_excel:
             jira_sec += "\n## Archivos Excel adjuntos\n"
             for name, content in jira_excel:
@@ -183,12 +184,23 @@ def launch_claude(
             jira_sec += "\n## Videos QA (analizados por Gemini)\n"
             for name, desc in jira_videos:
                 jira_sec += f"\n**{name}:**\n{desc}\n"
+        if jira_docs:
+            jira_sec += "\n## Documentos adjuntos (PDF/CSV/DOCX, sin analizar — abrilos vos con Read/Bash si son relevantes)\n"
+            for name, local_path in jira_docs:
+                jira_sec += f"- {name} → {local_path}\n"
+        _DOC_MIME = {
+            "application/pdf",
+            "text/csv",
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            "application/msword",
+        }
         non_other = [
             a for a in (jira_data.get("attachments") or [])
             if not a.get("mimeType", "").startswith("image/")
             and "spreadsheet" not in a.get("mimeType", "")
             and "ms-excel" not in a.get("mimeType", "")
             and not a.get("mimeType", "").startswith("video/")
+            and a.get("mimeType", "") not in _DOC_MIME
         ]
         if non_other:
             jira_sec += "\n## Otros adjuntos\n"
