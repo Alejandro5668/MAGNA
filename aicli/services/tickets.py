@@ -140,7 +140,7 @@ def save_round(
     mensaje_jira: str | None,
     motivo_reapertura: str | None = None,
     memoria: dict | None = None,
-) -> None:
+) -> dict:
     ronda = {
         "fecha": datetime.now().strftime("%Y-%m-%d"),
         "archivos_tocados": archivos_tocados,
@@ -155,7 +155,7 @@ def save_round(
         data.setdefault("rondas", [])
         data["rondas"].append(ronda)
 
-    _mutate_ticket(ticket_id, _mut)
+    return _mutate_ticket(ticket_id, _mut)
 
 
 def format_history(ticket_id: str, tickets: dict) -> str | None:

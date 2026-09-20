@@ -248,26 +248,6 @@ def _sync_impl(ask_fn=None, confirm_fn=None):
 
     upsert_modules(project.id, new_modules)
 
-    # Captura de decisión técnica post-tarea
-    console.print()
-    if ask_fn:
-        decision = ask_fn("¿Hubo alguna decisión técnica importante? (Enter para omitir)")
-    else:
-        decision = questionary.text(
-            "  ¿Hubo alguna decisión técnica importante? (Enter para omitir)",
-            style=_ESTILO,
-        ).ask()
-
-    if decision and decision.strip():
-        decisions_path = Path.home() / ".mycontext" / "projects" / str(project.id) / "decisions.md"
-        date = datetime.now().strftime("%Y-%m-%d")
-        entry = f"## {date}\n\n{decision.strip()}\n\n---\n\n"
-        if decisions_path.exists():
-            decisions_path.write_text(entry + decisions_path.read_text(encoding="utf-8"), encoding="utf-8")
-        else:
-            decisions_path.write_text(f"# Decisiones técnicas del proyecto\n\n{entry}", encoding="utf-8")
-        magna_ok(console, f"Decisión guardada en {decisions_path}")
-
     # Generar resumen del caso (Jira + memoria) en una sola llamada
     original_task = _read_session_task()
     full_diff = _get_diff(path, list(existing_files))
@@ -395,7 +375,7 @@ def _sync_impl(ask_fn=None, confirm_fn=None):
             else:
                 description = ticket_id
 
-            save_round(
+            ticket_data = save_round(
                 ticket_id=ticket_id,
                 description=description,
                 archivos_tocados=list(existing_files),
@@ -403,6 +383,9 @@ def _sync_impl(ask_fn=None, confirm_fn=None):
                 motivo_reapertura=reason_prefill,
                 memoria=case_memory,
             )
+
+            from aicli.services.embeddings import upsert_tickets
+            upsert_tickets(project.id, {ticket_id: ticket_data})
 
             # Persistir lecciones por módulo tocado
             if case_memory:

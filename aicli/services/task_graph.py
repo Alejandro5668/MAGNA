@@ -14,8 +14,6 @@ módulo, detrás de imports diferidos — igual que `task.py:40` importa
 """
 import contextvars
 import logging
-import re
-import unicodedata
 from pathlib import Path, PurePosixPath
 from typing import TypedDict
 
@@ -270,61 +268,15 @@ def _get_detective_agent():
 
 # ── Historiador de Jira ──────────────────────────────────────────────────────
 
-_STOPWORDS_ES = {
-    "para", "esto", "esta", "estos", "estas", "pero", "como", "cuando",
-    "donde", "porque", "sobre", "entre", "hacia", "desde", "hasta",
-    "todo", "toda", "todos", "todas", "este", "ese", "esa", "esos", "esas",
-    "muy", "mas", "también", "tambien", "solo", "aunque", "sido", "hace",
-    "tiene", "hacer", "puede", "debe", "estan", "están",
-}
-
-
-def _normalize_tokens(text: str | None) -> set[str]:
-    if not text:
-        return set()
-    normalized = unicodedata.normalize("NFKD", text).encode("ascii", "ignore").decode("ascii").lower()
-    tokens = re.split(r"[^a-z0-9]+", normalized)
-    return {t for t in tokens if len(t) >= 4 and t not in _STOPWORDS_ES}
-
-
-def _ticket_corpus_tokens(data: dict) -> set[str]:
-    tokens = set(_normalize_tokens(data.get("descripcion")))
-    for ronda in data.get("rondas") or []:
-        tokens |= _normalize_tokens(ronda.get("motivo_reapertura"))
-        memoria = ronda.get("memoria")
-        if isinstance(memoria, dict):
-            tokens |= _normalize_tokens(" ".join(str(v) for v in memoria.values()))
-        elif isinstance(memoria, str):
-            tokens |= _normalize_tokens(memoria)
-    return tokens
-
-
-def _buscar_precedentes(task_desc: str, tickets: dict, top_k: int = 3) -> list[dict]:
-    if not tickets:
-        return []
-    query_tokens = _normalize_tokens(task_desc)
-    if not query_tokens:
-        return []
-    scored = []
-    for ticket_id, data in tickets.items():
-        corpus_tokens = _ticket_corpus_tokens(data)
-        score = len(query_tokens & corpus_tokens)
-        if score > 0:
-            scored.append((score, ticket_id, data.get("descripcion", "")))
-    scored.sort(key=lambda x: x[0], reverse=True)
-    return [
-        {"ticket_id": tid, "descripcion": desc, "score": score}
-        for score, tid, desc in scored[:top_k]
-    ]
-
 
 def _historiador(state: TaskGraphState, call_claude=None) -> dict:
     call_claude = call_claude or _call_claude
     try:
+        from aicli.services.embeddings import query_tickets
         from aicli.services.tickets import load_tickets
 
         tickets = load_tickets()
-        precedentes = _buscar_precedentes(state.get("task_desc", ""), tickets)
+        precedentes = query_tickets(state.get("project_id"), tickets, state.get("task_desc", ""))
         if not precedentes:
             return {"precedent": "Sin precedentes en el historial de tickets."}
 

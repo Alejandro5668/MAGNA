@@ -1,5 +1,7 @@
 """
 Prefiltro semántico de módulos vía Chroma (vector store local, embebido).
+También indexa tickets de Jira para que el Historiador busque precedentes
+por similitud semántica en vez de intersección de tokens.
 
 Un `Module` se embebe como `f"{name}: {description}"` (sin leer archivos) y
 se indexa en una colección Chroma por proyecto (`project_{project_id}`).
@@ -24,7 +26,7 @@ def _default_ef():
     return DefaultEmbeddingFunction()
 
 
-def get_collection(project_id: int):
+def _collection(name: str):
     global _client
     if _client is None:
         import chromadb
@@ -34,9 +36,11 @@ def get_collection(project_id: int):
             path=str(CHROMA_PATH),
             settings=Settings(anonymized_telemetry=False),
         )
-    return _client.get_or_create_collection(
-        name=f"project_{project_id}", embedding_function=_default_ef()
-    )
+    return _client.get_or_create_collection(name=name, embedding_function=_default_ef())
+
+
+def get_collection(project_id: int):
+    return _collection(f"project_{project_id}")
 
 
 def _text(name: str, description: str) -> str:
@@ -90,3 +94,67 @@ def query_modules(
     except Exception as e:
         logging.warning("Prefiltro semántico deshabilitado: %s", e)
         return modules
+
+
+def get_tickets_collection(project_id: int):
+    return _collection(f"tickets_{project_id}")
+
+
+def _ticket_text(ticket_id: str, data: dict) -> str:
+    parts = [data.get("descripcion", ticket_id)]
+    for ronda in data.get("rondas") or []:
+        if ronda.get("motivo_reapertura"):
+            parts.append(ronda["motivo_reapertura"])
+        memoria = ronda.get("memoria")
+        if isinstance(memoria, dict):
+            parts.append(" ".join(str(v) for v in memoria.values()))
+        elif isinstance(memoria, str):
+            parts.append(memoria)
+    return " ".join(p for p in parts if p)
+
+
+def upsert_tickets(project_id: int, tickets: dict) -> None:
+    """{ticket_id: data}. Nunca lanza — la indexación de tickets es opcional."""
+    if not tickets:
+        return
+    try:
+        get_tickets_collection(project_id).upsert(
+            ids=list(tickets.keys()),
+            documents=[_ticket_text(tid, d) for tid, d in tickets.items()],
+        )
+    except Exception as e:
+        logging.warning("Chroma upsert de tickets falló (project %s): %s", project_id, e)
+
+
+def _tickets_reconcile(collection, tickets: dict) -> None:
+    """Backfill perezoso + self-heal, mismo patrón que `_reconcile` para módulos. Lanza — el caller degrada."""
+    got = collection.get(include=["documents"])
+    stored = dict(zip(got["ids"], got["documents"] or []))
+    to_upsert = {
+        tid: data for tid, data in tickets.items()
+        if tid not in stored or stored[tid] != _ticket_text(tid, data)
+    }
+    if to_upsert:
+        logging.info("Chroma backfill: %d ticket(s)", len(to_upsert))
+        collection.upsert(
+            ids=list(to_upsert.keys()),
+            documents=[_ticket_text(tid, d) for tid, d in to_upsert.items()],
+        )
+
+
+def query_tickets(project_id: int, tickets: dict, task_desc: str, top_k: int = 3) -> list[dict]:
+    """Precedentes por similitud semántica. Nunca lanza — degrada a lista vacía (igual que el
+    prefiltro de módulos: es una optimización, nunca un requisito)."""
+    if not tickets:
+        return []
+    try:
+        collection = get_tickets_collection(project_id)
+        _tickets_reconcile(collection, tickets)
+        res = collection.query(query_texts=[task_desc], n_results=min(top_k, len(tickets)), include=[])
+        return [
+            {"ticket_id": tid, "descripcion": tickets[tid].get("descripcion", "")}
+            for tid in res["ids"][0] if tid in tickets
+        ]
+    except Exception as e:
+        logging.warning("Precedentes semánticos deshabilitados: %s", e)
+        return []

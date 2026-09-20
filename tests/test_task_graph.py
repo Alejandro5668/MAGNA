@@ -320,40 +320,16 @@ class DetectiveModelConstructionTestCase(ResetGraphMixin):
 # ── Phase 3: Historiador, Vigía, Sintetizador ────────────────────────────────
 
 
-class BuscarPrecedentesTestCase(unittest.TestCase):
-
-    def test_accent_and_stopword_normalization_hits(self):
-        tickets = {
-            "TCK-1": {"descripcion": "Falló la sincronización de módulos", "rondas": []},
-        }
-        result = task_graph._buscar_precedentes("problema con sincronizacion de modulos", tickets)
-        self.assertEqual(len(result), 1)
-        self.assertEqual(result[0]["ticket_id"], "TCK-1")
-
-    def test_motivo_reapertura_counts_toward_score(self):
-        tickets = {
-            "TCK-1": {"descripcion": "algo genérico", "rondas": [{"motivo_reapertura": "volvio a fallar el login"}]},
-        }
-        result = task_graph._buscar_precedentes("arreglar el login que falla", tickets)
-        self.assertEqual(result[0]["ticket_id"], "TCK-1")
-
-    def test_empty_corpus_returns_empty_list(self):
-        self.assertEqual(task_graph._buscar_precedentes("algo", {}), [])
-
-    def test_zero_overlap_returns_empty_list(self):
-        tickets = {"TCK-1": {"descripcion": "cosa totalmente distinta sobre facturacion", "rondas": []}}
-        result = task_graph._buscar_precedentes("arreglar boton login pantalla", tickets)
-        self.assertEqual(result, [])
-
-
 class HistoriadorTestCase(unittest.TestCase):
 
+    @patch("aicli.services.embeddings.query_tickets")
     @patch("aicli.services.task_graph._call_claude")
     @patch("aicli.services.tickets.load_tickets")
-    def test_calls_claude_when_precedent_found(self, mock_load, mock_call):
+    def test_calls_claude_when_precedent_found(self, mock_load, mock_call, mock_query):
         mock_load.return_value = {
             "TCK-1": {"descripcion": "sincronizacion de modulos rota", "rondas": []},
         }
+        mock_query.return_value = [{"ticket_id": "TCK-1", "descripcion": "sincronizacion de modulos rota"}]
         mock_call.return_value = ("Precedente: TCK-1", 100)
 
         result = task_graph._historiador({"task_desc": "arreglar sincronizacion de modulos"})
@@ -361,19 +337,22 @@ class HistoriadorTestCase(unittest.TestCase):
         mock_call.assert_called_once()
         self.assertEqual(result["precedent"], "Precedente: TCK-1")
 
+    @patch("aicli.services.embeddings.query_tickets")
     @patch("aicli.services.task_graph._call_claude")
     @patch("aicli.services.tickets.load_tickets")
-    def test_empty_corpus_skips_llm_call(self, mock_load, mock_call):
+    def test_empty_corpus_skips_llm_call(self, mock_load, mock_call, mock_query):
         mock_load.return_value = {}
+        mock_query.return_value = []
 
         result = task_graph._historiador({"task_desc": "algo"})
 
         mock_call.assert_not_called()
         self.assertEqual(result["precedent"], "Sin precedentes en el historial de tickets.")
 
+    @patch("aicli.services.embeddings.query_tickets")
     @patch("aicli.services.task_graph._call_claude")
     @patch("aicli.services.tickets.load_tickets")
-    def test_load_tickets_exception_degrades_gracefully(self, mock_load, mock_call):
+    def test_load_tickets_exception_degrades_gracefully(self, mock_load, mock_call, mock_query):
         mock_load.side_effect = RuntimeError("disco lleno")
 
         try:
@@ -388,7 +367,9 @@ class HistoriadorTestCase(unittest.TestCase):
         stub = MagicMock(return_value=("stub brief", 0))
         with patch("aicli.services.tickets.load_tickets", return_value={
             "TCK-1": {"descripcion": "sincronizacion de modulos rota", "rondas": []},
-        }):
+        }), patch("aicli.services.embeddings.query_tickets", return_value=[
+            {"ticket_id": "TCK-1", "descripcion": "sincronizacion de modulos rota"},
+        ]):
             result = task_graph._historiador({"task_desc": "arreglar sincronizacion de modulos"}, call_claude=stub)
         stub.assert_called_once()
         self.assertEqual(result["precedent"], "stub brief")
