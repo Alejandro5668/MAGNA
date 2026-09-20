@@ -361,17 +361,17 @@ class TicketPanel(Widget):
         self._rows = build_board_rows(tickets, siblings, failed)
         self._focus = 0
         self._sub = self._chip_memory.get(self._row_key(0), 0) if self._rows else 0
-        self._render()
+        self._repaint()
 
     # ── Render ───────────────────────────────────────────────────────────────
 
     def watch__focus(self, value: int) -> None:
-        self._render()
+        self._repaint()
 
     def watch__sub(self, value: int) -> None:
-        self._render()
+        self._repaint()
 
-    def _render(self) -> None:
+    def _repaint(self) -> None:
         try:
             rows_widget = self.query_one("#tp-rows", Static)
         except Exception:
@@ -475,7 +475,7 @@ class TicketPanel(Widget):
         self._rows = []
         self._focus = 0
         self._sub = 0
-        self._render()
+        self._repaint()
         self._fetch()
 
     # ── Keyboard navigation ─────────────────────────────────────────────────
