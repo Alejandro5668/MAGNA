@@ -431,7 +431,11 @@ def _dispatch_tui(command: str, inputs: dict, tui_console) -> None:
             )
 
     elif command == "resume":
-        _run_resume_tui(tui_console)
+        ticket_id = inputs.get("ticket_id")
+        if ticket_id:
+            _run_resume_for_ticket(tui_console, ticket_id)
+        else:
+            _run_resume_tui(tui_console)
 
     elif command == "claude":
         from pathlib import Path as _Path
@@ -463,17 +467,11 @@ def _dispatch_tui(command: str, inputs: dict, tui_console) -> None:
 
 
 def _run_resume_tui(tui_console) -> None:
-    """Flujo resume usando TuiConsole para output e InputModal para inputs."""
-    from pathlib import Path as _Path
-    from rich.panel import Panel as RichPanel
-    from rich.text import Text as RichText
-    from aicli.services.tickets import (
-        load_tickets, format_history, save_active_ticket,
-        get_ticket_branch, save_ticket_branch,
-        other_sessions_with_ticket, save_comment_watermark,
-    )
-    from aicli.services import git_utils
-    import aicli.commands.task as task_mod
+    """Flujo resume usando TuiConsole para output e InputModal para inputs.
+
+    Pide el ticket_id (número de la lista o texto libre) y delega el resto
+    del flujo en `_run_resume_for_ticket`."""
+    from aicli.services.tickets import load_tickets
 
     tickets = load_tickets()
     if tickets:
@@ -493,6 +491,30 @@ def _run_resume_tui(tui_console) -> None:
         if not raw:
             return
         ticket_id = raw.upper()
+
+    _run_resume_for_ticket(tui_console, ticket_id)
+
+
+def _run_resume_for_ticket(tui_console, ticket_id: str) -> None:
+    """Flujo resume completo (Jira, hermanos, branch, motivo de reapertura,
+    archivo y lanzamiento de Claude con historial) para un ticket_id ya
+    conocido. Usado por `_run_resume_tui` (comando `resume`, tecla 5, que
+    pide el ticket_id por InputModal antes de llamar acá) y por Enter sobre
+    una fila reabierta del panel de tickets (ticket_id ya conocido, sin
+    volver a pedirlo)."""
+    from pathlib import Path as _Path
+    from rich.panel import Panel as RichPanel
+    from rich.text import Text as RichText
+    from aicli.services.tickets import (
+        load_tickets, format_history, save_active_ticket,
+        get_ticket_branch, save_ticket_branch,
+        other_sessions_with_ticket, save_comment_watermark,
+    )
+    from aicli.services import git_utils
+    import aicli.commands.task as task_mod
+
+    ticket_id = ticket_id.upper().strip()
+    tickets = load_tickets()
 
     other_pids = other_sessions_with_ticket(ticket_id)
     if other_pids:
@@ -1598,7 +1620,53 @@ class MainScreen(Screen):
             tui_handler.clear_screen()
 
     def on_ticket_panel_ticket_selected(self, event: TicketPanel.TicketSelected) -> None:
-        self._worker_task_from_ticket(event.ticket_id)
+        if event.reopened:
+            self._worker_resume_from_ticket(event.ticket_id)
+        else:
+            self._worker_task_from_ticket(event.ticket_id)
+
+    @work
+    async def _worker_resume_from_ticket(self, ticket_id: str) -> None:
+        """Flujo resume disparado con Enter sobre una fila reabierta del
+        panel: ticket_id ya conocido, mismo camino que el comando `resume`
+        (tecla 5) pero sin pedirlo por InputModal."""
+        import asyncio
+        import concurrent.futures
+        import contextvars
+        from aicli.tui.output_screen import CommandOutputScreen, TuiConsole
+
+        tid = ticket_id.upper().strip()
+
+        await self.app.push_screen_wait(CommandScreen("resume", _cmd_desc("resume")))
+        out_screen = CommandOutputScreen("resume", _cmd_desc("resume"))
+        out_screen._loop = asyncio.get_running_loop()
+        out_screen._ctx  = contextvars.copy_context()
+        self.app.push_screen(out_screen)
+        await asyncio.sleep(0.05)
+        tui_console = TuiConsole(out_screen)
+
+        from aicli.tui.log_handler import tui_handler
+        tui_handler.set_screen(out_screen)
+
+        loop = asyncio.get_running_loop()
+        _cmd_ok = True
+        try:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                await loop.run_in_executor(
+                    pool, _dispatch_tui, "resume", {"ticket_id": tid}, tui_console
+                )
+        except BaseException as e:
+            _cmd_ok = False
+            tb = traceback.format_exc()
+            logging.error("resume (from ticket) failed: %s", e, exc_info=True)
+            out_screen.write_line(_error_panel("resume", e, tb))
+        finally:
+            tui_handler.clear_screen()
+
+        if _cmd_ok:
+            await self._offer_sync(out_screen, tui_console, loop)
+
+        out_screen.mark_done()
 
     @work
     async def _worker_task_from_ticket(self, ticket_id: str) -> None:

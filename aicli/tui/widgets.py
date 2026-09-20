@@ -195,6 +195,15 @@ def target_ticket_id(rows: list[dict], index: int, sub: int) -> str | None:
     return chips[sub].get("id")
 
 
+def is_reopened_row(rows: list[dict], index: int) -> bool:
+    """True si la fila enfocada pertenece al bucket `reabiertos`
+    (`_kind == "reopened"`) — Enter sobre esta fila debe ir al flujo de
+    resume en vez de al de tarea nueva."""
+    if not rows or not (0 <= index < len(rows)):
+        return False
+    return rows[index].get("_kind") == "reopened"
+
+
 class TicketPanel(Widget):
     """Panel derecho — historias Jira asignadas al usuario, tablero activo
     con sus sub-tareas hermanas como chips. Focusable: dos índices reactivos
@@ -205,8 +214,9 @@ class TicketPanel(Widget):
     can_focus = True
 
     class TicketSelected(Message):
-        def __init__(self, ticket_id: str) -> None:
+        def __init__(self, ticket_id: str, reopened: bool = False) -> None:
             self.ticket_id = ticket_id
+            self.reopened = reopened
             super().__init__()
 
     DEFAULT_CSS = f"""
@@ -528,5 +538,6 @@ class TicketPanel(Widget):
         elif key == "enter":
             tid = target_ticket_id(self._rows, self._focus, self._sub)
             if tid:
-                self.post_message(self.TicketSelected(tid))
+                reopened = is_reopened_row(self._rows, self._focus)
+                self.post_message(self.TicketSelected(tid, reopened=reopened))
             event.stop()

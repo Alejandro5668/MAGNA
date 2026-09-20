@@ -15,6 +15,8 @@ from aicli.tui.widgets import (
     move_focus,
     move_sub,
     target_ticket_id,
+    is_reopened_row,
+    TicketPanel,
 )
 
 
@@ -194,6 +196,47 @@ class TargetTicketIdTestCase(unittest.TestCase):
     def test_out_of_range_index_returns_none(self):
         self.assertIsNone(target_ticket_id(_ROWS, 99, 0))
         self.assertIsNone(target_ticket_id([], 0, 0))
+
+
+class IsReopenedRowTestCase(unittest.TestCase):
+
+    def test_reopened_row_is_true(self):
+        self.assertTrue(is_reopened_row(_ROWS, 0))
+
+    def test_card_row_is_false(self):
+        self.assertFalse(is_reopened_row(_ROWS, 1))
+
+    def test_loose_row_is_false(self):
+        self.assertFalse(is_reopened_row(_ROWS, 2))
+
+    def test_out_of_range_index_returns_false(self):
+        self.assertFalse(is_reopened_row(_ROWS, 99))
+        self.assertFalse(is_reopened_row([], 0))
+
+
+class TicketSelectedMessageTestCase(unittest.TestCase):
+    """TicketPanel.TicketSelected debe llevar `reopened` seteado según el
+    _kind de la fila enfocada al presionar Enter — sin necesidad de montar
+    la app Textual."""
+
+    def test_defaults_to_not_reopened(self):
+        msg = TicketPanel.TicketSelected("SOL-1")
+        self.assertEqual(msg.ticket_id, "SOL-1")
+        self.assertFalse(msg.reopened)
+
+    def test_reopened_row_produces_reopened_message(self):
+        tid = target_ticket_id(_ROWS, 0, 0)
+        reopened = is_reopened_row(_ROWS, 0)
+        msg = TicketPanel.TicketSelected(tid, reopened=reopened)
+        self.assertEqual(msg.ticket_id, "R-1")
+        self.assertTrue(msg.reopened)
+
+    def test_card_row_produces_non_reopened_message(self):
+        tid = target_ticket_id(_ROWS, 1, 1)
+        reopened = is_reopened_row(_ROWS, 1)
+        msg = TicketPanel.TicketSelected(tid, reopened=reopened)
+        self.assertEqual(msg.ticket_id, "C-2")
+        self.assertFalse(msg.reopened)
 
 
 if __name__ == "__main__":
