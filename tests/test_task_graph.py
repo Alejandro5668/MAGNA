@@ -204,6 +204,14 @@ class DetectiveTerminationTestCase(ResetGraphMixin):
 
         self.assertEqual(result["relevant"], modules)
 
+    def test_detective_recursion_limit_scales_with_candidate_count(self):
+        few = [_make_module(i, f"mod_{i}") for i in range(3)]
+        many = [_make_module(i, f"mod_{i}") for i in range(30)]
+
+        self.assertEqual(task_graph._detective_recursion_limit([]), 12)
+        self.assertEqual(task_graph._detective_recursion_limit(few), 12)
+        self.assertEqual(task_graph._detective_recursion_limit(many), 24)
+
 
 class DetectiveEmpiricalChecksTestCase(ResetGraphMixin):
     """Tasks 2.6-2.8 — verificación empírica de los 3 mecanismos marcados

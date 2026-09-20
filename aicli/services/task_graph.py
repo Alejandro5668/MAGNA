@@ -204,6 +204,13 @@ def _log_detective_usage(messages: list) -> None:
     )
 
 
+def _detective_recursion_limit(candidates: list[Module]) -> int:
+    """Presupuesto de pasos del Detective escalado a la cantidad de
+    candidatos — con tools de a un nombre/patrón por llamada, más
+    candidatos necesitan más pasos para explorarlos antes de decidir."""
+    return min(24, max(12, len(candidates) + 6))
+
+
 def _detective(state: TaskGraphState, agent=None) -> dict:
     from langchain_core.messages import SystemMessage, HumanMessage
 
@@ -232,7 +239,7 @@ Si no podés filtrar con seguridad, devolvé todos los nombres."""
         sys_msg = SystemMessage(content=_system_blocks(candidates, state.get("project_context")))
         result = agent.invoke(
             {"messages": [sys_msg, HumanMessage(content=user_prompt)]},
-            config={"recursion_limit": 12},
+            config={"recursion_limit": _detective_recursion_limit(candidates)},
         )
 
         messages = result.get("messages", [])
