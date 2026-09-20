@@ -11,6 +11,9 @@ def build_context(modules: list[Module], project_path: Path | None = None) -> tu
     Ensambla session_context.md a partir de módulos relevantes.
     Retorna (context_str, warnings) — warnings lista problemas de frescura detectados.
     """
+    if project_path is not None and not isinstance(project_path, Path):
+        project_path = Path(project_path)
+
     warnings: list[str] = []
     fragments: list[str] = []
 
