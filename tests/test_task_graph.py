@@ -82,10 +82,12 @@ class ResetGraphMixin(unittest.TestCase):
     def setUp(self):
         task_graph._graph = None
         task_graph._detective_agent = None
+        task_graph._escalation_agent = None
 
     def tearDown(self):
         task_graph._graph = None
         task_graph._detective_agent = None
+        task_graph._escalation_agent = None
 
 
 # ── Phase 1: Foundation ──────────────────────────────────────────────────────
@@ -221,8 +223,16 @@ class DetectiveTerminationTestCase(ResetGraphMixin):
         modules = [_make_module(1, "mod_a"), _make_module(2, "mod_b")]
         model = _ScriptedChatModel(responses=[_terminal_msg(["mod_b", "mod_inexistente"])])
         agent = task_graph._build_detective_agent(model)
+        # 2 names returned == 2 candidates, which the new ambiguity check
+        # treats as "couldn't discriminate" and escalates once to Sonnet —
+        # wire a fake escalation agent that resolves unambiguously so this
+        # test still exercises straight-through filtering behavior.
+        escalation_model = _ScriptedChatModel(responses=[_terminal_msg(["mod_b"])])
+        escalation_agent = task_graph._build_detective_agent(escalation_model)
 
-        result = task_graph._detective({"task_desc": "algo", "candidates": modules}, agent=agent)
+        result = task_graph._detective(
+            {"task_desc": "algo", "candidates": modules}, agent=agent, escalation_agent=escalation_agent
+        )
 
         self.assertEqual([m.name for m in result["relevant"]], ["mod_b"])
 
@@ -246,6 +256,85 @@ class DetectiveTerminationTestCase(ResetGraphMixin):
         self.assertEqual(task_graph._detective_recursion_limit([]), 12)
         self.assertEqual(task_graph._detective_recursion_limit(few), 12)
         self.assertEqual(task_graph._detective_recursion_limit(many), 24)
+
+
+class DetectiveEscalationTestCase(ResetGraphMixin):
+    """Cambio 3 — ambigüedad (sin nombres, o Haiku seleccionando literalmente
+    todos los candidatos) dispara una escalación única a Sonnet antes de
+    degradar a la lista completa de candidatos."""
+
+    def test_all_candidates_selected_escalates_to_sonnet_and_uses_its_result(self):
+        modules = [_make_module(1, "mod_a"), _make_module(2, "mod_b"), _make_module(3, "mod_c")]
+        primary_model = _ScriptedChatModel(responses=[_terminal_msg(["mod_a", "mod_b", "mod_c"])])
+        primary_agent = task_graph._build_detective_agent(primary_model)
+        escalation_model = _ScriptedChatModel(responses=[_terminal_msg(["mod_b"])])
+        escalation_agent = task_graph._build_detective_agent(escalation_model)
+
+        result = task_graph._detective(
+            {"task_desc": "algo", "candidates": modules},
+            agent=primary_agent,
+            escalation_agent=escalation_agent,
+        )
+
+        # Escalation agent was actually invoked once...
+        self.assertEqual(len(escalation_model.calls), 1)
+        # ...and its (unambiguous) selection is what gets used, not the
+        # primary's all-candidates answer.
+        self.assertEqual([m.name for m in result["relevant"]], ["mod_b"])
+
+    def test_both_primary_and_escalation_ambiguous_falls_back_to_all_candidates(self):
+        modules = [_make_module(1, "mod_a"), _make_module(2, "mod_b")]
+        primary_model = _ScriptedChatModel(responses=[_terminal_msg(["mod_a", "mod_b"])])
+        primary_agent = task_graph._build_detective_agent(primary_model)
+        # Escalation is also ambiguous: selects every candidate again.
+        escalation_model = _ScriptedChatModel(responses=[_terminal_msg(["mod_a", "mod_b"])])
+        escalation_agent = task_graph._build_detective_agent(escalation_model)
+
+        result = task_graph._detective(
+            {"task_desc": "algo", "candidates": modules},
+            agent=primary_agent,
+            escalation_agent=escalation_agent,
+        )
+
+        self.assertEqual(len(escalation_model.calls), 1)
+        self.assertEqual(result["relevant"], modules)
+
+    def test_no_names_extracted_escalates_and_uses_escalation_result(self):
+        modules = [_make_module(1, "mod_a")]
+        # Empty selection is ambiguous even with a single candidate (the
+        # `len(candidates) <= 1` skip only applies to the all-selected
+        # condition, not to the empty-names condition).
+        primary_model = _ScriptedChatModel(responses=[_terminal_msg([])])
+        primary_agent = task_graph._build_detective_agent(primary_model)
+        escalation_model = _ScriptedChatModel(responses=[_terminal_msg(["mod_a"])])
+        escalation_agent = task_graph._build_detective_agent(escalation_model)
+
+        result = task_graph._detective(
+            {"task_desc": "algo", "candidates": modules},
+            agent=primary_agent,
+            escalation_agent=escalation_agent,
+        )
+
+        self.assertEqual(len(escalation_model.calls), 1)
+        self.assertEqual([m.name for m in result["relevant"]], ["mod_a"])
+
+    def test_escalation_agent_failure_falls_back_to_all_candidates(self):
+        modules = [_make_module(1, "mod_a"), _make_module(2, "mod_b")]
+        primary_model = _ScriptedChatModel(responses=[_terminal_msg(["mod_a", "mod_b"])])
+        primary_agent = task_graph._build_detective_agent(primary_model)
+        broken_escalation_agent = MagicMock()
+        broken_escalation_agent.invoke.side_effect = RuntimeError("sonnet unavailable")
+
+        try:
+            result = task_graph._detective(
+                {"task_desc": "algo", "candidates": modules},
+                agent=primary_agent,
+                escalation_agent=broken_escalation_agent,
+            )
+        except Exception:
+            self.fail("_detective no debe propagar excepciones ante fallo de la escalación")
+
+        self.assertEqual(result["relevant"], modules)
 
 
 class DetectiveEmpiricalChecksTestCase(ResetGraphMixin):
@@ -349,7 +438,7 @@ class DetectiveModelConstructionTestCase(ResetGraphMixin):
 
         _, kwargs = mock_ctor.call_args
         self.assertNotIn("thinking", kwargs)
-        self.assertEqual(kwargs.get("model"), "claude-sonnet-5")
+        self.assertEqual(kwargs.get("model"), "claude-haiku-4-5")
 
 
 class DetectiveIncrementalCachingTestCase(ResetGraphMixin):

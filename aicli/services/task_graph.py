@@ -65,7 +65,10 @@ def _system_blocks(candidates: list[Module], project_context: str | None) -> lis
     `_detect_relevant_modules` (task.py) — solo cambia el transporte."""
     listing_parts = []
     for m in candidates:
-        listing_parts.append(f"- {m.name}: {m.description} | archivo: {m.file_path}")
+        if m.category:
+            listing_parts.append(f"- {m.name} [{m.category}]: {m.description} | archivo: {m.file_path}")
+        else:
+            listing_parts.append(f"- {m.name}: {m.description} | archivo: {m.file_path}")
         if m.content_path:
             md_path = Path(m.content_path)
             if md_path.exists():
@@ -78,10 +81,26 @@ def _system_blocks(candidates: list[Module], project_context: str | None) -> lis
         if project_context else ""
     )
 
+    # Few-shot corto — Haiku sigue criterios explícitos mejor que juicios
+    # abiertos; va dentro de este bloque para viajar cacheado (una vez por
+    # corrida), nunca en el user_prompt que cambia por turno.
+    few_shot = (
+        "\nEjemplo de selección correcta:\n"
+        "Tarea: \"Agregar un spinner de carga mientras corre ctx task\"\n"
+        "Candidatos:\n"
+        "- tui/screens [presentacion]: pantallas Textual de la TUI | archivo: aicli/tui/screens.py\n"
+        "- task_graph [backend]: grafo multi-agente del comando ctx task | archivo: aicli/services/task_graph.py\n"
+        "- embeddings [backend]: prefiltro semántico de módulos vía Chroma | archivo: aicli/services/embeddings.py\n"
+        "Selección correcta: tui/screens (ahí vive el feedback visual durante la corrida).\n"
+        "task_graph y embeddings quedan afuera: la tarea es puramente de UI, no cambia\n"
+        "el flujo del grafo ni el prefiltro semántico.\n"
+    )
+
     text = (
         "Tenés que identificar qué módulos de un proyecto de software son relevantes\n"
         "para una tarea específica de desarrollo.\n"
-        f"{project_ctx_block}\n"
+        f"{project_ctx_block}"
+        f"{few_shot}\n"
         f"Módulos disponibles en el proyecto:\n{listing}"
     )
     return [{"type": "text", "text": text, "cache_control": {"type": "ephemeral"}}]
@@ -167,8 +186,11 @@ def _build_detective_agent(model=None):
         # Sin `thinking`: `ToolStrategy` fuerza tool_choice="any", y
         # `langchain_anthropic` descarta ese forzado en silencio (solo emite
         # un warning) cuando `thinking` está activo — rompía la garantía de
-        # terminación del loop del Detective.
-        model = ChatAnthropic(model="claude-sonnet-5", max_tokens=4000)
+        # terminación del loop del Detective. Haiku no activa `thinking` por
+        # default, así que esto sigue siendo un no-op de riesgo, pero el
+        # comentario queda porque la mecánica de ToolStrategy/tool_choice
+        # no cambió.
+        model = ChatAnthropic(model="claude-haiku-4-5", max_tokens=4000)
 
     return create_agent(
         model=model,
@@ -200,7 +222,7 @@ def _scan_last_tool_call(messages: list, tool_name: str) -> list[str] | None:
     return None
 
 
-def _log_detective_usage(messages: list) -> None:
+def _log_detective_usage(messages: list, label: str = "detective") -> None:
     from langchain_core.messages import AIMessage
 
     last_ai = None
@@ -213,7 +235,8 @@ def _log_detective_usage(messages: list) -> None:
     usage = last_ai.usage_metadata
     details = usage.get("input_token_details") or {}
     logging.info(
-        "Claude OK [detective] — input: %d | cache_write: %d | cache_read: %d | output: %d tokens",
+        "Claude OK [%s] — input: %d | cache_write: %d | cache_read: %d | output: %d tokens",
+        label,
         usage.get("input_tokens", 0) or 0,
         details.get("cache_creation", 0) or 0,
         details.get("cache_read", 0) or 0,
@@ -229,20 +252,25 @@ def _detective_recursion_limit(candidates: list[Module]) -> int:
     return min(24, max(12, len(candidates) + 6))
 
 
-def _detective(state: TaskGraphState, agent=None) -> dict:
+def _run_detective_attempt(
+    agent,
+    candidates: list[Module],
+    task_desc: str,
+    file: str | None,
+    project_context: str | None,
+    recursion_limit: int,
+) -> tuple[list[str] | None, list]:
+    """Un intento completo del Detective: arma system+user prompt, invoca al
+    agente y extrae los nombres seleccionados. Compartido entre el intento
+    primario (Haiku) y la escalación a Sonnet — mismo prompt exacto, agente
+    distinto."""
     from langchain_core.messages import SystemMessage, HumanMessage
 
-    candidates = state.get("candidates") or []
-    token = _SCOPE.set({"candidates": candidates, "repo_root": state.get("repo_root")})
-    try:
-        agent = agent or _get_detective_agent()
-
-        file = state.get("file")
-        file_context = (
-            f"\nEl desarrollador indica que el problema ocurre específicamente en: {file}"
-            if file else ""
-        )
-        user_prompt = f"""Tarea del desarrollador: {state.get('task_desc', '')}{file_context}
+    file_context = (
+        f"\nEl desarrollador indica que el problema ocurre específicamente en: {file}"
+        if file else ""
+    )
+    user_prompt = f"""Tarea del desarrollador: {task_desc}{file_context}
 
 Analizá la tarea, entendé qué partes del sistema necesita tocar. Podés usar
 leer_doc_modulo para leer la documentación completa de uno o varios módulos
@@ -254,23 +282,65 @@ necesites. Cuando tengas suficiente información, llamá a la herramienta
 terminal seleccionar_modulos con los nombres exactos de los módulos
 relevantes.
 
-Seleccioná solo los módulos que realmente necesitarán ser leídos o modificados.
-Si no podés filtrar con seguridad, devolvé todos los nombres."""
+Incluí un módulo en tu selección si se cumple AL MENOS UNA de estas condiciones:
+- Su nombre, categoría o descripción coincide con el dominio de la tarea.
+- El archivo del módulo es mencionado directa o indirectamente en la tarea.
+- Es una dependencia compartida de otro módulo que ya decidiste incluir.
+No incluyas un módulo solo "por las dudas" — si no cumple ninguna condición, dejalo afuera."""
 
-        sys_msg = SystemMessage(content=_system_blocks(candidates, state.get("project_context")))
-        result = agent.invoke(
-            {"messages": [sys_msg, HumanMessage(content=user_prompt)]},
-            config={"recursion_limit": _detective_recursion_limit(candidates)},
-        )
+    sys_msg = SystemMessage(content=_system_blocks(candidates, project_context))
+    result = agent.invoke(
+        {"messages": [sys_msg, HumanMessage(content=user_prompt)]},
+        config={"recursion_limit": recursion_limit},
+    )
 
-        messages = result.get("messages", [])
-        _log_detective_usage(messages)
+    messages = result.get("messages", [])
+    sel = result.get("structured_response")
+    names = list(sel.modules) if sel else _scan_last_tool_call(messages, "seleccionar_modulos")
+    return names, messages
 
-        sel = result.get("structured_response")
-        names = list(sel.modules) if sel else _scan_last_tool_call(messages, "seleccionar_modulos")
 
-        if not names:
-            return {"relevant": candidates}
+def _detective_selection_is_ambiguous(names: list[str] | None, candidates: list[Module]) -> bool:
+    """"Ambiguo" = el Detective no extrajo ningún nombre, o (con más de un
+    candidato) seleccionó literalmente todos — señal de que Haiku no pudo
+    discriminar, no una respuesta válida de "todo es relevante". Con 0 o 1
+    candidato, seleccionar el único disponible es trivialmente correcto."""
+    if not names:
+        return True
+    if len(candidates) > 1 and len(names) == len(candidates):
+        return True
+    return False
+
+
+def _detective(state: TaskGraphState, agent=None, escalation_agent=None) -> dict:
+    candidates = state.get("candidates") or []
+    token = _SCOPE.set({"candidates": candidates, "repo_root": state.get("repo_root")})
+    try:
+        agent = agent or _get_detective_agent()
+
+        task_desc = state.get("task_desc", "")
+        file = state.get("file")
+        project_context = state.get("project_context")
+        recursion_limit = _detective_recursion_limit(candidates)
+
+        names, messages = _run_detective_attempt(agent, candidates, task_desc, file, project_context, recursion_limit)
+        _log_detective_usage(messages, label="detective")
+
+        if _detective_selection_is_ambiguous(names, candidates):
+            try:
+                esc_agent = escalation_agent or _get_escalation_agent()
+                esc_names, esc_messages = _run_detective_attempt(
+                    esc_agent, candidates, task_desc, file, project_context, recursion_limit
+                )
+                _log_detective_usage(esc_messages, label="detective_escalated")
+            except Exception as e:
+                logging.warning("Escalación del Detective a Sonnet falló, degradando a candidatos: %s", e)
+                return {"relevant": candidates}
+
+            if _detective_selection_is_ambiguous(esc_names, candidates):
+                return {"relevant": candidates}
+            names = esc_names
+
         return {"relevant": [m for m in candidates if m.name in names]}
     except Exception as e:
         logging.warning("Detective de Módulos falló, degradando a candidatos: %s", e)
@@ -287,6 +357,26 @@ def _get_detective_agent():
     if _detective_agent is None:
         _detective_agent = _build_detective_agent(None)
     return _detective_agent
+
+
+def _build_escalation_agent():
+    """Agente de escalación — mismo armado que `_build_detective_agent`,
+    pero con `claude-sonnet-5` como red de seguridad para el caso ambiguo
+    (raro) en el que Haiku no logra discriminar entre candidatos."""
+    from langchain_anthropic import ChatAnthropic
+
+    model = ChatAnthropic(model="claude-sonnet-5", max_tokens=4000)
+    return _build_detective_agent(model)
+
+
+_escalation_agent = None
+
+
+def _get_escalation_agent():
+    global _escalation_agent
+    if _escalation_agent is None:
+        _escalation_agent = _build_escalation_agent()
+    return _escalation_agent
 
 
 # ── Historiador de Jira ──────────────────────────────────────────────────────
@@ -485,9 +575,14 @@ def _build_graph(model=None, single_shot=None):
     from langgraph.graph import StateGraph, START, END
 
     detective_agent = _build_detective_agent(model)
+    # Cuando se inyecta un `model` explícito (tests, graph_selftest), la
+    # escalación reusa ese mismo modelo scripted — corrida 100% offline. En
+    # producción (`model=None`), la escalación es un agente Sonnet real,
+    # distinto del Haiku primario, construido una sola vez acá.
+    escalation_agent = _build_detective_agent(model) if model is not None else _build_escalation_agent()
 
     def _detective_node(state):
-        return _detective(state, agent=detective_agent)
+        return _detective(state, agent=detective_agent, escalation_agent=escalation_agent)
 
     def _historiador_node(state):
         return _historiador(state)
