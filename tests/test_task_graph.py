@@ -6,8 +6,9 @@ Ejecutar: .venv\\Scripts\\python.exe -m pytest tests/test_task_graph.py -v
 Mockea a nivel de BaseChatModel (_ScriptedChatModel), nunca anthropic.Anthropic
 directamente — create_agent/ChatAnthropic parsean objetos del SDK ellos
 mismos, así que mockear a nivel SDK forzaría reimplementar el parseo de
-LangChain. Historiador/Vigía/Sintetizador siguen usando el SDK plano
-(indexer._call_claude), mockeado vía @patch("aicli.services.task_graph._call_claude").
+LangChain. Solo el Sintetizador sigue usando el SDK plano
+(indexer._call_claude), mockeado vía @patch("aicli.services.task_graph._call_claude") —
+Historiador y Vigía arman su listado crudo sin LLM propio.
 """
 import sys
 import tempfile
@@ -74,7 +75,7 @@ def _terminal_msg(names: list[str], cache_read: int = 0, cache_creation: int = 0
 
 
 def _lookup_msg(tool_name: str = "leer_doc_modulo", args: dict | None = None, tool_id: str = "l1") -> AIMessage:
-    return AIMessage(content="", tool_calls=[{"name": tool_name, "args": args or {"name": "mod_a"}, "id": tool_id}])
+    return AIMessage(content="", tool_calls=[{"name": tool_name, "args": args or {"names": ["mod_a"]}, "id": tool_id}])
 
 
 class ResetGraphMixin(unittest.TestCase):
@@ -146,10 +147,29 @@ class DetectiveToolsTestCase(ResetGraphMixin):
             modules = [_make_module(1, "mod_a", content_path=str(doc_path))]
             token = task_graph._SCOPE.set({"candidates": modules, "repo_root": tmp})
             try:
-                result = task_graph._leer_doc_modulo_impl("mod_a")
+                result = task_graph._leer_doc_modulo_impl(["mod_a"])
             finally:
                 task_graph._SCOPE.reset(token)
-            self.assertEqual(len(result), 2000)
+            self.assertEqual(result.count("x"), 2000)
+
+    def test_leer_doc_modulo_batches_multiple_names_in_one_call(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            doc_a = Path(tmp) / "a.md"
+            doc_a.write_text("contenido a", encoding="utf-8")
+            doc_b = Path(tmp) / "b.md"
+            doc_b.write_text("contenido b", encoding="utf-8")
+            modules = [
+                _make_module(1, "mod_a", content_path=str(doc_a)),
+                _make_module(2, "mod_b", content_path=str(doc_b)),
+            ]
+            token = task_graph._SCOPE.set({"candidates": modules, "repo_root": tmp})
+            try:
+                result = task_graph._leer_doc_modulo_impl(["mod_a", "mod_b", "mod_inexistente"])
+            finally:
+                task_graph._SCOPE.reset(token)
+            self.assertIn("contenido a", result)
+            self.assertIn("contenido b", result)
+            self.assertIn("Módulo no encontrado o sin documentación.", result)
 
     def test_buscar_en_codigo_bounded_to_40_hits(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -157,7 +177,7 @@ class DetectiveToolsTestCase(ResetGraphMixin):
             f.write_text("\n".join(f"needle {i}" for i in range(100)), encoding="utf-8")
             token = task_graph._SCOPE.set({"candidates": [], "repo_root": tmp})
             try:
-                result = task_graph._buscar_en_codigo_impl("needle")
+                result = task_graph._buscar_en_codigo_impl(["needle"])
             finally:
                 task_graph._SCOPE.reset(token)
             self.assertEqual(len(result.splitlines()), 40)
@@ -172,12 +192,27 @@ class DetectiveToolsTestCase(ResetGraphMixin):
 
             token = task_graph._SCOPE.set({"candidates": [], "repo_root": tmp})
             try:
-                result = task_graph._buscar_en_codigo_impl("needle")
+                result = task_graph._buscar_en_codigo_impl(["needle"])
             finally:
                 task_graph._SCOPE.reset(token)
 
             self.assertNotIn("oversized.py", result)
             self.assertIn("small.py", result)
+
+    def test_buscar_en_codigo_accepts_multiple_patterns_sharing_the_40_hit_cap(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            f = Path(tmp) / "big.py"
+            f.write_text(
+                "\n".join(f"alfa {i}" for i in range(25)) + "\n" + "\n".join(f"beta {i}" for i in range(25)),
+                encoding="utf-8",
+            )
+            token = task_graph._SCOPE.set({"candidates": [], "repo_root": tmp})
+            try:
+                result = task_graph._buscar_en_codigo_impl(["alfa", "beta"])
+            finally:
+                task_graph._SCOPE.reset(token)
+            self.assertEqual(len(result.splitlines()), 40)
+            self.assertIn("[alfa]", result)
 
 
 class DetectiveTerminationTestCase(ResetGraphMixin):
@@ -317,6 +352,73 @@ class DetectiveModelConstructionTestCase(ResetGraphMixin):
         self.assertEqual(kwargs.get("model"), "claude-sonnet-5")
 
 
+class DetectiveIncrementalCachingTestCase(ResetGraphMixin):
+    """Only the leading `SystemMessage` carried `cache_control` before this
+    change — the growing tool_call/tool_result history within a single
+    Detective run was never marked, so turns 2..N of the ReAct loop resent
+    that prefix at full price. `AnthropicPromptCachingMiddleware` (official,
+    shipped by `langchain_anthropic`, not hand-rolled) tags the moving tail
+    of the conversation each turn instead."""
+
+    def test_build_detective_agent_wires_prompt_caching_middleware(self):
+        from langchain_anthropic.middleware import AnthropicPromptCachingMiddleware
+
+        scripted = _ScriptedChatModel(responses=[_terminal_msg(["mod_a"])])
+        with patch("langchain.agents.create_agent") as mock_create_agent:
+            task_graph._build_detective_agent(scripted)
+
+        _, kwargs = mock_create_agent.call_args
+        middlewares = kwargs.get("middleware") or []
+        self.assertTrue(any(isinstance(mw, AnthropicPromptCachingMiddleware) for mw in middlewares))
+
+    def test_prompt_caching_middleware_cache_control_reaches_real_request_payload(self):
+        """Never sends a real HTTP request (project convention, same as the
+        system-block payload test above). Manually forwards
+        `ModelRequest.model_settings` into `_get_request_payload` the way
+        `create_agent`'s compiled graph does internally, to honestly prove
+        the plumbing this change depends on: `wrap_model_call` injecting a
+        `cache_control` kwarg that a REAL `ChatAnthropic` instance carries
+        through to the request payload sent to the (real, installed)
+        `anthropic` SDK, which applies it to the last eligible content block
+        server-request-side — confirmed via SDK introspection
+        (`anthropic.resources.messages.Messages.create` accepts a native
+        `cache_control` kwarg) before writing this test."""
+        from langchain_anthropic import ChatAnthropic
+        from langchain_anthropic.middleware import AnthropicPromptCachingMiddleware
+        from langchain.agents.middleware.types import ModelRequest
+        from langchain_core.messages import HumanMessage, AIMessage, ToolMessage
+
+        real_model = ChatAnthropic(model="claude-sonnet-5", api_key="test-key-unused", max_tokens=4000)
+        mw = AnthropicPromptCachingMiddleware()
+
+        # Simulates turn 3 of a growing ReAct loop.
+        messages = [
+            HumanMessage(content="tarea"),
+            AIMessage(content="", tool_calls=[{"name": "leer_doc_modulo", "args": {"names": ["mod_a"]}, "id": "l1"}]),
+            ToolMessage(content="doc de mod_a", tool_call_id="l1"),
+        ]
+        request = ModelRequest(
+            model=real_model,
+            messages=messages,
+            system_message=SystemMessage(content=[{"type": "text", "text": "sys"}]),
+            tools=[],
+            model_settings={},
+        )
+
+        captured = {}
+
+        def handler(req):
+            captured["payload"] = req.model._get_request_payload(
+                ([req.system_message] if req.system_message else []) + req.messages,
+                **(req.model_settings or {}),
+            )
+            return None
+
+        mw.wrap_model_call(request, handler)
+
+        self.assertEqual(captured["payload"].get("cache_control"), {"type": "ephemeral", "ttl": "5m"})
+
+
 # ── Phase 3: Historiador, Vigía, Sintetizador ────────────────────────────────
 
 
@@ -325,17 +427,16 @@ class HistoriadorTestCase(unittest.TestCase):
     @patch("aicli.services.embeddings.query_tickets")
     @patch("aicli.services.task_graph._call_claude")
     @patch("aicli.services.tickets.load_tickets")
-    def test_calls_claude_when_precedent_found(self, mock_load, mock_call, mock_query):
+    def test_returns_raw_listing_without_llm_call_when_precedent_found(self, mock_load, mock_call, mock_query):
         mock_load.return_value = {
             "TCK-1": {"descripcion": "sincronizacion de modulos rota", "rondas": []},
         }
         mock_query.return_value = [{"ticket_id": "TCK-1", "descripcion": "sincronizacion de modulos rota"}]
-        mock_call.return_value = ("Precedente: TCK-1", 100)
 
         result = task_graph._historiador({"task_desc": "arreglar sincronizacion de modulos"})
 
-        mock_call.assert_called_once()
-        self.assertEqual(result["precedent"], "Precedente: TCK-1")
+        mock_call.assert_not_called()
+        self.assertEqual(result["precedent"], "- TCK-1: sincronizacion de modulos rota")
 
     @patch("aicli.services.embeddings.query_tickets")
     @patch("aicli.services.task_graph._call_claude")
@@ -362,17 +463,6 @@ class HistoriadorTestCase(unittest.TestCase):
 
         self.assertEqual(result["precedent"], "Sin precedentes en el historial de tickets.")
         mock_call.assert_not_called()
-
-    def test_call_claude_injection_via_single_shot_param(self):
-        stub = MagicMock(return_value=("stub brief", 0))
-        with patch("aicli.services.tickets.load_tickets", return_value={
-            "TCK-1": {"descripcion": "sincronizacion de modulos rota", "rondas": []},
-        }), patch("aicli.services.embeddings.query_tickets", return_value=[
-            {"ticket_id": "TCK-1", "descripcion": "sincronizacion de modulos rota"},
-        ]):
-            result = task_graph._historiador({"task_desc": "arreglar sincronizacion de modulos"}, call_claude=stub)
-        stub.assert_called_once()
-        self.assertEqual(result["precedent"], "stub brief")
 
 
 class DiscoverTestFilesAndCoverageTestCase(unittest.TestCase):
@@ -439,8 +529,7 @@ class DiscoverTestFilesAndCoverageTestCase(unittest.TestCase):
 class VigiaTestCase(unittest.TestCase):
 
     @patch("aicli.services.task_graph._call_claude")
-    def test_coverage_found_triggers_llm_call(self, mock_call):
-        mock_call.return_value = ("Cobertura: buena", 50)
+    def test_coverage_found_returns_raw_listing_without_llm_call(self, mock_call):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             (root / "tests").mkdir()
@@ -449,8 +538,8 @@ class VigiaTestCase(unittest.TestCase):
 
             result = task_graph._vigia({"candidates": modules, "repo_root": str(root)})
 
-        mock_call.assert_called_once()
-        self.assertEqual(result["coverage"], "Cobertura: buena")
+        mock_call.assert_not_called()
+        self.assertIn("task:", result["coverage"])
 
     @patch("aicli.services.task_graph._call_claude")
     def test_no_coverage_skips_llm_call_advisory_only(self, mock_call):

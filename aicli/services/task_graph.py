@@ -5,8 +5,11 @@ nodos especialistas en paralelo (Detective de Módulos, Historiador de Jira,
 Vigía de Tests) que se sintetizan en un único brief.
 
 Solo el Detective usa LangChain (`create_agent`, loop ReAct con
-`ChatAnthropic`). Historiador, Vigía y Sintetizador siguen en el SDK plano de
-Anthropic vía `indexer._call_claude`, igual que los cambios 1-3.
+`ChatAnthropic`). Historiador y Vigía arman su listado a partir de datos
+crudos (tickets / cobertura de tests) sin pasarlo por un LLM — ese listado
+crudo alimenta directamente al Sintetizador, que es el único nodo que sigue
+llamando al SDK plano de Anthropic vía `indexer._call_claude` para el brief
+final de 10 líneas.
 
 El grafo y el agente del Detective son singletons perezosos a nivel de
 módulo, detrás de imports diferidos — igual que `task.py:40` importa
@@ -84,21 +87,24 @@ def _system_blocks(candidates: list[Module], project_context: str | None) -> lis
     return [{"type": "text", "text": text, "cache_control": {"type": "ephemeral"}}]
 
 
-def _leer_doc_modulo_impl(name: str) -> str:
+def _leer_doc_modulo_impl(names: list[str]) -> str:
     scope = _SCOPE.get()
     if not scope:
         return "Módulo no encontrado o sin documentación."
     candidates = scope.get("candidates") or []
-    modulo = next((m for m in candidates if m.name == name), None)
-    if not modulo or not modulo.content_path:
-        return "Módulo no encontrado o sin documentación."
-    path = Path(modulo.content_path)
-    if not path.exists():
-        return "Módulo no encontrado o sin documentación."
-    return path.read_text(encoding="utf-8", errors="replace")[:2000]
+    parts: list[str] = []
+    for name in names:
+        modulo = next((m for m in candidates if m.name == name), None)
+        content = None
+        if modulo and modulo.content_path:
+            path = Path(modulo.content_path)
+            if path.exists():
+                content = path.read_text(encoding="utf-8", errors="replace")[:2000]
+        parts.append(f"## {name}\n{content or 'Módulo no encontrado o sin documentación.'}")
+    return "\n\n".join(parts)
 
 
-def _buscar_en_codigo_impl(pattern: str) -> str:
+def _buscar_en_codigo_impl(patterns: list[str]) -> str:
     scope = _SCOPE.get()
     if not scope:
         return "Sin resultados."
@@ -119,10 +125,13 @@ def _buscar_en_codigo_impl(pattern: str) -> str:
             except Exception:
                 continue
             for i, line in enumerate(text.splitlines(), start=1):
-                if pattern in line:
-                    hits.append(f"{path}:{i}: {line.strip()}")
-                    if len(hits) >= 40:
-                        break
+                for pattern in patterns:
+                    if pattern in line:
+                        hits.append(f"[{pattern}] {path}:{i}: {line.strip()}")
+                        if len(hits) >= 40:
+                            break
+                if len(hits) >= 40:
+                    break
             if len(hits) >= 40:
                 break
     except Exception:
@@ -136,14 +145,14 @@ def _make_detective_tools():
     from langchain_core.tools import tool
 
     @tool
-    def leer_doc_modulo(name: str) -> str:
-        """Lee la documentación completa (hasta 2000 caracteres) de un módulo, por su nombre exacto."""
-        return _leer_doc_modulo_impl(name)
+    def leer_doc_modulo(names: list[str]) -> str:
+        """Lee la documentación completa (hasta 2000 caracteres por módulo) de uno o más módulos, por sus nombres exactos."""
+        return _leer_doc_modulo_impl(names)
 
     @tool
-    def buscar_en_codigo(pattern: str) -> str:
-        """Busca un patrón literal en el código del repo objetivo (hasta 40 resultados)."""
-        return _buscar_en_codigo_impl(pattern)
+    def buscar_en_codigo(patterns: list[str]) -> str:
+        """Busca uno o más patrones literales en el código del repo objetivo (hasta 40 resultados en total)."""
+        return _buscar_en_codigo_impl(patterns)
 
     return [leer_doc_modulo, buscar_en_codigo]
 
@@ -151,6 +160,7 @@ def _make_detective_tools():
 def _build_detective_agent(model=None):
     from langchain.agents import create_agent
     from langchain.agents.structured_output import ToolStrategy
+    from langchain_anthropic.middleware import AnthropicPromptCachingMiddleware
 
     if model is None:
         from langchain_anthropic import ChatAnthropic
@@ -164,6 +174,15 @@ def _build_detective_agent(model=None):
         model=model,
         tools=_make_detective_tools(),
         response_format=ToolStrategy(seleccionar_modulos),
+        # Sin esto, solo el bloque de sistema inicial cachea (línea ~87) —
+        # el historial de tool_calls/tool_results que crece en cada turno del
+        # loop ReAct se reenvía a precio completo. Este middleware (oficial de
+        # `langchain_anthropic`) marca la cola móvil de la conversación con
+        # `cache_control` en cada turno, vía el kwarg nativo que el SDK de
+        # Anthropic aplica al último bloque elegible. `unsupported_model_behavior`
+        # en "ignore" evita warnings ruidosos en tests que inyectan un modelo
+        # scripted (no-`ChatAnthropic`) — en producción siempre es `ChatAnthropic`.
+        middleware=[AnthropicPromptCachingMiddleware(unsupported_model_behavior="ignore")],
     )
 
 
@@ -204,8 +223,9 @@ def _log_detective_usage(messages: list) -> None:
 
 def _detective_recursion_limit(candidates: list[Module]) -> int:
     """Presupuesto de pasos del Detective escalado a la cantidad de
-    candidatos — con tools de a un nombre/patrón por llamada, más
-    candidatos necesitan más pasos para explorarlos antes de decidir."""
+    candidatos — aunque las tools aceptan varios nombres/patrones por
+    llamada, más candidatos siguen necesitando más turnos de decisión para
+    explorarlos con criterio antes de resolver."""
     return min(24, max(12, len(candidates) + 6))
 
 
@@ -225,8 +245,11 @@ def _detective(state: TaskGraphState, agent=None) -> dict:
         user_prompt = f"""Tarea del desarrollador: {state.get('task_desc', '')}{file_context}
 
 Analizá la tarea, entendé qué partes del sistema necesita tocar. Podés usar
-leer_doc_modulo para leer la documentación completa de un módulo, o
-buscar_en_codigo para buscar un patrón en el código, tantas veces como
+leer_doc_modulo para leer la documentación completa de uno o varios módulos
+a la vez (pasá una lista de nombres), o buscar_en_codigo para buscar uno o
+varios patrones en el código en la misma llamada (pasá una lista de
+patrones). Preferí agrupar varios nombres/patrones en una sola llamada en
+vez de llamar la tool una vez por cada uno. Usalas tantas veces como
 necesites. Cuando tengas suficiente información, llamá a la herramienta
 terminal seleccionar_modulos con los nombres exactos de los módulos
 relevantes.
@@ -269,8 +292,7 @@ def _get_detective_agent():
 # ── Historiador de Jira ──────────────────────────────────────────────────────
 
 
-def _historiador(state: TaskGraphState, call_claude=None) -> dict:
-    call_claude = call_claude or _call_claude
+def _historiador(state: TaskGraphState) -> dict:
     try:
         from aicli.services.embeddings import query_tickets
         from aicli.services.tickets import load_tickets
@@ -280,16 +302,12 @@ def _historiador(state: TaskGraphState, call_claude=None) -> dict:
         if not precedentes:
             return {"precedent": "Sin precedentes en el historial de tickets."}
 
+        # Listado crudo, sin pasar por un LLM — lo consume directo el
+        # Sintetizador, que igual va a comprimirlo en su propio brief final.
+        # Resumir acá antes era una compresión con pérdida sobre algo que ya
+        # entra entero en el prompt del Sintetizador.
         listado = "\n".join(f"- {p['ticket_id']}: {p['descripcion']}" for p in precedentes)
-        prompt = f"""Tarea actual: {state.get('task_desc', '')}
-
-Tickets con precedente similar en este proyecto:
-{listado}
-
-Resumí en máximo 3 líneas qué precedente es más relevante y por qué, citando
-el ticket concreto."""
-        text, _ = call_claude(prompt, context="historiador_precedentes", max_tokens=400, model=MODEL_BY_OPERATION["task_brief"])
-        return {"precedent": text.strip()}
+        return {"precedent": listado}
     except Exception as e:
         logging.warning("Historiador de Jira falló, degradando: %s", e)
         return {"precedent": "Sin precedentes en el historial de tickets."}
@@ -378,8 +396,7 @@ def _scan_coverage(test_files: list[Path], modules: list[Module]) -> dict[str, l
     return coverage
 
 
-def _vigia(state: TaskGraphState, call_claude=None) -> dict:
-    call_claude = call_claude or _call_claude
+def _vigia(state: TaskGraphState) -> dict:
     try:
         candidates = state.get("candidates") or []
         repo_root = state.get("repo_root") or str(Path.cwd())
@@ -388,13 +405,13 @@ def _vigia(state: TaskGraphState, call_claude=None) -> dict:
         if not coverage:
             return {"coverage": "Sin cobertura de tests detectada."}
 
+        # Listado crudo, mismo criterio que el Historiador: sin LLM propio,
+        # directo al Sintetizador.
         listado = "\n".join(
             f"- {name}: {len(hits)} referencia(s) en {', '.join(sorted({h[0] for h in hits}))}"
             for name, hits in coverage.items()
         )
-        prompt = f"Resumí en máximo 3 líneas la cobertura de tests detectada para estos módulos:\n{listado}"
-        text, _ = call_claude(prompt, context="vigia_cobertura", max_tokens=400, model=MODEL_BY_OPERATION["task_brief"])
-        return {"coverage": text.strip()}
+        return {"coverage": listado}
     except Exception as e:
         logging.warning("Vigía de Tests falló, degradando: %s", e)
         return {"coverage": "Sin cobertura de tests detectada."}
@@ -473,10 +490,10 @@ def _build_graph(model=None, single_shot=None):
         return _detective(state, agent=detective_agent)
 
     def _historiador_node(state):
-        return _historiador(state, call_claude=single_shot)
+        return _historiador(state)
 
     def _vigia_node(state):
-        return _vigia(state, call_claude=single_shot)
+        return _vigia(state)
 
     def _sintetizador_node(state):
         return _sintetizador(state, call_claude=single_shot)
